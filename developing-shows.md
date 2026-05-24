@@ -3,7 +3,7 @@ title: "Developing a Show"
 status: Draft
 notion_url: https://www.notion.so/362bd0677405812393d7c0f9eee52788
 notion_id: 362bd0677405812393d7c0f9eee52788
-last_synced: 2026-05-21
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
@@ -204,7 +204,7 @@ public:
 }}
 ```
 
-The two pure-virtuals you **must** implement are `id()`, `display_name()`, and `context()`. The host's picker calls `display_name()` to populate its list. `id()` is your Show's stable key for NVS persistence; cap it at 12 ASCII chars (the NVS namespace prefix `ns_` + your id must fit in 15 chars).
+The three pure-virtuals you **must** implement are `id()`, `display_name()`, and `context()`. The host's picker calls `display_name()` to populate its list. `id()` is your Show's stable key for NVS persistence; cap it at 12 ASCII chars (the NVS namespace prefix `ns_` + your id must fit in 15 chars).
 
 ### `ShowContext`
 

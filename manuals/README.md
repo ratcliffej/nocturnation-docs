@@ -2,7 +2,7 @@
 title: "NocturNation manuals - index"
 notion_url: https://www.notion.so/35ebd067740580369084dc6f9b2145e8
 notion_id: 35ebd067740580369084dc6f9b2145e8
-last_synced: 2026-05-12
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
@@ -23,7 +23,7 @@ This directory holds the public-facing manuals for the NocturNation crowd-lighti
 |---|---|---|
 | [user-manual.md](user-manual.md) | Draft | Operators |
 | [protocol-manual.md](protocol-manual.md) | Draft | Implementers |
-| [flow-diagrams.md](flow-diagrams.md) | Draft | Both - 8 Mermaid diagrams covering topology, boot, modes, analyser, dispatch, receive, routing, configuration |
+| [flow-diagrams.md](flow-diagrams.md) | Draft | Both - Mermaid diagrams covering topology, boot, modes, analyser, dispatch, receive, routing, configuration, channel discovery |
 
 ## Conventions
 

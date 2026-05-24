@@ -1,10 +1,10 @@
 ---
 title: "NocturNation user manual"
 status: Draft
-firmware_version: "v0.5"
+firmware_version: "v0.6"
 notion_url: https://www.notion.so/35ebd067740580369c67c6738fe3f6d0
 notion_id: 35ebd067740580369c67c6738fe3f6d0
-last_synced: 2026-05-12
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
@@ -12,8 +12,8 @@ sync_direction: bidirectional
 
 > A practical guide to running NocturNation at a venue: what it is, how it works, how to set it up, how to configure it, and what to do when it misbehaves.
 
-**Firmware version covered**: v0.5 (`include/firmware_version.h`).
-**Reference hardware**: M5StickC Plus2 and M5StickS3 (the Sticks); PixMob X4 Gen 3.1 bracelets.
+**Firmware version covered**: v0.6 (`include/firmware_version.h`).
+**Reference hardware**: M5StickC Plus2 and M5StickS3 (the Sticks); PixMob Aurora bracelets.
 
 ---
 
@@ -52,6 +52,10 @@ NocturNation is a distributed crowd-lighting system. One device (the **Director*
 
 The system is deliberately one-way: the Director talks, the Lumes and bracelets listen. There is no audio routing from the front-of-house mixer, no network back to a control surface, and no per-bracelet identity. Everything the system does is driven by what the Director microphone hears, in real time, with under a hundred milliseconds of end-to-end latency.
 
+When a Stick runs as a Lume it becomes part of the show in its own right: its screen and onboard LED light up with the broadcast colour, not only the bracelets it drives. A Lume can be as simple as a bare ESP32 board with a few LEDs wired up, which makes rolling your own wearable straightforward.
+
+The NocturNation protocol is carrier-independent. ESP-NOW is the radio link used today, but the same light commands can run over other carriers - Bluetooth LE, sub-GHz RF, or infra-red (using the NocturNation framing rather than the PixMob one) - without changing what the Lumes do with them.
+
 ### 1.2 Why distributed
 
 Three reasons.
@@ -72,11 +76,13 @@ The Director runs an audio analyser continuously. It samples the microphone at 1
 
 The detectors run on the Director only; Lumes never analyse audio. Tuning history for the detectors lives in [include/dal/analyser/beat_detector.h](../../include/dal/analyser/beat_detector.h) and is captured in the architecture spec.
 
+Not every Director needs a microphone. On the EMF Tildagon badge, which has no mic, the beat source is the **IMU** instead: the operator taps or moves the badge in time with the music and each tap fires a beat that drives the local show and broadcasts to nearby Lumes.
+
 ### 1.4 How the bracelets work
 
-PixMob X4 Gen 3.1 bracelets are off-the-shelf passive infra-red receivers. They wake on an infra-red command, render the light envelope embedded in the command (attack, sustain, release, with a probabilistic "chance" gate), and then return to standby. They have no on-board state between commands beyond a brief residual envelope; if you fire a new command before the previous envelope finishes, the new envelope replaces the old.
+PixMob Aurora bracelets are off-the-shelf passive infra-red receivers. They wake on an infra-red command, render the light envelope embedded in the command (attack, sustain, release, with a probabilistic "chance" gate), and then return to standby. They have no on-board state between commands beyond a brief residual envelope; if you fire a new command before the previous envelope finishes, the new envelope replaces the old.
 
-Bracelets ship from the factory pre-assigned to one of thirty-one groups (the group number is encoded into the bracelet's electronics at random and is not user-configurable). The infra-red command carries a five-bit group filter byte: a bracelet only responds to a command whose filter byte is zero (broadcast) or matches its own group. This means the operator cannot target a specific bracelet, but can target a subset of the audience: at a venue with bracelets pre-distributed to all groups uniformly, addressing group 1 will light up roughly one bracelet in thirty-one.
+Bracelets ship from the factory pre-assigned to one of thirty-one groups (the group is set at random in the bracelet's electronics), but you can reassign a bracelet's group from a Stick using the PixMob group-set workflow in the configuration menu (see [section 4](#4-configuration)). The infra-red command carries a five-bit group filter byte: a bracelet only responds to a command whose filter byte is zero (broadcast) or matches its own group. This means the operator cannot target a specific bracelet, but can target a subset of the audience: at a venue with bracelets pre-distributed to all groups uniformly, addressing group 1 will light up roughly one bracelet in thirty-one.
 
 The PixMob infra-red encoding is reverse-engineered from upstream work by James Wilson (see [acknowledgements](#acknowledgements)). NocturNation parity-tests every transmitted byte against a Python reference encoder to keep behaviour locked to that upstream.
 
@@ -99,7 +105,7 @@ Every render command on NocturNation is addressed by a pair of bytes: **target c
 
 Values 0x04 to 0xFF are reserved for future device classes (accelerometer sticks, smoke machines, large-format LED panels).
 
-The group is a one-byte filter from `0x00` to `0xFF`. Zero is the **broadcast group**: every device renders a command addressed to group zero, regardless of which group the device is itself configured for. Any other group number addresses only devices whose own group matches exactly. For PixMob bracelets the group range is constrained to 0..31 by the IR protocol; for Lumes on the radio link the range is the full byte. A Lume's group is set by the [Group menu item](#41-top-level) at the top of the configuration tree.
+The group is a one-byte filter from `0x00` to `0xFF`. Zero is the **broadcast group**: every device renders a command addressed to group zero, regardless of which group the device is itself configured for. Any other group number addresses only devices whose own group matches exactly. For PixMob bracelets the group range is constrained to 0..31 by the IR protocol; for Lumes on the radio link the range is the full byte. A Lume's group is set by the [Group menu item](#41-top-level) at the top of the configuration tree. A future firmware version will let a Director set the group of every NocturNation Lume in radio range with a single broadcast command, so a whole fleet can be zoned in seconds before a show.
 
 A Lume whose own group is set to zero is in no specific group and only renders broadcasts; it does not act as a receive-side wildcard. Fresh devices are assigned a random group from 1, 2, or 3 at first boot (see [section 4.1](#41-top-level) below) so that a fleet of newly-flashed Sticks naturally distributes across the three drum groups that the Dynamic show routes kick / snare / hi-hat to.
 
@@ -127,7 +133,7 @@ A Lume that goes more than three seconds with no traffic at all displays **NO SI
 
 ### 1.9 Why bracelets are pre-grouped, not paired
 
-It is tempting to imagine bracelets being paired to specific operators or to seats. They are not. Bracelets are factory-programmed to random groups and remain that way; there is no return path for the bracelet to tell the Director anything about itself.
+It is tempting to imagine bracelets being paired to specific operators or to seats. They are not. Bracelets are factory-programmed to random groups and remain that way; there is no return path for the bracelet to tell the Director anything about itself. A future companion-app direction could add opt-in seat or group pairing through a phone, but nothing in the system pairs a bracelet to a person or a seat today.
 
 In practice this means the addressing you can do at a venue is **statistical**: addressing group 7 lights up roughly one in thirty-one bracelets, distributed uniformly across the audience. Addressing all groups in sequence creates a "sparkle" pattern. The Dynamic show uses this to route kick drums to group 1, snare hits to group 2, and hi-hat onsets to group 3, producing visibly different reactions from different segments of the crowd to different parts of the song.
 
@@ -158,11 +164,11 @@ The Plus2 is end-of-life from M5Stack but remains fully supported. Buy the S3 fo
 
 ### 2.2 PixMob bracelets
 
-NocturNation targets PixMob X4 Gen 3.1 bracelets. These are widely available second-hand from concert merchandise channels, typically in batches of dozens to hundreds. Earlier PixMob generations use the same infra-red encoding and should work but have not been bench-verified by the project; report any compatibility issues against [the repository](https://github.com/ratcliffej/nocturnation-m5).
+NocturNation targets PixMob Aurora bracelets. These are widely available second-hand from concert merchandise channels, typically in batches of dozens to hundreds. Earlier PixMob generations use the same infra-red encoding and should work but have not been bench-verified by the project; report any compatibility issues against [the repository](https://github.com/ratcliffej/nocturnation-stickc).
 
-Each bracelet has a CR1632 coin cell, a single RGB LED behind a diffuser, and an infra-red photodiode on the visible face. They wake on an infra-red command, render the command, and return to deep sleep within a few seconds. Battery life on fresh cells is approximately one large event (eight hours of intermittent activity).
+Each bracelet has two AAA batteries, seven RGB LEDs behind a diffuser, and an infra-red photodiode on the visible face. They wake on an infra-red command, render the command, and return to deep sleep within a few seconds. Battery life on a fresh set is approximately one large event (eight hours of intermittent activity).
 
-The bracelets cannot be re-grouped from the host. The group assignment is factory-set and uniformly distributed across thirty-one groups within a batch.
+Bracelets ship with a factory group assignment, uniformly distributed across thirty-one groups within a batch. You can re-group them from a Stick using the PixMob group-set workflow (see [section 4.4](#44-utilities)).
 
 ### 2.3 IR radiation patterns
 
@@ -190,7 +196,7 @@ A Lume with the Lume-as-repeater toggle enabled retransmits every accepted frame
 ### 3.1 Prerequisites
 
 - A USB-C cable that supports data (cheap charging-only cables will not work).
-- A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-m5`.
+- A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-stickc`.
 - [PlatformIO](https://platformio.org/) installed. The project assumes the CLI tool is reachable; on macOS the executable is typically at `~/.platformio/penv/bin/pio`.
 - An M5StickC Plus2 or M5StickS3.
 
@@ -288,10 +294,10 @@ A picker leading to four sub-menus:
 - `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off.
 
 **WiFi** (stub, reserved for future Epic):
-- Enable, SSID, Password, Soft-AP mode. Not functional in v0.5.
+- Enable, SSID, Password, Soft-AP mode. Not functional in v0.6.
 
 **DMX** (stub, reserved for Epic 7):
-- Carrier, Universe ID, Channel mapping. Not functional in v0.5.
+- Carrier, Universe ID, Channel mapping. Not functional in v0.6.
 
 ### 4.4 Utilities
 
@@ -307,7 +313,7 @@ A picker leading to two sub-menus:
 ### 4.5 System
 
 - Battery readout
-- Firmware version (currently `v0.5`)
+- Firmware version (currently `v0.6`)
 - Factory reset (clears the entire `noct` NVS namespace; requires a long confirmation press)
 
 ### 4.6 Persistence model
@@ -393,7 +399,7 @@ Most often a transient state-residue problem on the bracelet ([section 1.5](#15-
 - Test mode's Rainbow pattern looks clean. Rainbow has the highest fire cadence and is the most forgiving of residue, so if Rainbow is also misbehaving the issue is elsewhere (low batteries, wrong group, Director IR transmitter blocked).
 - Whichever show is misbehaving is using an envelope length that fits inside its fire cadence. If you have customised envelope or cadence values, lengthening the fire cadence or shortening the envelope usually clears the artefacts.
 
-If a particular show looks fine on most bracelets but wrong on one or two, those bracelets may have low batteries; swap the coin cells.
+If a particular show looks fine on most bracelets but wrong on one or two, those bracelets may have low batteries; swap the AAA cells.
 
 **Symptom**: no bracelets respond at all.
 
@@ -446,21 +452,19 @@ If Director is running but no `[espnow TX LIGHT]` lines appear on the serial con
 
 ## 7. Glossary
 
-**Director** - the Director-side runtime mode. Listens to audio, runs a Show, fires light commands. Default boot mode. See [section 5.3](#53-autonomousmaster-mode).
-
-**BeatDetector** - the Director's kick-drum onset detector. Watches low-frequency bands for energy spikes against a one-second running mean. See [section 1.3](#13-how-the-Director-decides).
+**BeatDetector** - the Director's kick-drum onset detector. Watches low-frequency bands for energy spikes against a one-second running mean. See [section 1.3](#13-how-the-director-decides).
 
 **BtnA, BtnB** - the two user buttons on a Stick. Button 1 is the lower button; Button 2 is the upper button. The S3's power button is owned by hardware and unreachable.
 
-**Bracelet** - a passive infra-red receiver worn by an audience member. Reference target is the PixMob X4 Gen 3.1. See [section 2.2](#22-pixmob-bracelets).
+**Bracelet** - a passive infra-red receiver worn by an audience member. Reference target is the PixMob Aurora. See [section 2.2](#22-pixmob-bracelets).
 
 **Chance gate** - a probabilistic filter applied to each infra-red command. A bracelet receiving a command with chance 16 rolls a sixteen-percent die and only renders on a hit. Independent dice per bracelet.
 
 **Class** - one byte (`target_class`) carried in every render command. Identifies the device kind that should accept the command. See [section 1.6](#16-class-and-group-addressing).
 
-**DropDetector** - the Director's structural-event detector. Compares two-second short-window energy to ten-second long-window energy, fires DROP or BREAKDOWN on threshold crossings. See [section 1.3](#13-how-the-Director-decides).
+**DropDetector** - the Director's structural-event detector. Compares two-second short-window energy to ten-second long-window energy, fires DROP or BREAKDOWN on threshold crossings. See [section 1.3](#13-how-the-director-decides).
 
-**Dynamic** - the FFT-driven show. Maps spectrum analysis to HSV colour and per-drum-group routing. See [section 5.3](#53-autonomousmaster-mode).
+**Dynamic** - the FFT-driven show. Maps spectrum analysis to HSV colour and per-drum-group routing. See [section 5.3](#53-director-mode).
 
 **ESP-NOW** - the wireless protocol used between Sticks. Connection-less broadcast on the 2.4 GHz band; vendor-specific 802.11 action frames. See [section 1.7](#17-the-wireless-link).
 
@@ -476,19 +480,19 @@ If Director is running but no `[espnow TX LIGHT]` lines appear on the serial con
 
 **Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter and screen pulse, so the Director can illuminate nearby bracelets and show a pulse on its own LCD.
 
-**Director** - the Stick that listens to audio and decides what lights should do. Exactly one Director per deployment. See [section 1.1](#11-what-nocturnation-is).
+**Director** - the Stick that listens to audio and decides what lights should do. Runs a Show, fires light commands, and is the default boot mode. Exactly one Director per deployment. See [section 1.1](#11-what-nocturnation-is) and [section 5.3](#53-director-mode).
 
 **M5StickC Plus2** - the first-generation reference Stick. ESP32-PICO-V3-02, PDM microphone, omnidirectional IR. End-of-life from M5Stack but fully supported.
 
 **M5StickS3** - the second-generation reference Stick. ESP32-S3-PICO-1-N8R8, I2S codec microphone, focused IR. Current recommended hardware.
 
-**NocturNation** - this project. An open-source distributed crowd-lighting system. Repository: [github.com/ratcliffej/nocturnation-m5](https://github.com/ratcliffej/nocturnation-m5).
+**NocturNation** - this project. An open-source distributed crowd-lighting system. Repository: [github.com/ratcliffej/nocturnation-stickc](https://github.com/ratcliffej/nocturnation-stickc).
 
-**NO SIGNAL** - the Lume-screen indication that no Director traffic has arrived for three seconds. See [section 6.2](#62-no-signal-on-the-Lume).
+**NO SIGNAL** - the Lume-screen indication that no Director traffic has arrived for three seconds. See [section 6.2](#62-no-signal-on-the-lume).
 
 **NVS** - Non-Volatile Storage. The ESP32's flash-backed key-value store. NocturNation uses the namespace `noct`. See [section 4.6](#46-persistence-model).
 
-**PixMob** - the manufacturer of the reference bracelets. Their X4 Gen 3.1 is the target.
+**PixMob** - the manufacturer of the reference bracelets. Their Aurora is the target.
 
 **Show** - a plug-in that produces light commands from analyser events. Lives in `src/shows/`. Operator-selectable from Director mode via long-press Button 2.
 
@@ -510,27 +514,27 @@ This index lists significant defined terms and concepts. For run-time configurat
 
 | Term | Section |
 |---|---|
-| Director | [5.3](#53-autonomousmaster-mode) |
-| BeatDetector | [1.3](#13-how-the-Director-decides) |
-| Bracelet (PixMob X4 Gen 3.1) | [1.4](#14-how-the-bracelets-work), [2.2](#22-pixmob-bracelets) |
+| Director | [5.3](#53-director-mode) |
+| BeatDetector | [1.3](#13-how-the-director-decides) |
+| Bracelet (PixMob Aurora) | [1.4](#14-how-the-bracelets-work), [2.2](#22-pixmob-bracelets) |
 | Bracelet residue | [1.5](#15-bracelet-timing-and-residual-state) |
 | Chance gate | [glossary](#7-glossary) |
 | Class+group addressing | [1.6](#16-class-and-group-addressing) |
 | Configuration menu | [4](#4-configuration) |
-| DropDetector | [1.3](#13-how-the-Director-decides) |
-| Dynamic show | [5.3](#53-autonomousmaster-mode) |
+| DropDetector | [1.3](#13-how-the-director-decides) |
+| Dynamic show | [5.3](#53-director-mode) |
 | ESP-NOW transport | [1.7](#17-the-wireless-link) |
 | Firmware flashing | [3.3](#33-flashing) |
 | Group filter | [4.1](#41-top-level) |
 | Heartbeat | [1.8](#18-the-heartbeat) |
 | IR radiation patterns | [2.3](#23-ir-radiation-patterns) |
 | Modes (boot, Director, Lume, etc.) | [5.2](#52-modes) |
-| NO SIGNAL | [6.2](#62-no-signal-on-the-Lume) |
+| NO SIGNAL | [6.2](#62-no-signal-on-the-lume) |
 | NVS persistence | [4.6](#46-persistence-model) |
 | Quickstart | [quickstart](#quickstart) |
 | Repeater (Lume) | [4.3](#43-connectivity) |
-| Show picker | [5.3](#53-autonomousmaster-mode) |
-| Simple Beat show | [5.3](#53-autonomousmaster-mode) |
+| Show picker | [5.3](#53-director-mode) |
+| Simple Beat show | [5.3](#53-director-mode) |
 | Lume mode | [5.4](#54-lume-mode) |
 | Splash | [5.1](#51-boot-flow) |
 | Test mode | [5.5](#55-test-mode) |
@@ -541,6 +545,8 @@ This index lists significant defined terms and concepts. For run-time configurat
 ## Acknowledgements
 
 The PixMob infra-red encoding is reverse-engineered from upstream work by [James Wilson (jamesw343)](https://github.com/jamesw343/PixMob_IR) and contributors. NocturNation parity-tests every transmitted byte against a Python reference encoder to keep behaviour locked to that upstream.
+
+A huge thank-you to PixMob and Xylobands for their pioneering work in making the audience part of the show.
 
 Hardware abstraction patterns and many small implementation details follow the conventions of the [M5Unified](https://github.com/m5stack/M5Unified) library by M5Stack.
 

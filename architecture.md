@@ -3,9 +3,9 @@ title: NocturNation Architecture Specification
 status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
-last_synced: 2026-05-21
+last_synced: 2026-05-23
 sync_direction: bidirectional
-notion_status: synced (v0.30 - Epic 6B reconciliation: Tildagon promoted to §3.1 supported (Lume + IMU Director); local pulled up to match Notion's v0.24-v0.29 edits)
+notion_status: synced (2026-05-23 - full local push, chunked: duplicate-section/contradiction fixes, Aurora 7-LED/2xAAA, TOFU, + Jason's local edits. Notion tables now pipe-rendered; local keeps HTML tables, semantically identical)
 ---
 
 **Status:** Draft v0.30 - early architecture document, expect substantial revision.
@@ -16,26 +16,26 @@ notion_status: synced (v0.30 - Epic 6B reconciliation: Tildagon promoted to §3.
 A modular, open-source crowd-lighting system that scales from one wearer at a tribute act to a multi-node mesh covering a small festival venue, built on commodity hardware and reused commercial bracelets.
 NocturNation democratises a class of show-experience that has historically required expensive vendor contracts. PixMob, Xylobands, and similar systems charge bands tens of thousands per show; a NocturNation transmitter costs roughly £30. The shift is economic as well as technical: instead of paying a vendor for fan light experiences, touring bands can sell their own branded receivers as merch and turn the lighting into a profit centre rather than a cost line.
 The system has three deployment scales it must support cleanly:
-- **Solo**: one device, one wearer, no infrastructure. Personal use at gigs.
+- **Solo**: one device, one wearer, no infrastructure. Personal use at gigs or at home.
 - **Installation**: a small fixed rig (\~5 light points) with optional pre-programmed choreography. Art pieces, parties.
 - **Distributed**: multiple Director / repeater nodes covering a venue, optionally orchestrated from a laptop. Maker festivals, club nights.
 Across all three, the core experience is the same: ambient music drives synchronised, beautiful lighting on wearable or installed light points.
 Original prototyping work: <mention-page url="https://www.notion.so/358bd067740580bab876cd7c2b7ee6bf"/> 
 ### Design principles
 - **Reuse over manufacture**: existing PixMob bracelets, existing EMF Tildagon badges, existing maker hardware. New devices only when necessary.
-- **Layered architecture**: hardware abstraction, audio analysis, device abstraction, orchestration, transport, and protocol are separate layers with clean interfaces. Any layer is swappable.
+- **Layered architecture**: hardware abstraction, audio analysis, device abstraction, orchestration, carrier, and protocol are separate layers with clean interfaces. Any layer is swappable.
 - **Standards where they exist**: speak Art-Net/DMX to lighting consoles, ESP-NOW to embedded peers, IR to PixMob bracelets. Don't reinvent.
 - **Graceful degradation**: every node is independently functional. Loss of a Director, mesh, or laptop should not stop the lighting; the worst case is loss of synchronisation.
 - **Open and inspectable**: protocols documented, source published, no hidden state.
 ### 1.1 Where NocturNation sits in the market
 NocturNation isn't the only crowd-lighting system, and it isn't trying to be all of them. Worth being explicit about where it sits relative to adjacent products, because the architectural choices that distinguish it - particularly the open ESP-NOW protocol and the dual autonomous / DMX-driven operating modes - are easier to understand against the comparators.
-**Manual RF wristbands.** Products like TheWristbandCo's LED wristbands and similar small-vendor offerings use a handheld remote (typically 433 MHz RF, \~6 preset patterns) that someone presses in time with the music. Cheap (£5-15 per wristband retail), simple, fine for a few dozen wristbands at a small event. The honest limit: no audio analysis, so the show is only as tight as the operator's button-pressing. No section awareness, no automated beat-flash, no synchronisation with a programmed timeline.
+**Manual RF wristbands.** Products like TheWristbandCo's LED wristbands and similar small-vendor offerings use a handheld remote (typically 433 MHz RF, \~6 preset patterns) that someone presses in time with the music or sends a DMX command. Cheap (£5-15 per wristband retail), simple, fine for a few dozen wristbands at a small event. The honest limit: no audio analysis, so the show is only as tight as the operator's button-pressing. No section awareness, no automated beat-flash, no synchronisation with a programmed timeline.
 **PixMob and Xylobands.** Industrial-grade automated systems - IR projectors (PixMob) or stage-mounted RF transmitters (Xylobands) broadcast pre-programmed timelines to thousands of wristbands. The wristbands are deliberately dumb (sub-£3 BOM, sometimes far less) and the commercial moat is the projector/transmitter supply chain plus the show-programming tooling. Verified deployments include arena tours by Coldplay, Taylor Swift, and Ed Sheeran (PixMob, n.d.). The model works at stadium scale because the per-show fee covers the wristband production cost.
 **Professional DMX-driven rigs.** Lighting consoles like QLC+, ETC Eos, and MA Lighting grandMA drive DMX-compatible fixtures via 512-channel universes (ESTA, 2018). The lighting designer programs the show against audio timecode. Every commercial-grade light, moving head, strobe, and haze machine speaks this language; it has been the industry standard since 1986. The limit for crowd-lighting specifically: DMX fixtures are typically rigged to the truss, not worn by the audience.
 **NocturNation.** Occupies a deliberately distinctive position - open-source, hobbyist-friendly, hardware-reuse-first, and architecturally able to operate in two modes:
 - *Autonomous Director*: live audio analysis on a £25 M5 Stick, broadcasting ESP-NOW to any Lume in range. No console required, no operator pressing buttons, no per-show vendor fee. The model that makes hackspace gigs, the Coldplay tribute act, and small-venue deployments work.
 - *DMX-driven*: same firmware, same protocol, same Lumes - but with a DMX input on the Director, the lighting designer in front of QLC+ treats NocturNation as a 12-channel fixture in their console. The model that makes touring-band integration and professional venue deployment plausible.
-Same firmware, same protocol, same effects catalogue across both modes. The Director is a £25 M5 Stick either way; the Lumes are Tildagons, repurposed PixMob bracelets, future NocturNation-native wearables. What changes is whether the Director decides what happens (autonomous) or relays decisions from a console (DMX). This is a richer position than any of the adjacent products, and it's only possible because the project chose open ESP-NOW rather than committing to a single vertically-integrated protocol.
+Same firmware, same protocol, same effects catalogue across both modes. The Director is a £25 M5 Stick either way; the Lumes are Tildagons or other ESP32 based wearables, repurposed PixMob bracelets, future NocturNation-native wearables. What changes is whether the Director decides what happens (autonomous) or relays decisions from a console (DMX). This is a richer position than any of the adjacent products, and it's only possible because the project chose open ESP-NOW rather than committing to a single vertically-integrated protocol.
 **Complementary, not competitive.** NocturNation is not trying to displace PixMob at stadium scale. PixMob's commercial model, dedicated IR projector hardware, and 100,000-unit-per-show distribution logistics solve a problem NocturNation deliberately doesn't try to solve. The honest framing is that the products are complementary rather than competitive:
 - **Hardware reuse.** NocturNation literally uses recycled PixMob X4 wristbands as Lumes. PixMob hardware that would otherwise reach end-of-life after a single tour gets a second life as a hackspace receiver. The NocturNation ecosystem extends the useful life of PixMob's installed base.
 - **Mixed deployment at the same event.** A touring artist might run PixMob for official audience-lighting (broadcast on IR from the lighting truss) while attendees use their own NocturNation Lumes on Channel 1 for personal expression. Different carriers, different channels, no conflict on the wire. The two systems can run in the same room at the same time without either being aware of the other.
@@ -56,12 +56,12 @@ NocturNation lives in the long tail; PixMob lives at the head. Both ecosystems b
 ┌──────────────────────────────────────────────────────────────────┐
 │  Device abstraction layer (DAL)                                  │
 │  - Device-type profiles (JSON: capabilities + params + fallbacks)│
-│      Input capabilities:  mic+FFT (spectrum frames @ ~30Hz),    │
+│      Input capabilities:  mic+FFT (spectrum frames @ ~30Hz),     │
 │                            buttons, IMU, network-in              │
 │      Output capabilities: RGB/RGBW LEDs, IR transmit, DMX out    │
 │  - Active-device registry (profile + group ID; 0 = all of type)  │
 │  - The host itself is a registered device. The Plus2 profile     │
-│    declares its mic, buttons, display and IR LED transport;      │
+│    declares its mic, buttons, display and IR LED carrier;        │
 │    PixMob and Tildagon profiles declare their own capabilities.  │
 │  - Bidirectional API:                                            │
 │      fire_event(target, ...)        - send a command             │
@@ -74,8 +74,8 @@ NocturNation lives in the long tail; PixMob lives at the head. Both ecosystems b
 ┌──────────────────────────────────────────────────────────────────┐
 │  Hardware abstraction layer (HAL)                                │
 │  - Mic, buttons, display, IR LED, radios, GPIO, battery, clock   │
-│  - Each backend declares a flat capability set (mic, fft, ir-tx,│
-│    ir-rx, esp-now, display, buttons-2x, imu, ...) which the DAL │
+│  - Each backend declares a flat capability set (mic, fft, ir-tx, │
+│    ir-rx, esp-now, display, buttons-2x, imu, ...) which the DAL  │
 │    composes into the host's profile.                             │
 │  - Per-host: M5StickC Plus2, Tildagon, generic ESP32 dev kits    │
 └──────────────────────────────────────────────────────────────────┘
@@ -113,12 +113,13 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <tr>
 <td>**PixMob Aurora-class bracelets**</td>
 <td>Wearable Lumes</td>
-<td>IR-receive, 3 RGB LEDs. Multiple model variants.</td>
+<td>IR-receive, 7 RGB LEDs, 2 × AAA. Multiple model variants.</td>
 </tr>
 <tr>
 <td>**EMF Tildagon badge**</td>
 <td>Lume (audience receiver) **and** IMU tap-to-beat Director</td>
-<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, twelve addressable RGB perimeter LEDs (indexed 1..12), six hexpansion connectors, IMU. MicroPython runtime. Already deployed to thousands of attendees. **No microphone**, so it cannot run autonomous *audio* analysis - but Epic 6B added an **IMU tap-to-beat Director** (the operator taps the badge; accelerometer onset detection fires the beat hook and broadcasts `LIGHT_COMMAND` on channel 1), so it is no longer Lume-only. Runs the same `Show` plug-in framework as the M5 firmware, ported to MicroPython with identical hook names + capability vocabulary. WiFi and ESP-NOW share one radio, so the app drops WiFi (`wifi.stop()`) only while a Lume/Director session is actively running. See §8.9.</td>
+<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, twelve addressable RGB perimeter LEDs (indexed 1..12), six hexpansion connectors, IMU. MicroPython runtime. Already deployed to thousands of attendees. 
+**No microphone**, so it cannot run autonomous *audio* analysis - but Epic 6B added an **IMU tap-to-beat Director** (the operator taps the badge; accelerometer onset detection fires the beat hook and broadcasts `LIGHT_COMMAND` on channel 1), so it is no longer Lume-only. Runs the same `Show` plug-in framework as the M5 firmware, ported to MicroPython with identical hook names + capability vocabulary. WiFi and ESP-NOW share one radio, so the app drops WiFi (`wifi.stop()`) only while a Lume/Director session is actively running. See §8.9.</td>
 </tr>
 </table>
 ### 3.2 Planned
@@ -138,14 +139,8 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <td>Compact transmitter node</td>
 <td>£12, sugar-cube-sized. Same ESP32 family as StickC. Ideal for distributed IR transmitter nodes.</td>
 </tr>
-<tr>
-<td>**Hackspace Shieldagon**</td>
-<td>Tildagon receiver hexpansion</td>
-<td>IR receive + audio in. Repurposed laser-tag boards. Becomes a custom Lume.</td>
-</tr>
 </table>
 ### 3.3 Future / under consideration
-- **ESP32 with sub-GHz LoRa** (Heltec, LilyGO TTGO): for outdoor / large-area deployments where 2.4 GHz spectrum is unsuitable.
 - **Custom DIY bracelet** based on ESP32-C3 SuperMini: for events where attendees don't have Tildagons but want wearables.
 ---
 ## 4. Communication layers
@@ -156,51 +151,60 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <td>Use case</td>
 <td>Latency</td>
 <td>Range</td>
+<td>Comments</td>
 </tr>
 <tr>
 <td>IR (940nm, 38kHz modulated)</td>
 <td>Director → bracelet</td>
 <td>\<1 ms</td>
 <td>1-15m depending on transmitter power; line-of-sight</td>
+<td>Range can be extended by external IR devices. Pixmob use commerical grade IR transmitter for stadiums to great effect.</td>
 </tr>
 <tr>
 <td>ESP-NOW (2.4 GHz)</td>
 <td>Director ↔ peer nodes</td>
 <td>5-30 ms typical</td>
 <td>30-150m line-of-sight</td>
+<td>A great option that doesn't rely on ESP32 lumes to be configured.</td>
 </tr>
 <tr>
 <td>USB-CDC serial</td>
 <td>Laptop → embedded Director</td>
 <td>1-5 ms</td>
 <td>Cable length</td>
+<td>Used to recieve DMX commands from a lighting console, e.g. QLC+</td>
 </tr>
 <tr>
 <td>Ethernet (UDP)</td>
 <td>Console → Director, Director → Director</td>
 <td>1-3 ms</td>
 <td>Cable / switched network</td>
+<td>Used to connect relays to that in turn transmit ESP_Now or IR.</td>
 </tr>
 <tr>
 <td>WiFi (UDP)</td>
 <td>Console → Director where wired isn't practical</td>
 <td>5-50 ms</td>
 <td>Building scale</td>
+<td>Used to connect relays to that in turn transmit ESP_Now or IR. Fallback due to risks of WiFi interference.</td>
 </tr>
 <tr>
 <td>Bluetooth LE</td>
 <td>Phone-app → host (control plane); future Epic</td>
 <td>10-100 ms</td>
 <td>5-30m typical</td>
+<td>Planned to allow a consumer app on a mobile device to interact with the lume.</td>
 </tr>
 <tr>
 <td>Sub-GHz RF (LoRa) *future*</td>
 <td>Long-range outdoor</td>
 <td>50-200 ms</td>
 <td>500m+</td>
+<td>A possible future option, but the latency might prove to be too high.</td>
 </tr>
 </table>
-**Bluetooth role.** A future Epic adds BLE to the carrier set so a phone app can act as a control plane for any host within Bluetooth range: pick the show colour, trigger a test pulse, switch Director/Lume mode, view diagnostics. The phone speaks BLE only to the host it's directly paired with; that host then **fans the resulting ****`render_fx()`**** calls out over ESP-NOW** to every other host within radio range. Bluetooth is therefore a personal/local control link, not a show-wide protocol - ESP-NOW remains the show's distribution backbone. The HAL declares `Capability::Bluetooth` on hosts whose chips have a BLE radio (StickC Plus2 BLE 4.2, StickS3 BLE 5.0, future Tildagon BLE per its ESP32-C3); implementation is deferred to its own Epic but the capability is wired now so the API surface is ready.
+**Bluetooth role.** A future Epic adds BLE to the carrier set so a phone app can act as a control plane for any host within Bluetooth range: pick the show colour, trigger a test pulse, switch Director/Lume mode, view diagnostics. The phone speaks BLE only to the host it's directly paired with; that host then **fans the resulting ****`render_fx()`**** calls out over ESP-NOW** to every other host within radio range. 
+Bluetooth is therefore a personal/local control link, not a show-wide protocol - ESP-NOW remains the show's distribution backbone. The HAL declares `Capability::Bluetooth` on hosts whose chips have a BLE radio (StickC Plus2 BLE 4.2, StickS3 BLE 5.0, future Tildagon BLE per its ESP32-C3); implementation is deferred to its own Epic but the capability is wired now so the API surface is ready.
 ### 4.2 Protocols
 <table header-row="true">
 <tr>
@@ -256,14 +260,6 @@ Offset  Field             Size  Notes
 ```
 **Note on sequence_number sizing.** A 1-byte field wraps every 255 frames. At our 4 Hz hard cap (§15.1), that's a wrap window of \~64 seconds, comfortably longer than any plausible reordering window in ESP-NOW broadcast. This matches Art-Net's choice of a 1-byte sequence field at 44 Hz refresh rate (5.8s wrap window). The cost of being wrong about this is benign: a duplicate frame from across a wrap boundary is detected by other means (identical payload + same source_id + within ESP-NOW's natural latency window).
 **Time anchoring.** Wall-clock time is needed only by Tier 3 (signed-cert) receivers for validating cert validity windows. To avoid imposing this cost on Tier 0/1/2 deployments, time is carried in a dedicated `TIME_SYNC` message type rather than the frame header. Tier 3 Directors broadcast `TIME_SYNC` at the heartbeat rate (4 Hz); lower-tier receivers ignore it. See message types table.
-### Why two messages, not one
-A reasonable follow-up question to the v0.27/v0.28 simplification: if the principle is "the wire carries as little as possible", why have HEARTBEAT and LIGHT_COMMAND as separate messages? Couldn't LIGHT_COMMAND just double as a heartbeat - if a Lume is receiving LIGHT_COMMAND traffic, the Director is alive?
-This would be over-applying the minimalism principle. HEARTBEAT and LIGHT_COMMAND do genuinely different jobs and both earn their place on the wire:
-**HEARTBEAT enables channel lock-on before a show starts.** A Lume coming up in an empty venue half an hour before doors open needs to scan channel 11 and channel 1, find a Director, and lock on. Without HEARTBEAT there is no traffic to discover until the first LIGHT_COMMAND fires - which might be when the show starts. The dual-channel scan in §4.5 explicitly relies on Director heartbeats being broadcast continuously regardless of whether visible events are firing. HEARTBEAT is the silent-show signal that makes pre-show setup work.
-**HEARTBEAT anchors the Tier 3 wall-clock independently of show traffic.** A signed-cert deployment needs the date / centiseconds_today fields to validate frame freshness for replay protection. Folding these into LIGHT_COMMAND would mean (a) every LIGHT_COMMAND grows by 7 bytes, every show, even at Tier 0 where they're unused, and (b) Tier 3 anchoring only works during musical activity - silent passages would leave Lumes without a fresh clock. HEARTBEAT lets the timing anchor flow continuously at 1 Hz regardless of show state, at modest cost.
-**The two messages have different rate characteristics.** HEARTBEAT is bounded: 1 Hz, suppressed when other traffic exists. LIGHT_COMMAND is unbounded in principle (4 Hz hard cap per §15.1, but can fire on every beat). Mixing the two responsibilities into one message would force either over-broadcasting (HEARTBEAT at LIGHT_COMMAND rate) or under-broadcasting (LIGHT_COMMAND only when there's a heartbeat to piggyback on). Neither is what the system wants.
-**The reserved range (0x01, 0x02, 0x04-0xFE) exists for genuinely new payload shapes** that future Epics may need - notably for screen-targeted commands beyond simple light intent (text overlays, image fragments, scrolling animations) and any audio-metadata commands that emerge. The principle that gates these is the same one that removed BEAT_DETECTED / MUSIC_EVENT / MUSIC_DESCRIPTOR: a Lume must be able to do something visibly different with the data than it could with LIGHT_COMMAND alone. A SCREEN_TEXT message that carries a string the Lume renders on its display passes this test (LIGHT_COMMAND can't carry text). A SHOW_PALETTE_CHANGED message that just informs Lumes which palette is now active does not (the next LIGHT_COMMAND already encodes the colour).
-**The floor: two is the minimum, not because of laziness but because of distinct jobs.** Future expansion is welcome where each new type passes the "a Lume must do something visibly different with this" test.
 ### Message types (v1)
 The protocol carries only two active message types. Analysis lives Director-internal; the wire carries operational signals (heartbeat) and rendering commands (LIGHT_COMMAND). This is a deliberate principle, not an accident - if a Lume can't make an artistic decision, the wire doesn't need to carry the data that would enable one.
 <table header-row="true">
@@ -298,7 +294,7 @@ The minimalism principle has a natural floor: HEARTBEAT and LIGHT_COMMAND are bo
 **HEARTBEAT cannot be folded into LIGHT_COMMAND.** A Lume needs to know the Director is alive *during silence* - the quiet moments between songs, the breakdown sections where no kick fires for several seconds, the period after a Lume powers on but before any music starts. LIGHT_COMMAND traffic alone leaves silent intervals ambiguous: is the Director gone, or is the music just quiet? More importantly, HEARTBEAT is what lets a Lume **lock onto a channel in advance of a show starting** - the dual-channel scan in §4.5 depends on hearing heartbeats on channel 11 vs channel 1 to make the lock decision before any LIGHT_COMMAND traffic exists. Without HEARTBEAT, the channel scan would have to wait for music to start, which is the wrong UX (a Lume should be ready before the first beat, not catching up to it).
 **LIGHT_COMMAND cannot be folded into HEARTBEAT.** A music-reactive show fires several LIGHT_COMMAND frames per second - per-beat, per-snare, per-section-transition. Forcing those into a heartbeat-rate envelope would either drop frames (visible beat misses) or push heartbeat rate to FFT rate (defeating the airtime savings the 1 Hz heartbeat exists for).
 The two messages occupy genuinely separate roles: HEARTBEAT is the *ambient presence channel* (Director alive, clock anchor, replay-protection time), LIGHT_COMMAND is the *render decision channel* (act now, this colour, this envelope, this group). If a future addition can't slot into either role, that's a signal it might be the right time to add a third message type - but the bar is high and the cases above need to fail first.
-**What this means for future extensions.** Likely future Director-to-Lume commands (screen text, audio metadata for a Lume showing BPM, vendor-specific extensions) would each be a new message type in the reserved 0x01, 0x02, 0x04-0xFE range. They don't try to fit into HEARTBEAT or LIGHT_COMMAND because their semantics are genuinely different. The reserved range is wide enough that the protocol can extend for years without v2 churn.
+**What this means for future extensions.** Likely future Director-to-Lume commands (screen text, audio metadata for a Lume showing BPM, vendor-specific extensions) would each be a new message type in the reserved 0x01, 0x02, 0x04-0xFE range. They don't try to fit into HEARTBEAT or LIGHT_COMMAND because their semantics are genuinely different. The bar for adding one is that a Lume must do something *visibly different* with it than LIGHT_COMMAND already allows - a SCREEN_TEXT carrying a string passes (LIGHT_COMMAND can't carry text); a SHOW_PALETTE_CHANGED that merely names the active palette fails (the next LIGHT_COMMAND already encodes the colour). The reserved range is wide enough that the protocol can extend for years without v2 churn.
 The v0.27 simplification removed several message types proposed in earlier drafts that violated the wire-carries-only-render-commands principle. Recorded here so future contributors don't reflexively re-add them:
 - **BEAT_DETECTED (0x01)** - was reserved for BPM/strength metadata. No Lume-side consumer existed. If a future need arises (e.g. a Lume showing BPM on its screen), the Director can fire a custom LIGHT_COMMAND with that data rather than introducing a new message type.
 - **MODE_CHANGE (0x02)** - was for the Director announcing mode transitions (Test, Config, Show switches, Idle). Removed in v0.28 after honest review of every transition case: each one is implicit in the traffic pattern. Test mode = canned LIGHT_COMMAND sequences arrive. Config / Idle = traffic stops, Lumes timeout to idle effect. Show switch = LIGHT_COMMAND pattern changes; Lumes render whatever arrives. There is no transition a Lume needs to know semantically.
@@ -323,7 +319,7 @@ Tested working on user's bracelet model. EEPROM-write commands (`buildSetColor`,
 ## 4.5 Two-channel architecture
 NocturNation operates on a deliberate two-channel split that encodes a social contract for the project's deployment ecosystem. This replaces the earlier single-canonical-channel design.
 **Channel 1 = Hobby/Community/Open.** Permanently the project's open territory. Tier 0 traffic only. Used by hackspace gigs, EMF deployments, makers learning the protocol, the constellation art piece, anyone playing with NocturNation. Channel 1 is where new ideas live and break.
-**Channel 11 = Show/Commercial.** Reserved for production deployments. Will carry Tier 1+ encrypted traffic when those Epics ship; remains Tier 0 until then. Used by touring bands, ticketed events, art installations where disruption would matter. Channel 11 is the project's professional territory.
+**Channel 11 = Show/Commercial.** Reserved for production deployments. Used by touring bands, ticketed events, art installations where disruption would matter. Channel 11 is the project's professional territory.
 The rationale for the specific channel choice (1 and 11 rather than any other pair from the non-overlapping \{1, 6, 11\} set):
 - **Channel 11**: sits above the microwave-oven leak band (\~2.4-2.45 GHz) that clips channels 6-9. Most consumer routers default to channel 6, making channel 11 consistently quieter on average.
 - **Channel 1**: lower frequency means slightly better wall/body penetration. Distinct from channel 11 by enough spacing that the two coexist cleanly without adjacent-channel interference.
@@ -354,7 +350,7 @@ Directors do not auto-scan. They transmit on a single channel chosen at startup 
 - **Show Director** (configured via Config Mode for commercial use): channel 11
 - **Custom channel** (advanced operators, research): any of \{1, 11\} via key combination; channel 6 not selectable
 The Director's role is selected during Director Mode startup per §8.3. Default is hobby/channel 1; switching to show/channel 11 requires explicit operator action - reflecting that show deployment is a more deliberate decision than hobby playing.
-### Forward direction: distance-based effects via RSSI
+### Forward direction: distance-based effects via RSSI (Currently not implemented)
 Receivers capture RSSI (received signal strength) on every received frame. The primary use is operator awareness - a battery-style indicator showing whether the device has adequate signal. This is captured in Epic 4.
 A secondary, longer-term direction worth noting: RSSI gives a coarse approximation of distance from the transmitter, which in a fixed-stage deployment translates to distance from the stage. This opens a class of distance-based effects that PixMob-style broadcast IR can't achieve:
 - **Wave effects**: a colour pulse propagates outward from the stage, with each receiver delaying its own pulse proportionally to its RSSI. The closer to stage, the earlier the pulse fires; further away, later. Visually creates a wave moving across the crowd.
@@ -374,14 +370,14 @@ NocturNation's answer is **no universe field in v1**, for several reasons:
 - **Operational discipline is sufficient.** If two shows need to coexist on channel 11, the operators agree on group ranges before deployment. This is the same way large festivals coordinate radio frequencies, lighting universes, audio frequencies - human coordination, not automated arbitration.
 **Comparison to Art-Net's universe field.** Art-Net's universe is a *channel-space identifier* - it says "this packet contains 512 DMX values for universe N". NocturNation is fundamentally event-driven, not channel-stream-driven; we don't broadcast "channel values", we broadcast "beat detected, fire colour X to group Y". So Art-Net's universe concept doesn't have a clean analogue here. Adding a universe field by analogy would be cargo-culting.
 **When this would change**: if real-world deployment surfaces a multi-show-on-same-channel scenario that operational discipline cannot handle (e.g., shows that don't want to coordinate, or where group-range partitioning is too restrictive), a v2 frame format adds a `scope` or `universe` field. Tier 2+ deployments use it; Tier 0 hobby stays on v1 with no overhead. The EXTENSION message type 0xFF in v1 is the migration path. Until that need is real, the simpler frame wins.
-### Forward direction: per-device addressing for K-pop-style commercial deploymentsA further commercial direction worth flagging, though significantly further out: **per-device addressing for surgical effects**.
+### Forward direction: per-device addressing for K-pop-style commercial deployments. A further commercial direction worth flagging, though significantly further out: **per-device addressing for surgical effects**.
 K-pop concerts use considerably more expensive crowd-lighting devices (typically \$60-100, sometimes more) than the bracelet model PixMob targets. Audiences are happy to pay these prices because the device is a souvenir they own and bring to every show, not a single-use ticket inclusion. The technical capability that makes these expensive devices interesting is **seat-linked addressing**: each device is registered to a specific seat number for a given show, allowing the show operator to address devices with surgical precision. Effects that become possible:
 - **Text in the audience**: spell out words across the field of view by lighting only the devices at specific seat positions.
 - **Gradients across the field**: continuous colour transitions that respect physical position rather than broadcast groups.
 - **"Wave from front to back" with precision**: not RSSI-approximate, but exact - because the show knows where every device is.
 - **Personalised effects**: VIP seats get distinct colours, fan club sections get coordinated patterns.
 This is a fundamentally different commercial model from PixMob's:
-- *PixMob model*: dumb bracelets, IR projectors do the addressing, single-use mostly, \~£20/each, ticket inclusion or short-term loan.
+- *PixMob model*: dumb bracelets, IR projectors do the addressing, single-use mostly, \~£2/each, ticket inclusion or short-term loan.
 - *K-pop light stick model*: smart, fan-owned, expensive (£60-100+), brings to every show, customisable, status symbol within fandom culture.
 For NocturNation, this is exactly the kind of long-term capability the merch-receiver economic model could support. A £60 fan-owned device justifies BLE pairing, app-based seat mapping, even GPS for outdoor venues. Per-device addressing means truly personalised effects, which justifies the price point. The fan owns the device forever, brings it to every show, becomes part of the band's community. The band makes ongoing revenue from accessory sales, special-edition versions, app-driven features.
 This is *not* a commitment to build it - it's a sketch of an ambition the architecture should remain compatible with. Specifically, the protocol's group ID field (5 bits, 0-31) is too narrow for per-device addressing of large audiences, but the message-type space (0xFF) leaves room for a future EXTENSION-class message that carries a wider per-device identifier without breaking existing receivers. The architecture commits to nothing here beyond "don't paint into a corner that forecloses this direction".
@@ -421,7 +417,7 @@ Group ID is a first-class concept in the NocturNation protocol, not a PixMob-IR-
 - **Groups 1-3** - automatic coordination groups. Lumes assign themselves a random group from this range at first boot, persisted to NVM. Across an audience this gives natural colour/pattern variety without operator intervention.
 - **Groups 4-31** - specialist assignment. Set explicitly via Config Mode (Tildagon UI) or via a SET_GROUP_ID command (PixMob bracelet IR). Used for VIPs, performers' own bracelets, the lighting designer's monitor unit, designated zone sub-groups, etc.
 The 5-bit field width (groups 0-31) matches the PixMob protocol's existing constraint, simplifying the IR driver's translation.
-Lumes that haven't been assigned a group default to group 1, ensuring something happens out of the box. Operators can verify group assignment by entering Test Mode on the Lume and triggering Group Targeting Test.
+Lumes that haven't been assigned a group default to a random group assignment from 1-3, ensuring something happens out of the box. Operators can verify group assignment by entering Test Mode on the Lume and triggering Group Targeting Test.
 For PixMob bracelets specifically, group ID is set via the `buildSetGroupId` IR command per §4.4. For Tildagons, group ID is set via the on-device Config Mode menu and stored in app settings. Both paths produce the same protocol-level behaviour.
 Note that group IDs and the per-device addressing flagged in §4.5 are complementary, not alternative: groups handle coarse "this section vs that section" coordination cheaply, per-device addressing (if and when implemented) handles surgical positioning. A future commercial deployment might use both - group 4 for VIP front rows with per-device addressing within them, group 0 for everyone else as broadcast targets.
 **Epic 4.65 update (post-architecture-stream)**: group ID widens from the original 5-bit (0-31) PixMob-derived width to a full 8-bit field (0-255) on the NocturNation wire, with a parallel `target_class` byte added to `LIGHT_COMMAND` for hardware-class addressing (light bracelets / screen devices / multi-LED+screen devices / future classes - see §7.6 for the `OutputBinding::class()` contract that drives Lume-side filtering). PixMob bracelets remain a 5-bit-group device protocol-internally; `PixMobIrBinding` enforces the 0-31 cap and drops frames addressed to higher groups with a debug log. Group 0 still means "all groups" across both PixMob IR and NocturNation-native ESP-NOW. The 32-255 group range is for future deployments needing more than 32 zones (e.g. stadium seating sections); no current consumer.
@@ -479,7 +475,7 @@ Band-layout boundaries are specified in Hz, not bin numbers. Bin assignments are
 	None of these are committed; flagged so the architecture remains compatible with the direction (BLE transport already declared, message-type space has room for stem-specific events, the orchestration layer's event consumption already runs off DAL events that could come from any analyser source).
 ---
 ## 6. Effects catalogue
-The **effect** is the unit of artistic intent that orchestration produces and that drivers translate to hardware. Each effect describes *what* the lights should do, abstracted from *how* a particular device implements it. A single effect renders differently on a PixMob bracelet (RGB+envelope IR command), a Tildagon badge (animation on six addressable LEDs plus optional screen overlay), and a future RGB-strip device (per-pixel state across many LEDs).
+The **effect** is the unit of artistic intent that orchestration produces and that drivers translate to hardware. Each effect describes *what* the lights should do, abstracted from *how* a particular device implements it. A single effect renders differently on a PixMob bracelet (RGB+envelope IR command), a Tildagon badge (animation on twelve addressable LEDs plus optional screen overlay), and a future RGB-strip device (per-pixel state across many LEDs).
 The set below is the v1 catalogue. Each is a primitive that orchestration can compose: a "show" is a sequence of effect invocations driven by events.
 ### 6.1 Effect primitives
 <table header-row="true">
@@ -629,7 +625,7 @@ Nocturnation runs on a heterogeneous mix of devices, several of which have a scr
 <td>**EMF Tildagon badge**</td>
 <td>Round colour LCD</td>
 <td>240 × 240 px (circular)</td>
-<td>Full colour, MicroPython framebuffer, SDK font and icon helpers. Plus six perimeter RGB LEDs as a separate "ring" surface.</td>
+<td>Full colour, MicroPython framebuffer, SDK font and icon helpers. Plus twelve perimeter RGB LEDs as a separate "ring" surface.</td>
 </tr>
 <tr>
 <td>**M5Stack Atom Lite**</td>
@@ -653,13 +649,13 @@ Nocturnation runs on a heterogeneous mix of devices, several of which have a scr
 ### 7.2 Display roles
 Nocturnation treats the display as a separately-addressable resource within a node, not coupled to the lighting effect. A node can simultaneously be running a Pulse effect on its lighting output *and* showing a BPM readout on its screen. Roles include:
 - **Operator UI**: status (current mode, BPM, battery, network state), parameter readouts (FFT level meter, beat indicator), error messages, configuration screens. The current StickC Plus2 firmware uses the display almost exclusively for this.
-- **Show element**: the screen becomes part of the visual output. Pulses on the lighting output can be accompanied by full-screen colour washes that match. Tildagon badges in the audience can show animations beyond what their six LEDs support: pulsing concentric circles, scrolling text ("NULLSECTOR", song titles), iconography (band logos, EMF logo, lunar phase glyphs).
+- **Show element**: the screen becomes part of the visual output. Pulses on the lighting output can be accompanied by full-screen colour washes that match. Tildagon badges in the audience can show animations beyond what their twelve LEDs support: pulsing concentric circles, scrolling text ("NULLSECTOR", song titles), iconography (band logos, EMF logo, lunar phase glyphs).
 - **Diagnostic**: live FFT spectrum, IBI history, ESP-NOW frame counters, last-received-from indicator. Useful for development and tuning, can be toggled off for performance.
 - **Idle / ambient**: when no music is playing or the device is paused, the screen shows something pleasant - a subtle hue cycle, a clock, the Nocturnation logo. Avoids the "dead device" appearance.
 ### 7.3 Tildagon-specific considerations
 The Tildagon badge is unusual because it's both a *receiver* (in the audience, animating with the show) and a *personal device* (its owner's badge for the festival, with their own apps and identity). The display treatment must respect that:
 - The Nocturnation receiver app runs as one of many apps on the badge. It only "owns" the display while it's the foreground app.
-- When in the foreground, the show animation runs full-screen on the round LCD plus the six perimeter LEDs.
+- When in the foreground, the show animation runs full-screen on the round LCD plus the twelve perimeter LEDs.
 - When backgrounded, the perimeter LEDs continue to react (ESP-NOW listening continues), but the screen shows whatever foreground app the user has chosen.
 - An opt-in "intense mode" gives the show full-screen treatment even when in another app, for users who want the full effect during a known show window.
 ### 7.4 Display-as-light + render_fx() canonical entry point
@@ -713,7 +709,7 @@ Two bindings ship today: `LocalDisplayBinding` (paints the Lume's LCD full-bleed
 - `0x04+` - reserved for future classes (accelerometer-stick, smoke-machine, etc.).
 `render_fx` targets become `"\<class\>:\<group\>"` in hex: `"00:00"` = everyone-everywhere, `"01:00"` = every light-class device any group, `"01:07"` = light-class group 7, `"03:01"` = Tildagon-class group 1. The Director encodes both bytes into `LIGHT_COMMAND.target_class` and `target_group` (§4.3); Lumes filter inbound frames against `(binding.device_class(), binding.configured_group())` per active binding and only fan out where both axes match. Relay bindings (`PixMobIrBinding`) bypass the Lume-side group filter on inbound LIGHT_COMMAND - the bracelet protocol does its own group filtering at the IR layer.
 A StickC Lume with both `LocalDisplayBinding` (class `Screen`) and `PixMobIrBinding` (class `Light`) active is conceptually two classed devices on one host: a Director firing `"01:00"` hits the IR binding only; firing `"02:00"` hits the display only; firing `"00:00"` hits both. The class lives on the binding, not the chassis.
-Future hosts add their own bindings without touching Lume-mode code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its six perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
+Future hosts add their own bindings without touching Lume-mode code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its twelve perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
 **Shared infrastructure.** A `Plugin` base class provides id, display name, capability requirements, NVS-backed `PropertyBag`, and `PowerProfile` declaration. The NVS namespace prefix depends on plug-in kind: `nv_\<id\>` for the retired Visualisation surface (TUs still compile but inert), `nb_\<id\>` for OutputBinding, `ns_\<id\>` for Show (Epic 4.7). Plug-in id is capped at 12 chars so the namespace stays under NVS's 15-char limit. Templated `Registry\<T\>` machinery with explicit `register_plugin()` calls in `main.cpp` (no static-init magic); a separate registry per plug-in kind.
 ---
 ## 8. Node operating modes and UI
@@ -937,7 +933,7 @@ Master at fixed location handles audio analysis. Distributed transmitter nodes p
 ## 10. Use case roadmap
 ### 10.1 Short-term (working / immediate)
 1. **Local beat analysis and IR control for one group via StickC Plus2.** Status: ✅ working. Standalone, single-bracelet, no networking. The reference deployment for the Coldplay tribute act.
-2. **Group ID setting for PixMob bracelets.** Status: ✅ verified - the 2-command `SetGroupId` + `SetGroupSel` workflow lands the new group ID on the bracelet (X4 Gen3.1, hardware-tested 2026-05-09). Implemented in `pixmob_protocol.h` and surfaced through the `AssignDeviceGroup` DAL capability.
+2. **Group ID setting for PixMob bracelets.** Status: ✅ verified - the 2-command `SetGroupId` + `SetGroupSel` workflow lands the new group ID on the bracelet (Aurora, hardware-tested 2026-05-09). Implemented in `pixmob_protocol.h` and surfaced through the `AssignDeviceGroup` DAL capability.
 3. **Tildagon app with ESP-NOW Lume mode, StickC Plus2 Director transmitting.** Status: ✅ working (Epic 6B, bench-verified 2026-05-21). The Tildagon runs both a Lume receiver and an IMU tap-to-beat Director (§8.9), exercising the v1 ESP-NOW frame format end-to-end on real hardware. Gives EMF app submission lead time.
 ### 10.2 Medium-term (EMF 2026)
 - **Constellation art piece v1** - 5 bracelets, paper lantern enclosures, bird-feeder mounting, single master. Blocked on item 2 of the short-term roadmap; design contingency required if group setting doesn't work.
@@ -1002,7 +998,7 @@ Indicative runtimes per platform under typical Nocturnation workload. Numbers ar
 <td>FFT and IR transmission are the dominant load. Plug in via USB-C for indefinite operation; small power bank doubles runtime trivially.</td>
 </tr>
 <tr>
-<td>**PixMob bracelet** (X4 Gen3.1)</td>
+<td>**PixMob bracelet** (Aurora)</td>
 <td>2 × AAA</td>
 <td>Tens of hours of intermittent use; original 2024 Coldplay tour batteries still functional in May 2026</td>
 <td>Bracelets sleep between IR commands; only LED illumination during ASR envelopes draws meaningful current. Not a near-term concern.</td>
@@ -1091,7 +1087,7 @@ The full security architecture - including threat model, deployment tiers, time-
 The key architectural commitments that affect other parts of this spec:
 - **Open algorithms, secret keys.** Nocturnation uses standard, openly-published cryptographic primitives (AES-128 for symmetric, ECDSA P-256 for asymmetric). Security derives from key management, not algorithm secrecy. Consistent with Kerckhoffs's principle.
 - **Tiered deployment.** Open / MAC-whitelist / PSK / signed-cert tiers, selectable per deployment via Director Mode config (§8.4). Default for new installations is Open (Tier 0).
-- **Time anchoring via timecode field.** The 4-byte `master_timecode` in the ESP-NOW frame format (§4.3) doubles as a deduplication key and as a tamper-evidence mechanism for cert validity, eliminating the need for receivers to have an RTC.
+- **Time anchoring via the heartbeat.** The `days_since_2026` and `centiseconds_today` fields in the 9-byte HEARTBEAT payload (§4.3) provide the Tier 3 wall-clock anchor and the tamper-evidence watermark for cert validity, so receivers don't need an RTC. Deduplication is handled separately by the 1-byte `sequence_number` in the frame header (the two were split in v0.13; the clock folded into HEARTBEAT in v0.27).
 - **Hobbyists are unaffected.** The cert system is fully optional; Tier 0/1 deployments have no crypto overhead, no key management, no expiry concerns. The sophistication exists for those who need it without imposing on those who don't.
 - **Calm Mode is per-receiver and unidirectional.** Lumes locally choose to ignore strobe-flagged frames; the Director is not informed. Consistent with the no-back-channel design (§4.3).
 See the Security RFC for the full design.
@@ -1100,7 +1096,7 @@ See the Security RFC for the full design.
 - **ASR**: Attack/Sustain/Release - the envelope shape of an LED illumination.
 - **BPM**: Beats Per Minute.
 - **Bracelet**: a wearable IR-controlled RGB LED device (e.g. PixMob). A specific kind of Lume.
-- **Director**: the upstream node responsible for audio analysis, beat/drop/section detection, and event broadcast. There is at most one Director per coherent show. Replaces the older term "master". Requires a microphone to function. Hosts: M5StickC Plus2, M5StickS3. Hosts without microphones (Tildagon) cannot be Directors.
+- **Director**: the upstream node responsible for beat/drop/section detection and event broadcast. There is at most one Director per coherent show. Replaces the older term "master". Requires a beat source plus an output: most Directors use a microphone for audio analysis (M5StickC Plus2, M5StickS3), but a host with no microphone can still be a Director via IMU tap-to-beat (the Tildagon, Epic 6B / §8.9).
 - **Lume**: any downstream device that listens to a Director and turns events into light. Form-agnostic: badges, wristbands, sticks acting as receivers, future hardware. Replaces the older term "slave" (also previously called "receiver"). A Lume can simultaneously be a receiver (consuming the show) and a repeater (rebroadcasting to extend reach). A Tildagon is a Lume; a PixMob bracelet is a Lume; an M5 Stick configured as a receiver is a Lume.
 - **DMX**: standard lighting control protocol; 512 channels per universe, each channel a single 0-255 byte.
 - **Art-Net**: DMX over UDP/IP. Allows lighting consoles to drive multiple universes over Ethernet or WiFi.
@@ -1109,6 +1105,7 @@ See the Security RFC for the full design.
 - **Flux**: positive change in spectral energy; characterises onsets.
 - **IBI**: Inter-Beat Interval - milliseconds between consecutive beats.
 - **Group ID**: in the NocturNation protocol, an 8-bit identifier (0-255) assigning Lumes to addressable groups. Group 0 is broadcast (all groups). For PixMob bracelets specifically, the protocol-internal range is 5-bit (0-31) per the PixMob IR wire format; NocturNation-native Lumes use the full 0-255 range.
+- **TOFU** (Trust-On-First-Use): a Lume locks onto the first valid Director frame it hears - identified by `source_id` - and ignores frames from any other source for the rest of the session; the lock expires after a frame-gap timeout, after which the Lume re-acquires. It is the basis of the channel-11 Performance Mode access control (see the operator workflow and protocol manual).
 - **Code-rename note**: the codebase as of v0.24 still uses the older class names `MasterMode`, `SlaveMode`, `slv_group`, etc. These identifiers refer to the same conceptual entities as Director and Lume. A planned code-rename Epic will align the code with this vocabulary; until then, code references in this document use the older names where they refer to literal symbols.
 ---
 ## Document history

@@ -2,10 +2,10 @@
 title: "NocturNation protocol manual"
 status: Draft
 protocol_version: 0x02
-firmware_version: "v0.5"
+firmware_version: "v0.6"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-05-17
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
@@ -16,7 +16,7 @@ sync_direction: bidirectional
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
 **Protocol version specified by this document**: `0x02`.
-**Reference firmware version**: v0.5 (`include/firmware_version.h`).
+**Reference firmware version**: v0.6 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
 ---
@@ -60,7 +60,7 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x02`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
 
-The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x02`.
+The protocol version is independent of the firmware version. Firmware version `v0.6` implements protocol version `0x02`.
 
 ### 1.5 Licence
 
@@ -72,9 +72,11 @@ This document is licensed under [Creative Commons Attribution-ShareAlike 4.0](ht
 
 ### 2.1 Carrier
 
-NocturNation operates on the 2.4 GHz ISM band using Espressif's **ESP-NOW** transport, which carries vendor-specific action frames in the IEEE 802.11 management category. ESP-NOW is connection-less and broadcast-friendly; the wireless medium is unencrypted and unauthenticated at this protocol version (Tier 0 security; see [security RFC](https://www.notion.so/) for the deferred Tier 1 path).
+NocturNation operates on the 2.4 GHz ISM band using Espressif's **ESP-NOW** transport, which carries vendor-specific action frames in the IEEE 802.11 management category. ESP-NOW is connection-less and broadcast-friendly; the wireless medium is unencrypted and unauthenticated at this protocol version (Tier 0 security; see [security RFC](https://www.notion.so/358bd0677405817b8a60de0834511ce5) for the deferred Tier 1 path).
 
 A NocturNation frame is encapsulated as the payload of one ESP-NOW vendor action frame. The destination address is the broadcast MAC `ff:ff:ff:ff:ff:ff`. Receivers process every frame that arrives on the current channel; no association is required.
+
+ESP-NOW is the reference carrier for this version of the protocol. The frame format in [section 3](#3-frame-format) carries no ESP-NOW-specific fields, so the same frames could in principle be carried over another link such as Bluetooth LE or infra-red; other carriers are not specified by this document.
 
 ### 2.2 Channels
 
@@ -219,7 +221,7 @@ Every NocturNation receiver advertises a **device class** in the range `0x00..0x
 | Code | Name | Description |
 |---:|---|---|
 | `0x00` | `All` | Addressing wildcard; never returned by a receiver, only used as a `target_class` for global broadcast |
-| `0x01` | `Light` | Discrete-LED bracelet or wristband; e.g. PixMob X4 Gen 3.1 |
+| `0x01` | `Light` | Discrete-LED bracelet or wristband; e.g. PixMob Aurora |
 | `0x02` | `Screen` | Framebuffer-bearing device; e.g. the Stick's LCD |
 | `0x03` | `MultiLedScreen` | Device with both discrete LEDs and a framebuffer; e.g. the Tildagon (Epic 5) |
 | `0x04..0xFF` | reserved | Future use |
@@ -341,7 +343,7 @@ A conforming receiver MUST honour the following:
 A conforming receiver SHOULD honour:
 
 - The NO SIGNAL liveness behaviour in [section 6.2](#62-receiver-liveness-check).
-- Channel auto-scan if it offers the capability ([section 5.3](#53-lume-auto-scan-mode)).
+- Channel auto-scan if it offers the capability ([section 5.3](#53-lume---auto-scan-mode)).
 - The `HEARTBEAT` wall-clock fields if it needs wall-clock time (Tier 3 cert validity); otherwise the date/time fields MAY be ignored.
 
 ### 7.3 Receiver MAY honour
@@ -375,9 +377,9 @@ A conforming Director MUST honour:
 
 ## Annex A: PixMob infra-red encoding
 
-This annex describes the on-wire infra-red encoding for PixMob X4 Gen 3.1 bracelets, derived from upstream reverse-engineering work by [James Wilson (jamesw343)](https://github.com/jamesw343/PixMob_IR). The NocturNation firmware parity-tests every byte of every transmitted infra-red frame against a Python reference encoder maintained against the upstream; conformance to that upstream is the load-bearing invariant.
+This annex describes the on-wire infra-red encoding for PixMob Aurora bracelets, derived from upstream reverse-engineering work by [James Wilson (jamesw343)](https://github.com/jamesw343/PixMob_IR). The NocturNation firmware parity-tests every byte of every transmitted infra-red frame against a Python reference encoder maintained against the upstream; conformance to that upstream is the load-bearing invariant.
 
-A receiver implementing this annex interoperates with PixMob bracelets manufactured in the X4 Gen 3.1 generation. Earlier and later generations MAY use compatible encodings but have not been verified by this project.
+A receiver implementing this annex interoperates with PixMob Aurora bracelets. Other PixMob product lines MAY use compatible encodings but have not been verified by this project.
 
 ### A.1 Frame format
 
@@ -481,7 +483,7 @@ The plug-in id MUST be twelve bytes or fewer; longer ids are truncated.
 
 ### B.4 Migrations
 
-The reference firmware applies one-shot migrations on first boot after a firmware upgrade. As of v0.5 the migrations are:
+The reference firmware applies one-shot migrations on first boot after a firmware upgrade. As of v0.6 the migrations are:
 
 - Drop the legacy `slv_ir_grp` key (the function moved to the Lume's `slv_group` filter and per-binding namespaces).
 - Map the legacy `active_vis` value `"beat-pulse"` or `"spectrum-bars"` to `active_show = "simple-beat"`.

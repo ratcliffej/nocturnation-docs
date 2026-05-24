@@ -3,7 +3,7 @@ title: NocturNation DAL design
 status: cross-project (interface contract is shared; backend specifics are per-host)
 notion_url: https://www.notion.so/35abd0677405814cb1a9f97caee4179e
 notion_id: 35abd0677405814cb1a9f97caee4179e
-last_synced: 2026-05-08
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
@@ -286,7 +286,7 @@ public:
 
 Return-value semantics: `true` on success, `false` on (a) unknown target name, (b) target's profile doesn't declare the requested capability, or (c) the underlying driver isn't registered (e.g. ESP-NOW driver in Epic 2). Callers may check the return value where it matters; the prototype's existing call sites mostly trust the call.
 
-The "named helper per capability" approach gets verbose as capabilities multiply; once we hit ~15 capabilities it's worth considering a templated `fire_event<EventType>(target, event)` overload set as a refactor. Not yet.
+The "named helper per capability" approach gets verbose as capabilities multiply; once we hit ~15 capabilities it's worth considering a templated `fire_event<EventType>(target, event)` overload set as a refactor (see §11). Not yet.
 
 ---
 
@@ -472,7 +472,7 @@ DAL::subscribe_button_presses("local", [](const char*, const ButtonPressEvent& e
 - **Subscription scope.** `subscribe_audio_frames("local", cb)` is fine when there's one mic. If a future host has multiple mics, do we register them as separate device names? Probably yes; flag if it becomes awkward.
 - **Multi-callback subscriptions.** Current sketch allows one callback per (target, event-type) pair. If multiple subsystems want to subscribe to `AudioFrame` events, do we allow a list of callbacks? Easy to add later; not in v1.
 - **JSON-loaded profiles.** Deferred; revisit when there's a real "users want to add device types without recompiling" use case.
-- **Telemetry channel.** Per Jason's note: "being able to understand how many devices are responding etc might be useful in future". Could live as a per-driver `responding_count(group_id)` accessor that drivers with ack capability implement; PixMob's IR driver returns -1 (unknown). Defer until first real use case.
+- **Telemetry channel.** Per Jason's note: "being able to understand how many devices are responding etc might be useful in future". The deferred per-call-ack counter from §10 could live as a per-driver `responding_count(group_id)` accessor that drivers with ack capability implement; PixMob's IR driver returns -1 (unknown). Defer until first real use case.
 
 ---
 
