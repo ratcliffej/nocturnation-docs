@@ -5,7 +5,7 @@ notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
 last_synced: 2026-05-23
 sync_direction: bidirectional
-notion_status: synced (2026-05-23 - full local push, chunked: duplicate-section/contradiction fixes, Aurora 7-LED/2xAAA, TOFU, + Jason's local edits. Local reflowed to pipe tables + blank-line spacing for clean GitHub rendering; mention-page tag delinked)
+notion_status: "synced 2026-05-23 - full local push (chunked); duplicate-section + contradiction fixes, Aurora 7-LED/2xAAA, TOFU, plus Jason's local edits. Local reflowed to pipe tables + blank-line spacing for clean GitHub rendering; mention-page tag delinked."
 ---
 
 **Status:** Draft v0.30 - early architecture document, expect substantial revision.
