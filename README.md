@@ -13,7 +13,7 @@ The documents here are the canonical entry points for operators and implementers
 | [User manual](manuals/user-manual.md) | Operators setting up a venue | Theory of operation, hardware, firmware install, configuration walk-through, modes and shows, troubleshooting, glossary. |
 | [Operator workflow](manuals/operator-workflow.md) | Operators on the night | Channel selection, Performance Mode (channel 11), `source_id` verification, on-the-night recovery. |
 | [Protocol manual](manuals/protocol-manual.md) | Implementers of a transmitter or receiver | ESP-NOW wireless layer, frame formats, class-and-group addressing, PixMob IR annex, channel discovery, NVS schema, conformance, test vectors. |
-| [Flow diagrams](manuals/flow-diagrams.md) | Both | Mermaid renderings: topology, boot, modes, analyser, dispatch, receive, routing, configuration. |
+| [Flow diagrams](manuals/flow-diagrams.md) | Both | Mermaid renderings: topology, boot, modes, analyser, dispatch, receive, routing, configuration, channel discovery. |
 | [Developer guide](developing-shows.md) | Contributors writing `Show` plug-ins | The `Show` base class, analyser hooks, `render_fx` API, widget composition, persistence, testing. |
 | [Architecture specification](architecture.md) | Designers and curious readers | The full system design. The manuals above are the publishable distillation of this. |
 | [DAL design](dal-design.md) | Firmware contributors | Device-abstraction-layer design notes. |

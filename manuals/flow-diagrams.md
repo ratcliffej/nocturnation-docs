@@ -3,13 +3,13 @@ title: "NocturNation flow diagrams"
 status: Draft
 notion_url: https://www.notion.so/35ebd0677405807cb34cccefa936d4d9
 notion_id: 35ebd0677405807cb34cccefa936d4d9
-last_synced: 2026-05-17
+last_synced: 2026-05-23
 sync_direction: bidirectional
 ---
 
 # NocturNation flow diagrams
 
-Reference diagrams for the reference firmware (v0.5, StickC Plus2 + StickS3). Read alongside the [user manual](user-manual.md) for theory of operation context, or alongside the [protocol manual](protocol-manual.md) for byte-level specifications.
+Reference diagrams for the reference firmware (v0.6, StickC Plus2 + StickS3). Read alongside the [user manual](user-manual.md) for theory of operation context, or alongside the [protocol manual](protocol-manual.md) for byte-level specifications.
 
 Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and most modern Markdown renderers display Mermaid blocks natively.
 
