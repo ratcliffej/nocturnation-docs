@@ -404,16 +404,20 @@ struct RgbPulseEvent {
 };
 ```
 
-The PixMob protocol's 3-bit envelope timings are non-linear; pick attack/sustain/release from the enum, not arbitrary milliseconds. Use `effects::envelope_for_bpm(bpm)` if you've tracked BPM internally and want a sensible auto-envelope:
+The struct's field types still name `pixmob::Time` / `pixmob::Chance` because that's the underlying type in [include/pixmob_protocol.h](../include/pixmob_protocol.h), but **render-side callers should write the values as `pulse::T_*` / `pulse::CHANCE_*`** — protocol-neutral aliases declared in [include/pulse/envelope.h](../include/pulse/envelope.h). The aliases are the same type, so they assign into the struct cleanly; the rename keeps the PixMob protocol module honest about what it owns (the wire encoder) while letting Shows stay carrier-neutral. Future output bindings (e.g. DMX, Epic 7) will map the same `pulse::` levels to their own wire formats.
+
+The 3-bit envelope timings are non-linear; pick attack/sustain/release from the enum, not arbitrary milliseconds. Use `effects::envelope_for_bpm(bpm)` if you've tracked BPM internally and want a sensible auto-envelope:
 
 ```cpp
+#include "pulse/envelope.h"   // pulse::T_* / pulse::CHANCE_*
+
 const effects::PulseEnvelope env = effects::envelope_for_bpm(bpm);
 RgbPulseEvent wire{};
 wire.r = r; wire.g = g; wire.b = b;
 wire.attack  = env.attack;
 wire.sustain = env.sustain;
 wire.release = env.release;
-wire.chance  = pixmob::CHANCE_100;
+wire.chance  = pulse::CHANCE_100;
 DAL::render_fx("01:01", wire);
 ```
 
