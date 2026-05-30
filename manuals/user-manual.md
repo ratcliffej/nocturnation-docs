@@ -183,6 +183,8 @@ In practice:
 - **Medium venues** (large room, fifty to two hundred bracelets): one Director plus two to four Lumes, ideally distributed at corners or along long walls. Mix Plus2 and S3 freely; orient the S3s toward the densest crowd areas.
 - **Large venues** (multiple rooms, hundreds of bracelets): one Director at front of house, Lumes at every aisle and corner; use the Lume-as-repeater toggle to extend radio range without adding IR sources.
 
+For a per-Stick coverage boost on the Plus2, the firmware also supports an **optional external IR transmitter** wired to the **GPIO 26 header pin** (e.g. the M5Stack IR Transmitter unit). It can run alongside the built-in LED - both emitters fire on every command, back-to-back, roughly doubling coverage - or replace it. Toggles live in `Connectivity > IR` (see [section 4.3](#43-connectivity)). External IR is **Plus2-only**: the S3's header pinout is different and an IR unit plugged in directly drives a strapping pin that forces the chip into boot mode.
+
 ### 2.4 Antenna orientation
 
 The Sticks transmit Wi-Fi (and hence ESP-NOW) via a small ceramic patch antenna on the rear of the board. The radiation pattern is broadly hemispherical, biased toward the rear. Two Sticks placed face-to-face on a table will have weaker radio coupling than two Sticks placed back-to-back or both screen-side-up. For maximum radio range, stand Lumes on their butts (USB-C connector down, screen vertical) and orient them so the rear face points roughly toward the Director.
@@ -285,7 +287,9 @@ A single toggle:
 A picker leading to four sub-menus:
 
 **IR** (active):
-- `Enable / Disable` - Director IR transmit and Lume IR transmit toggle. NVS key `ir_en`, default on.
+- `Enable / Disable` - master Director IR transmit and Lume IR transmit toggle. NVS key `ir_en`, default on.
+- `Internal` - whether the built-in IR LED fires (Plus2 GPIO 19, S3 GPIO 46). NVS key `ir_int_en`, default on. **Plus2 only** in the menu - shown only on boards where a second emitter is available.
+- `External` - whether an external IR transmitter on the Plus2's GPIO 26 header pin fires. NVS key `ir_ext_en`, default off. **Plus2 only** in the menu. With both `Internal` and `External` on, every encoded command is fired through both emitters back-to-back, roughly doubling coverage (see [section 2.3](#23-ir-radiation-patterns)).
 - `Protocol` - currently PixMob only; reserved for future protocols.
 
 **ESP-NOW** (active):
