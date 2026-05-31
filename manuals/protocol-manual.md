@@ -138,11 +138,14 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 |---:|---|---:|---|
 | `0x00` | `HEARTBEAT` | 9 | Director to all |
 | `0x03` | `LIGHT_PULSE` | 9 | Director to all |
+| `0x06` | `LIGHT_WASH` | 16 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x07` | `LIGHT_WASH_END` | 3 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x08` | `LIGHT_WASH_PULSE` | 9 | Director to all (only Lumes currently washing act on it; everyone else drops) |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
 All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
-A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_PULSE`. A receiver MAY honour `EXTENSION` and future code points when defined.
+A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_PULSE`. A receiver MAY honour `EXTENSION` and future code points when defined. A receiver that declares itself **wash-capable** (per its `BindingCapabilities` surface; see [developing-shows.md / capability design doc](../lume-capabilities-design.md)) MUST honour `LIGHT_WASH`, `LIGHT_WASH_END`, and `LIGHT_WASH_PULSE`; a receiver that is *not* wash-capable MUST silently drop these three types.
 
 ### 3.3 Payloads
 
@@ -178,7 +181,54 @@ The most-emitted message type; carries every render fire on the system.
 
 A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
 
-#### 3.3.3 `EXTENSION` (`0xFF`)
+#### 3.3.3 `LIGHT_WASH` (`0x06`)
+
+> Added in Epic 6C Phase D (2026-05-31). The wash-family primitive that lets a capable Lume hold a persistent background colour with optional cosine-eased two-colour drift, on top of which a `LIGHT_PULSE` can overlay. The semantic contract is in [`lume-capabilities-design.md`](../lume-capabilities-design.md); this section is the wire-format normative reference.
+
+Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `r2/g2/b2` over `cycle_ms`; `cycle_ms = 0` holds `r1/g1/b1` only.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_class` | 1 | Per [section 4](#4-class-and-group-addressing); `0` = all classes. |
+| 1 | `target_group` | 1 | `0` = broadcast within class; `1..255` = specific group. |
+| 2 | `r1` | 1 | Start colour red 0..255. |
+| 3 | `g1` | 1 | Start colour green 0..255. |
+| 4 | `b1` | 1 | Start colour blue 0..255. |
+| 5 | `r2` | 1 | End colour red 0..255. Ignored by the renderer when `cycle_ms == 0`, but the byte is still on the wire. |
+| 6 | `g2` | 1 | End colour green 0..255. |
+| 7 | `b2` | 1 | End colour blue 0..255. |
+| 8 | `attack` | 1 | Ramp time from current rendered colour into the wash baseline. Units: **100 ms** (range 0..25.5 s). |
+| 9 | `release` | 1 | Default fade-out time when the wash ends (TTL expiry or superseded by another `LIGHT_WASH`). Units: **100 ms**. May be overridden by a `LIGHT_WASH_END.release_time` for explicit cancellation. |
+| 10 | `intensity` | 1 | Brightness scalar 0..255 applied to the wash baseline before any pulse overlay. |
+| 11 | `cycle_ms` | 2 LE | One full A↔B↔A oscillation in milliseconds. `0` = no cycle, hold `r1/g1/b1`. |
+| 13 | `ttl_seconds` | 2 LE | Time-to-live in seconds. `0` = infinite (held until `LIGHT_WASH_END` or a superseding `LIGHT_WASH`). |
+| 15 | `pulse_response` | 1 | `0` = ignore inbound `LIGHT_PULSE` while washing (wash holds untouched); `1` = accept `LIGHT_PULSE` as additive overlay on the live wash baseline. |
+
+`payload_len == 16`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
+
+#### 3.3.4 `LIGHT_WASH_END` (`0x07`)
+
+> Added in Epic 6C Phase D. Explicit cancel of an active wash, with operator-chosen fade time that overrides the wash's own `release`.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_class` | 1 | Same routing as `LIGHT_WASH`. |
+| 1 | `target_group` | 1 | Same. |
+| 2 | `release_time` | 1 | Fade from the instantaneous wash colour to black over this duration, then exit wash mode. Units: **100 ms**. Overrides the active wash's own `release` field. |
+
+`payload_len == 3`. A wash-capable Lume with an active wash MUST fade to black over `release_time` and then exit wash mode (resuming regular `LIGHT_PULSE` rendering against a black baseline). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command.
+
+#### 3.3.5 `LIGHT_WASH_PULSE` (`0x08`)
+
+> Added in Epic 6C Phase D. Same payload shape as `LIGHT_PULSE` (9 bytes); differs only in dispatch semantics — fires only on Lumes currently in wash state.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0..8 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 9 | Same wire layout as `LIGHT_PULSE`. |
+
+`payload_len == 9`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
+
+#### 3.3.6 `EXTENSION` (`0xFF`)
 
 Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
 
