@@ -62,7 +62,7 @@ The DAL `render_fx(target, ev)` entry point keeps its name — `render_fx` is th
 
 ### 4.1 `LIGHT_WASH` (wire byte 0x06, 16-byte payload)
 
-> **Corrected in Phase D**: the v0.3 source prompt called this a 17-byte payload — that was a simple arithmetic error in the spec (1+1+3+3+1+1+1+2+2+1 = 16, not 17). The implementation lands as 16 bytes; this doc and the Notion source prompt are corrected to match.
+> **Byte-count corrected in Phase D**: the v0.3 source prompt called this a 17-byte payload — that was an arithmetic error in the spec authoring (1+1+3+3+1+1+1+2+2+1 = 16, not 17). The implementation lands as 16 bytes; this doc, the protocol manual, and the Notion source prompt are corrected to match.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -166,7 +166,7 @@ These are deliberately *not* resolved by Epic 6C. They are noted here so a futur
 
 ## Existing filter audit (Phase B)
 
-Audited the Lume-side dispatch of inbound `LIGHT_COMMAND` (the existing wire type that Phase C renames to `LIGHT_PULSE`). Reference: `LumeMode::fan_out_light_command` in `src/modes/lume_mode.cpp` — the single function that walks the active-bindings array and decides which bindings receive the call for each incoming frame.
+Audited the Lume-side dispatch of inbound `LIGHT_PULSE` (renamed from `LIGHT_COMMAND` in Phase C). Reference: `LumeMode::fan_out_light_pulse` in `src/modes/lume_mode.cpp` (formerly `fan_out_light_command`) — the single function that walks the active-bindings array and decides which bindings receive the call for each incoming frame.
 
 **What was checked:**
 
@@ -207,15 +207,36 @@ The pulse envelope is a triangular approximation of the ASR shape over `attack+s
 
 **Capability dispatch (Phase B/F closure).** The Phase B audit flagged that capability-aware dispatch was a Phase F concern. Confirmed implemented: `LumeMode::fan_out_light_wash[_end|_pulse]` short-circuits the per-binding routing with `if (!slot.binding->capabilities().can_wash) continue;`. Wire frames addressed to PixMob-class targets still pass the class filter (since `PixMobIrBinding::device_class() == Light`), but the capability gate then drops them before `on_light_wash` would be called. PixMobIrBinding therefore needs no changes — the dispatch layer keeps it pulse-only by construction.
 
-**Single-Stick demo caveat.** ESP-NOW broadcasts don't echo to the broadcaster, so a Stick acting as both Director and the only Lume in range won't see its own wash on its own LCD; `DAL::dispatch_output_class_group`'s loopback for PULSE paints the Director's screen via `LocalDriver`, but no equivalent wash-loopback to `LocalDisplayBinding` exists yet. Hardware verification therefore wants **two Sticks** (one Director running `Wash Demo`, one Lume receiving). Adding a wash-loopback step inside `DAL::render_wash` so the Director's own LCD also renders the wash is a small follow-up — recorded in §"Open questions" above; not in Phase F's scope.
+**Single-Stick demo caveat — by design, not a gap.** ESP-NOW broadcasts don't echo to the broadcaster, so a Stick acting as both Director and the only Lume in range won't see its own wash on its own LCD. This is the right behaviour, not a gap to close: a StickC's LCD is the **UI surface** in Director / Test / Config modes (menus, status, calibration prompts) and the **lighting surface** only in Lume mode (where `LocalDisplayBinding` is activated and paints full-bleed). A Director-side wash loopback that hijacked the Director's own LCD for the wash would obliterate the UI on the one device the operator is reading. Hardware verification therefore wants **two devices**: one Director (Stick or Tildagon) broadcasting, one Lume (Stick or Tildagon) receiving. The PULSE loopback via `DAL::dispatch_output_class_group` does paint the Director's screen via `LocalDriver` today and is a brief per-beat flash on the UI — tolerable but worth gating on `current_mode == Lume` if it ever becomes intrusive.
 
 **Hardware verification checklist** (run separately on real Sticks):
 - [ ] Two Sticks on the same ESP-NOW channel; Lume Stick is wash-capable (LocalDisplayBinding active).
-- [ ] Director runs `Wash Demo` (or fires `Config > Utilities > Wash Test > Fire`).
+- [ ] Director runs `Wash Demo` (or fires `Test Mode > Wash Test > Fire`).
 - [ ] Lume's LCD fades into the orange end of the palette over ~2 s (attack), then drifts smoothly between orange and purple on a ~5 s breath.
 - [ ] On a kick from the music, a brighter overlay flashes briefly without snapping the baseline to black.
-- [ ] On Show exit (or `Wash Test > Cancel`), the LCD fades to black over ~1 s.
+- [ ] On Show exit (or `Test Mode > Wash Test > Cancel`), the LCD fades to black over ~1 s.
 
 ---
 
-*Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
+## Phase H close-out (2026-05-31)
+
+Epic 6C is complete. The protocol surface (LIGHT_PULSE rename + LIGHT_WASH family), the dispatch layer (BindingCapabilities + capability-gated fan-out), and the renderer (cosine drift + ADR-from-current crossfade) have all landed. The architecture spec (`architecture.md`) absorbs the canonical surface at v0.32:
+
+- **§4.3** now lists five active message types (HEARTBEAT, LIGHT_PULSE, LIGHT_WASH, LIGHT_WASH_END, LIGHT_WASH_PULSE) with full byte layouts. "Why two messages, not one" is rewritten as "Why five messages, not two" with per-type rationale.
+- **§7.6** documents the `BindingCapabilities` struct and per-binding declarations. The dispatch capability filter is described as the load-bearing piece that keeps PixMobIrBinding pulse-only by construction.
+- **§1.2** gains an "Implementation differs by Lume capability" subsection — capable Lumes use `LIGHT_WASH`; pulse-only Lumes get the §1.2 aesthetic via Show-driven low-cadence PULSE re-broadcasts (Show-design choice, not protocol feature).
+
+This document remains as the deeper design rationale: the state machine, the cosine formula, the overlay semantics, the supersede behaviour, the open questions deferred to future Epics, and the implementation audits (Phase B filter, Phase F renderer). The architecture spec is the canonical *what*; this doc is the canonical *why*.
+
+### Outstanding follow-ups (recorded but deferred)
+
+- **PixMob baseline simulation** via Show-driven low-cadence PULSE re-broadcasts. Documented as a Show-design pattern; not implemented as live Director behaviour. The first Show that wants the §1.2 wash-baseline aesthetic on a PixMob-only fleet will build it.
+- **Notion canonical sync** — Jason reconciles `architecture.md` v0.32 back into Notion (357bd06774058...). The local working copy is canonical for now.
+
+### Decisions recorded as closed-NO
+
+- **Director-side wash loopback (rejected 2026-05-31).** Initially proposed during bench testing as a way to let a single Stick visually verify its own wash. Rejected on the LCD-role-per-mode rule: the Stick's LCD is UI in non-Lume modes; hijacking it for a wash would obliterate the menus and status text the operator is reading. The architectural intent is that wash visualisation requires a Lume — a second Stick in Lume mode or any Tildagon Lume — and that constraint is preserved. The Wash Test entry moved from `Config > Utilities` to `Test Mode > Wash Test` in the same pass (`Utilities` is for developer bench tools; the §8.5 operator-facing test catalogue lives in `TestMode`).
+
+---
+
+*Document closes at Epic 6C close. Future Epics may amend; the §1-§9 design contract is stable.*
