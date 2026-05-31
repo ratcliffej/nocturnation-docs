@@ -137,12 +137,12 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
 | `0x00` | `HEARTBEAT` | 9 | Director to all |
-| `0x03` | `LIGHT_COMMAND` | 9 | Director to all |
+| `0x03` | `LIGHT_PULSE` | 9 | Director to all |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
 All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
-A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_COMMAND`. A receiver MAY honour `EXTENSION` and future code points when defined.
+A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_PULSE`. A receiver MAY honour `EXTENSION` and future code points when defined.
 
 ### 3.3 Payloads
 
@@ -158,7 +158,9 @@ The Director's nine-byte liveness frame. Carries a monotonic tick plus an option
 
 `payload_len == 9`. The authoritative byte-for-byte layout is enforced by `test_heartbeat_wire_format_byte_for_byte` in [`test/test_espnow_frame/test_main.cpp`](../../test/test_espnow_frame/test_main.cpp). See [section 6](#6-heartbeat-and-liveness) for emission cadence and liveness semantics; see [annex C.2](#c2-esp-now-heartbeat-frame) for a worked frame.
 
-#### 3.3.2 `LIGHT_COMMAND` (`0x03`)
+#### 3.3.2 `LIGHT_PULSE` (`0x03`)
+
+> Renamed from `LIGHT_COMMAND` in Epic 6C Phase C (2026-05-31). Wire byte and payload are unchanged - this is a name-only refactor that frees the "LIGHT" prefix for the upcoming `LIGHT_WASH` family (`0x06`/`0x07`/`0x08`). Old name retained here for cross-reference.
 
 The most-emitted message type; carries every render fire on the system.
 
@@ -201,7 +203,7 @@ The `source_id` field at offset 3 of the frame header is partitioned by range to
 
 **Lume-side rules (Trust-On-First-Use):**
 
-- A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: the Director's heartbeat is suppressed by skip-if-recent per [section 6.1](#61-director-heartbeat) while `LIGHT_COMMAND` frames flow, so a HEARTBEAT-only rule would leave a mid-song Lume idle for the duration of a song.)
+- A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: the Director's heartbeat is suppressed by skip-if-recent per [section 6.1](#61-director-heartbeat) while `LIGHT_PULSE` frames flow, so a HEARTBEAT-only rule would leave a mid-song Lume idle for the duration of a song.)
 - A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A frame carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
 - A Lume on channel 1 MUST accept any non-broadcast source_id for TOFU lock; channel 1 is the community-permissive channel by design.
 - A Lume MUST release its TOFU lock and resume scanning if no frame from the locked `source_id` has been received for `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds), shared with the channel re-scan threshold ([section 5.4](#54-lume---re-scan-on-signal-loss)).
@@ -232,7 +234,7 @@ A receiver MUST advertise a single class. A receiver running multiple bindings (
 
 Every NocturNation receiver also advertises a **group** in the range `0x00..0xFF`. The group is a one-byte filter; multiple receivers MAY share a group. Bracelet receivers in the PixMob class further constrain the group to the five-bit subset `0x00..0x1F` because the on-wire PixMob protocol carries only five bits of group; see [annex A.1](#a1-frame-format).
 
-A receiver MUST accept a `LIGHT_COMMAND` if and only if:
+A receiver MUST accept a `LIGHT_PULSE` if and only if:
 
 - `target_class == 0x00` OR `target_class == receiver.class`, AND
 - `target_group == 0x00` OR `target_group == receiver.group`.
@@ -333,7 +335,7 @@ A conforming receiver MUST honour the following:
 - Deduplication on `(source_id, sequence_number)` against a ring of at least sixteen entries ([section 2.3](#23-redundancy)).
 - The hop-count limit of 3 ([section 2.3](#23-redundancy)).
 - The class-and-group routing rules in [section 4.2](#42-group-filtering).
-- The `LIGHT_COMMAND` payload semantics: RGB triplet, attack/sustain/release envelope stages, chance gate.
+- The `LIGHT_PULSE` payload semantics: RGB triplet, attack/sustain/release envelope stages, chance gate.
 - The protocol-version validation rule in [section 1.4](#14-versioning).
 - Trust-On-First-Use locking to the `source_id` of the first valid frame after scan or rescan, and silent discard of subsequent frames whose `source_id` differs from the locked value ([section 3.4](#34-source-identifier-partitioning)).
 - Cross-range filtering on channel 11: silent discard of frames whose `source_id` is outside the Performance range (`0x40-0xFE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
@@ -359,7 +361,7 @@ A conforming receiver MAY:
 A conforming receiver MUST NOT:
 
 - Auto-promote to Director on Director loss ([section 6.2](#62-receiver-liveness-check)).
-- Transmit any NocturNation frame other than to forward an accepted frame as a repeater ([section 2.4](#24-repeater-behaviour)) or to render the local infra-red representation of a `LIGHT_COMMAND` ([annex A](#annex-a-pixmob-infra-red-encoding) for the PixMob case).
+- Transmit any NocturNation frame other than to forward an accepted frame as a repeater ([section 2.4](#24-repeater-behaviour)) or to render the local infra-red representation of a `LIGHT_PULSE` ([annex A](#annex-a-pixmob-infra-red-encoding) for the PixMob case).
 - Process frames whose `protocol_version` does not match a recognised version.
 
 ### 7.5 Director MUST honour
@@ -496,9 +498,9 @@ Migrations MUST be idempotent.
 
 This annex provides canonical byte sequences for parity testing against the reference firmware. Implementers building a NocturNation transmitter or receiver SHOULD verify against these vectors before deploying.
 
-### C.1 ESP-NOW `LIGHT_COMMAND` frame
+### C.1 ESP-NOW `LIGHT_PULSE` frame
 
-A `LIGHT_COMMAND` from source_id 1, sequence 42, broadcast (`target_class = 0x00`, `target_group = 0x00`), red `(255, 0, 0)`, envelope (attack=`T_96_MS`, sustain=`T_0_MS`, release=`T_480_MS`), chance `CHANCE_100`:
+A `LIGHT_PULSE` from source_id 1, sequence 42, broadcast (`target_class = 0x00`, `target_group = 0x00`), red `(255, 0, 0)`, envelope (attack=`T_96_MS`, sustain=`T_0_MS`, release=`T_480_MS`), chance `CHANCE_100`:
 
 ```
 Offset  Byte    Field
@@ -508,7 +510,7 @@ Offset  Byte    Field
 0x03    0x01    source_id
 0x04    0x2A    sequence_number (42)
 0x05    0x00    hop_count
-0x06    0x03    message_type (LIGHT_COMMAND)
+0x06    0x03    message_type (LIGHT_PULSE)
 0x07    0x09    payload_len
 0x08    0x00    target_class (All)
 0x09    0x00    target_group (broadcast)
@@ -581,7 +583,7 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
-| 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
+| 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_PULSE`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
 | 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
 
 Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. The source_id partitioning rules added on 2026-05-17 ([section 3.4](#34-source-identifier-partitioning)) are one such non-wire convention.
