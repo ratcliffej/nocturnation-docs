@@ -30,6 +30,7 @@ This guide covers the API surface, the conventions, and a worked example. Read i
 - [Analyser hooks](#analyser-hooks)
 - [IMU hooks (Tildagon tap-to-beat + motion)](#imu-hooks-tildagon-tap-to-beat--motion)
 - [Sending light commands](#sending-light-commands)
+- [Wash + pulse harmony](#wash--pulse-harmony)
 - [Drawing to the screen](#drawing-to-the-screen)
 - [Button handling](#button-handling)
 - [Composing widgets](#composing-widgets)
@@ -449,6 +450,138 @@ ctx.render_fx("01:01", RgbPulse(
 ```
 
 The Tildagon Director transmits on the **hobby channel (1) only** — Epic 5.5 reserves the channel-11 Performance band for M5 Directors, so a Tildagon Show can't address a curated channel-11 audience.
+
+## Wash + pulse harmony
+
+`render_fx` is for **punctuation** — a brief envelope that fires and decays. The Epic 6C `LIGHT_WASH` family adds the second half of the §1.2 picture: a continuous **baseline** the per-beat punctuation lands on top of. A Show that uses both correctly looks composed in a way a pure pulse show cannot.
+
+Re-read [architecture.md §1.2](architecture.md#12-lighting-design-principles) before writing a wash-using Show — the design language there is normative. This section translates it into concrete API calls and the patterns the reference Shows ([`bass-drift`](https://github.com/ratcliffej/nocturnation-stickc/tree/main/src/shows/bass_and_drift_show.cpp) on the StickC, [`conductor`](https://github.com/ratcliffej/nocturnation-tildagon/tree/main/shows/conductor) on the Tildagon) use to land it.
+
+### The three timescales, mapped to hooks
+
+| §1.2 layer | Timescale | Hook | What you call |
+|------------|-----------|------|---------------|
+| Song arc   | Minutes (verse / chorus / drop / breakdown) | `on_section_change` (StickC) **or** a manually-stepped property (Tildagon) | `ctx.render_wash(target, new_palette)` |
+| Phrase     | A few bars (movement across a section) | None — the receiver does this | Nothing (the wash's own `cycle_ms` A↔B↔A drift is the phrase layer) |
+| Beat       | Sub-second punctuation | `on_beat_detected` (StickC) / `on_tap_detected` (Tildagon) | `ctx.render_fx(target, RgbPulseEvent)` |
+
+The phrase layer is the one Show authors most often try to over-engineer. **You almost never need to re-emit the wash per frame to drive the phrase.** A `LIGHT_WASH` carries `r1/g1/b1`, `r2/g2/b2`, and `cycle_ms`; the receiver autonomously cycles A → B → A over that window. The Director only re-emits when *the palette changes* (section transition, operator override, palette-cycle button) or when `cycle_ms` itself needs to change (Beat-locked tempo recompute).
+
+### Two services, three calls
+
+`ShowContext` exposes the wash family on both hosts. Same shape on M5 C++ and Tildagon MicroPython:
+
+```cpp
+// M5 C++
+ctx.render_wash      (target, LightWashEvent{r1,g1,b1, r2,g2,b2, attack, release,
+                                              intensity, cycle_ms, ttl_seconds,
+                                              pulse_response});
+ctx.render_wash_end  (target, release_time_tenths);
+ctx.render_wash_pulse(target, RgbPulseEvent{...});   // wash-active-only overlay
+```
+
+```python
+# Tildagon MicroPython
+ctx.render_wash      (target, RgbWash(r1, g1, b1, r2, g2, b2,
+                                       attack=20, release=10,
+                                       intensity=200, cycle_ms=5000,
+                                       ttl_seconds=0, pulse_response=1))
+ctx.render_wash_end  (target, release_time)
+ctx.render_wash_pulse(target, RgbPulse(...))         # wash-active-only overlay
+```
+
+Field reference (16-byte `LIGHT_WASH` payload — see [protocol-manual.md §3.3.3](https://github.com/ratcliffej/nocturnation-stickc/blob/main/docs/manuals/protocol-manual.md)):
+
+| Field             | Units                | Purpose |
+|-------------------|----------------------|---------|
+| `r1/g1/b1`        | 0..255               | Anchor A — the wash cycles A → B → A → … |
+| `r2/g2/b2`        | 0..255               | Anchor B (set equal to A for a static single-colour wash, or pass `cycle_ms=0`) |
+| `attack`          | 100 ms units (0..255)| Ramp-in from current colour to anchor A on first emission |
+| `release`         | 100 ms units (0..255)| Default fade-out used by an automatic TTL expiry |
+| `intensity`       | 0..255               | Brightness scalar applied to both anchors |
+| `cycle_ms`        | u16 milliseconds     | Full A → B → A period. `0` = hold A (no drift) |
+| `ttl_seconds`     | u16 seconds          | `0` = infinite; the Show owns cleanup via `render_wash_end` |
+| `pulse_response`  | 0 / 1                | `1` = pulses overlay additively on the wash; `0` = wash suppresses pulses while active |
+
+### Rules
+
+**One wash per change, not per frame.** Each `render_wash` emits a frame on the wire and supersedes any previous wash on the same target. Re-emitting every frame floods ESP-NOW and wastes bracelet-side state. Re-emit only when:
+
+- the *palette* changes (operator picks a new palette set, or a section transition fires),
+- `cycle_ms` changes (Beat-locked tempo recompute, with a debounce — `bass-drift` uses ≥10 % BPM drift AND ≥3 s gap since the last auto re-emit),
+- the operator overrides the analyser (manual drop marker — see below).
+
+**`pulse_response = 1` is the default for any Show that fires beat pulses.** With `pulse_response = 1` the wash holds the baseline while `LIGHT_PULSE` frames overlay on top — that's the §1.2 layered picture. Setting it to `0` makes the wash suppress pulses entirely while active, which is rarely what you want (Breakdown sections in `wash-demo` use it to enforce silence).
+
+**Manual override always wins.** The §1.2 closing line is normative: when the operator presses the manual drop / cue button, the Show should fire the override gesture *immediately* and ignore any analyser-driven section change for the duration of that override. `bass-drift` reserves the Confirm action (Btn1 short click) for this, latches a 6 s deadline, and restores the analyser-tracked section via `tick()` when the deadline expires. The analyser keeps running; the Show just stops *acting on it* while a manual override is in flight.
+
+**Section overrides speed for the climactic sections.** Both reference Shows pin `cycle_ms` to the palette-baked value during BuildUp / Drop / Breakdown regardless of the operator's `wash_speed` property — these sections have a characteristic feel and the speed knob shouldn't compromise it. Verse / Chorus respect the operator's pick.
+
+### What dispatch does for you
+
+A `render_wash` call fans the same way as `render_fx`:
+
+1. **ESP-NOW broadcast.** Always fires. Remote Lumes apply the wash on the receive side (per [`OutputBinding::can_wash`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h); incapable Lumes like PixMob bracelets silently drop the wash and only render the pulse layer — the dispatch layer routes by capability so the Director never branches on "what kind of Lume is out there").
+2. **Director loopback (capable Lumes only).** On the StickC, `LocalDisplayBinding` renders the wash on the Director's own LCD when `target_class` is `00`, `02`, or `03`. On the Tildagon, the perimeter ring + LCD both render the wash via the existing renderers; B1 of Epic 6D wired the dispatcher into them.
+
+PixMob fleets read as pulse-only — washes silently drop on the IR bridge. A Show that wants its baseline visible on a PixMob-only fleet has to simulate the baseline with low-cadence low-intensity `LIGHT_PULSE` frames; that's a Show-authoring choice, not protocol behaviour. The §1.2 design still works on a pulse-only fleet provided pulses themselves are restrained.
+
+### Cross-host porting
+
+The wash family is identical across hosts; the difference is **what drives section transitions**:
+
+| Driver | StickC (Bass & Drift) | Tildagon (Conductor) |
+|--------|------------------------|----------------------|
+| Section change | Automatic — `on_section_change(section)` from the on-board `SectionDetector` | Manual — the `section` property on the Settings overlay |
+| Tempo | Automatic — `BeatDetector` median-IBI BPM | None — no analyser; tempo-driven wash speed (Beat ×4 / Beat ×8) is unavailable, Tildagon ships manual speeds only |
+| Manual override | Btn1 short = Confirm = drop marker | Settings overlay step on the `section` enum |
+
+`on_tap_detected` (Tildagon) and `on_beat_detected` (StickC) are deliberately the same shape so a Show can hook **`on_beat_detected`** on both hosts — the Tildagon IMU adapter fires both events alongside one another (Epic 6B B4 contract), so a single `on_beat_detected` override gets the tap-driven beats on Tildagon and the mic-driven beats on M5. Use `on_tap_detected` only when you want explicit "this came from a tap" semantics.
+
+### Worked snippet (the §1.2 layered loop in 30 lines)
+
+```cpp
+// Section -> palette swap. on_section_change fires from the analyser
+// (M5) or from the operator changing the `section` property (Tildagon
+// receives the change via on_property_changed).
+void MyShow::on_section_change(ShowContext& ctx, uint8_t section) {
+    if (manual_override_active_) return;        // operator's gesture wins
+    if (!ctx.get_property("respond_to_sections").as_bool()) {
+        current_section_ = section;             // track but don't act
+        return;
+    }
+    current_section_ = section;
+    emit_wash_for_section(ctx, section);        // one render_wash per change
+}
+
+// Beat -> pulse, gated by `chance`. Same path on both hosts; the
+// chance property is an Enum picking one of the eight CHANCE_* steps.
+void MyShow::on_beat_detected(ShowContext& ctx, uint8_t strength) {
+    if (ctx.paused()) return;
+    const PulseColour pc = pulse_colour_for_palette(ctx);
+    RgbPulseEvent ev{};
+    ev.r = pc.r; ev.g = pc.g; ev.b = pc.b;
+    ev.attack  = pulse::T_0_MS;
+    ev.sustain = pulse::T_96_MS;
+    ev.release = pulse::T_192_MS;
+    ev.chance  = chance_from_idx(ctx.get_property("chance").as_enum());
+    ctx.render_fx(target_for(ctx), ev);
+}
+
+// Manual override - Confirm = drop marker. Fires the climactic
+// gesture immediately and latches the restore deadline; tick() puts
+// the previous section back when the window expires.
+void MyShow::on_input_action(ShowContext& ctx, const hal::InputEvent& ev) {
+    if (ev.action == hal::InputAction::Confirm) {
+        manual_drop_until_ms_ = millis() + 6000;
+        manual_override_active_ = true;
+        emit_wash_for_section(ctx, /*section=*/kSectionDrop);
+        fire_peak_pulse(ctx);
+    }
+}
+```
+
+The §1.2 framing in code: **section** = wash palette, **phrase** = the receiver's autonomous A↔B↔A cycle, **beat** = chance-gated pulses on top. Three layers, three call patterns, one composed Show.
 
 ## Drawing to the screen
 
