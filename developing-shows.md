@@ -3,7 +3,7 @@ title: "Developing a Show"
 status: Draft
 notion_url: https://www.notion.so/362bd0677405812393d7c0f9eee52788
 notion_id: 362bd0677405812393d7c0f9eee52788
-last_synced: 2026-05-23
+last_synced: 2026-06-01
 sync_direction: bidirectional
 ---
 
