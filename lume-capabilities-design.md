@@ -60,7 +60,9 @@ The DAL `render_fx(target, ev)` entry point keeps its name — `render_fx` is th
 
 ## 4. New message types
 
-### 4.1 `LIGHT_WASH` (wire byte 0x06, 17-byte payload)
+### 4.1 `LIGHT_WASH` (wire byte 0x06, 16-byte payload)
+
+> **Byte-count corrected in Phase D**: the v0.3 source prompt called this a 17-byte payload — that was an arithmetic error in the spec authoring (1+1+3+3+1+1+1+2+2+1 = 16, not 17). The implementation lands as 16 bytes; this doc, the protocol manual, and the Notion source prompt are corrected to match.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -216,4 +218,22 @@ The pulse envelope is a triangular approximation of the ASR shape over `attack+s
 
 ---
 
-*Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
+## Phase H close-out (2026-05-31)
+
+Epic 6C is complete. The protocol surface (LIGHT_PULSE rename + LIGHT_WASH family), the dispatch layer (BindingCapabilities + capability-gated fan-out), and the renderer (cosine drift + ADR-from-current crossfade) have all landed. The architecture spec (`architecture.md`) absorbs the canonical surface at v0.32:
+
+- **§4.3** now lists five active message types (HEARTBEAT, LIGHT_PULSE, LIGHT_WASH, LIGHT_WASH_END, LIGHT_WASH_PULSE) with full byte layouts. "Why two messages, not one" is rewritten as "Why five messages, not two" with per-type rationale.
+- **§7.6** documents the `BindingCapabilities` struct and per-binding declarations. The dispatch capability filter is described as the load-bearing piece that keeps PixMobIrBinding pulse-only by construction.
+- **§1.2** gains an "Implementation differs by Lume capability" subsection — capable Lumes use `LIGHT_WASH`; pulse-only Lumes get the §1.2 aesthetic via Show-driven low-cadence PULSE re-broadcasts (Show-design choice, not protocol feature).
+
+This document remains as the deeper design rationale: the state machine, the cosine formula, the overlay semantics, the supersede behaviour, the open questions deferred to future Epics, and the implementation audits (Phase B filter, Phase F renderer). The architecture spec is the canonical *what*; this doc is the canonical *why*.
+
+### Outstanding follow-ups (recorded but deferred)
+
+- **Director-side wash loopback** so a single-Stick demo shows its own wash on its own LCD. Today the Phase E `DAL::dispatch_output_class_group` loopback only covers PULSE — wash needs the equivalent. Two-Stick (Director + Lume) demos work fine; the gap is single-Stick visual testing.
+- **PixMob baseline simulation** via Show-driven low-cadence PULSE re-broadcasts. Documented as a Show-design pattern; not implemented as live Director behaviour. The first Show that wants the §1.2 wash-baseline aesthetic on a PixMob-only fleet will build it.
+- **Notion canonical sync** — Jason reconciles `architecture.md` v0.32 back into Notion (357bd06774058...). The local working copy is canonical for now.
+
+---
+
+*Document closes at Epic 6C close. Future Epics may amend; the §1-§9 design contract is stable.*
