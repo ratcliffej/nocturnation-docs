@@ -191,4 +191,31 @@ Audited the Lume-side dispatch of inbound `LIGHT_COMMAND` (the existing wire typ
 
 ---
 
-*Phase F may append visual-test notes. Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
+## Lume-side renderer audit (Phase F)
+
+`LocalDisplayBinding` now owns wash rendering end-to-end. The wire receive path (`LumeMode::on_recv` → `fan_out_light_wash[_end|_pulse]`) routes the new wire types to the binding's hooks with a **two-layer filter**: the existing target_class / target_group filter from §5 plus a capability gate that drops the frame on any binding declaring `can_wash = false`. PixMob bindings receive no WASH-family hooks at all, exactly as §1 intends.
+
+**Renderer architecture.** When a wash is **inactive**, `on_light_pulse` still forwards to `DAL::render_fx("local", ev)` exactly as before — `LocalDriver` animates the pulse on the LCD with byte-identical behaviour to pre-Phase-F. When a wash is **active**, the binding takes over the canvas: `tick()` (driven from `LumeMode::loop_tick`, at the main loop's existing cadence) recomputes the instantaneous wash baseline using the design's cosine-eased ping-pong formula and paints the full screen via `DAL::fire_display_clear("local", …)` in RGB565. Pulses that arrive during an active wash short-circuit the render_fx path and instead register an overlay event; the binding additively blends the pulse contribution on top of the live baseline each tick and clips per-channel. The blend formula is the one in §6:
+
+```
+out = clip(baseline_now + pulse_colour × envelope_strength, 0, 255)
+```
+
+The pulse envelope is a triangular approximation of the ASR shape over `attack+sustain+release` total milliseconds (lookup table for the `pulse::Time` enum). On an LCD at these timescales the triangular approximation is visually indistinguishable from the precise three-segment ramp; this avoids dragging per-segment arithmetic into the render loop.
+
+**Phase state machine.** `Attacking → Holding → (optionally Releasing) → Inactive`. The Attacking phase lerps from the colour the binding was rendering before the wash arrived to the wash baseline over `attack × 100 ms`. Holding runs the cosine drift. TTL expiry (when non-zero) triggers Releasing using the wash's own `release` field. `LIGHT_WASH_END` triggers Releasing with the operator-supplied `release_time` overriding. A second `LIGHT_WASH` to the same target supersedes by re-stamping `wash_started_ms` (cosine phase resets) and re-entering Attacking from the live colour — visually a smooth palette transition.
+
+**Capability dispatch (Phase B/F closure).** The Phase B audit flagged that capability-aware dispatch was a Phase F concern. Confirmed implemented: `LumeMode::fan_out_light_wash[_end|_pulse]` short-circuits the per-binding routing with `if (!slot.binding->capabilities().can_wash) continue;`. Wire frames addressed to PixMob-class targets still pass the class filter (since `PixMobIrBinding::device_class() == Light`), but the capability gate then drops them before `on_light_wash` would be called. PixMobIrBinding therefore needs no changes — the dispatch layer keeps it pulse-only by construction.
+
+**Single-Stick demo caveat.** ESP-NOW broadcasts don't echo to the broadcaster, so a Stick acting as both Director and the only Lume in range won't see its own wash on its own LCD; `DAL::dispatch_output_class_group`'s loopback for PULSE paints the Director's screen via `LocalDriver`, but no equivalent wash-loopback to `LocalDisplayBinding` exists yet. Hardware verification therefore wants **two Sticks** (one Director running `Wash Demo`, one Lume receiving). Adding a wash-loopback step inside `DAL::render_wash` so the Director's own LCD also renders the wash is a small follow-up — recorded in §"Open questions" above; not in Phase F's scope.
+
+**Hardware verification checklist** (run separately on real Sticks):
+- [ ] Two Sticks on the same ESP-NOW channel; Lume Stick is wash-capable (LocalDisplayBinding active).
+- [ ] Director runs `Wash Demo` (or fires `Config > Utilities > Wash Test > Fire`).
+- [ ] Lume's LCD fades into the orange end of the palette over ~2 s (attack), then drifts smoothly between orange and purple on a ~5 s breath.
+- [ ] On a kick from the music, a brighter overlay flashes briefly without snapping the baseline to black.
+- [ ] On Show exit (or `Wash Test > Cancel`), the LCD fades to black over ~1 s.
+
+---
+
+*Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
