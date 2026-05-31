@@ -60,7 +60,9 @@ The DAL `render_fx(target, ev)` entry point keeps its name — `render_fx` is th
 
 ## 4. New message types
 
-### 4.1 `LIGHT_WASH` (wire byte 0x06, 17-byte payload)
+### 4.1 `LIGHT_WASH` (wire byte 0x06, 16-byte payload)
+
+> **Corrected in Phase D**: the v0.3 source prompt called this a 17-byte payload — that was a simple arithmetic error in the spec (1+1+3+3+1+1+1+2+2+1 = 16, not 17). The implementation lands as 16 bytes; this doc and the Notion source prompt are corrected to match.
 
 | Field | Type | Notes |
 |---|---|---|
