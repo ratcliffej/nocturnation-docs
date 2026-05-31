@@ -162,4 +162,31 @@ These are deliberately *not* resolved by Epic 6C. They are noted here so a futur
 
 ---
 
-*Phase B will append an "Existing filter audit" section to this document; Phase F may append visual-test notes. Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
+## Existing filter audit (Phase B)
+
+Audited the Lume-side dispatch of inbound `LIGHT_COMMAND` (the existing wire type that Phase C renames to `LIGHT_PULSE`). Reference: `LumeMode::fan_out_light_command` in `src/modes/lume_mode.cpp` — the single function that walks the active-bindings array and decides which bindings receive the call for each incoming frame.
+
+**What was checked:**
+
+1. **`target_class` filter** is `if (p.target_class != 0 && p.target_class != binding_class) continue;` — drops the frame for any binding whose `device_class()` doesn't match `p.target_class` (with `0` honoured as the All-classes wildcard).
+2. **`target_group` filter** is `if (!slot.binding->is_relay()) { if (p.target_group != 0 && p.target_group != lume_group_) continue; }` — for non-relay (local) bindings, drops the frame unless `p.target_group == 0` (broadcast) or matches the Lume's NVS-configured `slv_group`.
+3. **Relay-binding bypass** of the group filter — `is_relay() == true` (PixMobIrBinding) skips the group check entirely, because the downstream PixMob IR carries its own group byte for the bracelet to filter against. The relay reads `ctx.current_target_group()` and forwards it as the IR frame's group code.
+4. **Context threading** — before invoking the binding's `on_light_command`, the dispatch does `slot.ctx->set_current_target(p.target_class, p.target_group)` so relay bindings can read the inbound addressing without re-plumbing the call signature.
+5. **`DeviceClass` enum stability** — `0x00 All / 0x01 Light / 0x02 Screen / 0x03 MultiLedScreen` per `include/hal/device_class.h`; `0x04+` reserved. No conflict with the v0.27-deprecated message-type slots (those are wire bytes; this is the class enum, a separate namespace).
+
+**What was confirmed working:**
+
+- Class filtering is correct: a frame addressed to `target_class = Light (0x01)` reaches only Light-class bindings, regardless of `target_group`. A frame addressed to `target_class = 0` reaches every binding.
+- Group filtering is correct for local bindings: a frame with `target_group = 5` reaches a `LocalDisplayBinding` only on a Lume whose `slv_group` is `5` (or `target_group = 0`, the broadcast group, which fires everywhere).
+- Relay-binding bypass is correct and necessary: without it, a `target_group = 5` directed at PixMob bracelets would *not* reach `PixMobIrBinding` on a Lume whose `slv_group` is `3` — but PixMob bracelets are addressed by the IR-level group byte, not by the Lume's NVS group, so the relay must forward regardless and let the bracelet filter itself.
+- The two filters compose correctly: a class-mismatched frame is dropped before the group check, and the group check is only reached for relay-eligible class-matched frames.
+
+**Gaps to fix:** None at the `target_class` / `target_group` level. The dispatch correctly drops frames a binding can't act on by *addressing*. It does not yet drop frames a binding can't act on by *capability* (e.g. a `LIGHT_WASH` on a `can_wash: false` binding) — but that's Phase F's job, not a bug in the existing filter. The Phase B `capabilities()` declarations land the data; Phase F adds the capability-aware dispatch.
+
+**Scope clarification for Phase F:** The capability filter Phase F will add should sit at the *dispatch* layer (in `fan_out_*`-style functions for the new wire types), not inside the bindings themselves. This keeps the binding implementations free of "is this message meant for me?" boilerplate and matches the existing pattern where the dispatch decides reach.
+
+**No code changed in Phase B beyond the new `capabilities()` overrides** — per the prompt's "fixes go in a later phase to keep blast radius small" instruction. The audit found no fixes to defer.
+
+---
+
+*Phase F may append visual-test notes. Once Phase H closes, this document is rolled into the architecture spec's §4.3 and §7.6, and stays here only as the deeper design rationale alongside.*
