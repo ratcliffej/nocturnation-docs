@@ -15,6 +15,7 @@ The documents here are the canonical entry points for operators and implementers
 | [Protocol manual](manuals/protocol-manual.md) | Implementers of a transmitter or receiver | ESP-NOW wireless layer, frame formats, class-and-group addressing, PixMob IR annex, channel discovery, NVS schema, conformance, test vectors. |
 | [Flow diagrams](manuals/flow-diagrams.md) | Both | Mermaid renderings: topology, boot, modes, analyser, dispatch, receive, routing, configuration, channel discovery. |
 | [Developer guide](developing-shows.md) | Contributors writing `Show` plug-ins | The `Show` base class, analyser hooks, `render_fx` API, widget composition, persistence, testing. |
+| [QLC+ beginner's guide](qlc-plus-beginners-guide.md) | Operators driving NocturNation from a DMX console | From-zero walkthrough: install QLC+, learn the four panels, define the core DMX concepts, plug a StickC in, programme a Scene, sequence a Chaser, link a cue stack to a track. |
 | [Architecture specification](architecture.md) | Designers and curious readers | The full system design. The manuals above are the publishable distillation of this. |
 | [DAL design](dal-design.md) | Firmware contributors | Device-abstraction-layer design notes. |
 | [HAL design](hal-design.md) | Firmware contributors | Hardware-abstraction-layer design notes. |
@@ -26,9 +27,6 @@ The documents here are the canonical entry points for operators and implementers
 
 ## Conventions
 
-- UK English throughout (colour, behaviour, organise).
-- Minus signs `-`, not em dashes.
-- Harvard referencing for external citations; `file:line` form for code references.
 - Byte values in hexadecimal with the `0x` prefix; ranges inclusive at both ends.
 - Normative language in the protocol manual follows RFC 2119: MUST, SHOULD, MAY.
 
