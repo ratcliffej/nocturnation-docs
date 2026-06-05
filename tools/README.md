@@ -56,6 +56,16 @@ on universe 1. The shim listens on all interfaces by default, so any
 network-reachable address also works if you want to drive the shim from a
 different machine.
 
+**Important: launch order is shim FIRST, then QLC+.** QLC+'s Art-Net
+plugin binds UDP 6454 for input as a side-effect even if you only want
+output, and on macOS its IPv6 wildcard bind shadows our IPv4 bind via
+dual-stack mapping if it claims the port first - the shim would then
+appear running but receive zero packets. With the shim bound first,
+QLC+'s input bind fails silently (a harmless warning in its log) and
+its output to `127.0.0.1:6454` reaches the shim cleanly. If you forget
+the order, the shim's bind will fail with EADDRINUSE and prompt you on
+how to recover.
+
 ### What the shim shows
 
 The default `rich` terminal UI has two panels.
