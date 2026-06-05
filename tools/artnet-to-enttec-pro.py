@@ -489,11 +489,17 @@ def main() -> int:
                 now = time.monotonic()
                 if now - last_print >= 5.0:
                     last_print = now
+                    # Include wrong-universe drops - a non-zero value here
+                    # while in= stays at zero is the classic "QLC+ is
+                    # sending universe 0 but shim filters universe 1"
+                    # signal. Saved hours during the B3.5 bench session.
+                    drops = state.frames_dropped_wrong_universe
+                    drop_str = f" drops={drops}" if drops else ""
                     print(
                         f"[{time.strftime('%H:%M:%S')}] "
                         f"serial={'OK' if state.serial_connected else 'WAIT'} "
                         f"in={state.frames_received} out={state.frames_sent} "
-                        f"fps={state.fps:.1f} err={state.errors}"
+                        f"fps={state.fps:.1f} err={state.errors}{drop_str}"
                     )
 
             run_loop(state, sockets, args.port, args.baud, headless_tick)

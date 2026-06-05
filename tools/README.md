@@ -56,6 +56,21 @@ on universe 1. The shim listens on all interfaces by default, so any
 network-reachable address also works if you want to drive the shim from a
 different machine.
 
+**Universe mapping gotcha.** QLC+'s Art-Net plugin configuration shows
+two universe-related fields per output row: "Universe" (QLC+'s internal
+universe, 1-indexed) and "ArtNet Universe" (the value stamped in the
+wire packet, 0-indexed by default). So a default patch of QLC+ Universe
+1 -> "ArtNet Universe 0" ends up on the wire as universe **0**, not 1.
+The shim defaults to filtering universe 1. Two fixes:
+
+- **In QLC+**: edit the row to set "ArtNet Universe" to **1** so wire
+  universe matches NocturNation's fixture universe.
+- **On the shim**: run with `--universe 0` to accept whatever QLC+
+  emits by default.
+
+If the headless output shows `in=0 drops=N` with N climbing, you've
+hit this. Pick one of the fixes above.
+
 **Important: launch order is shim FIRST, then QLC+.** QLC+'s Art-Net
 plugin binds UDP 6454 for input as a side-effect even if you only want
 output, and on macOS its IPv6 wildcard bind shadows our IPv4 bind via
