@@ -312,45 +312,48 @@ def build_status_layout(state: ShimState) -> Layout:
 
 def run_loop(
     state: ShimState,
-    sock: socket.socket,
+    sockets: list,
     serial_port_name: Optional[str],
     baud: int,
     on_tick: callable,
 ) -> None:
-    """The pump. Reads UDP, writes serial, calls on_tick once per cycle."""
+    """The pump. Reads UDP from all listening sockets, writes serial, calls
+    on_tick once per cycle."""
     ser: Optional[serial.Serial] = None
     last_serial_attempt = 0.0
     SERIAL_RETRY_INTERVAL = 1.0
 
     while True:
-        # Drain all pending UDP packets without blocking.
-        while True:
-            try:
-                data, _addr = sock.recvfrom(2048)
-            except BlockingIOError:
-                break
-            decoded = decode_artnet_output(data)
-            if decoded is None:
-                continue
-            universe, payload = decoded
-            if universe != state.universe:
-                state.frames_dropped_wrong_universe += 1
-                continue
-            state.record_frame(payload)
-
-            # Try to send if serial is up.
-            if ser is not None:
+        # Drain all pending UDP packets from every bound stack (IPv4 + IPv6)
+        # without blocking.
+        for sock in sockets:
+            while True:
                 try:
-                    ser.write(wrap_enttec_pro(payload))
-                    state.record_sent()
-                except (serial.SerialException, OSError) as e:
-                    state.record_error(f"write failed: {e}")
+                    data, _addr = sock.recvfrom(2048)
+                except BlockingIOError:
+                    break
+                decoded = decode_artnet_output(data)
+                if decoded is None:
+                    continue
+                universe, payload = decoded
+                if universe != state.universe:
+                    state.frames_dropped_wrong_universe += 1
+                    continue
+                state.record_frame(payload)
+
+                # Try to send if serial is up.
+                if ser is not None:
                     try:
-                        ser.close()
-                    except Exception:
-                        pass
-                    ser = None
-                    state.serial_connected = False
+                        ser.write(wrap_enttec_pro(payload))
+                        state.record_sent()
+                    except (serial.SerialException, OSError) as e:
+                        state.record_error(f"write failed: {e}")
+                        try:
+                            ser.close()
+                        except Exception:
+                            pass
+                        ser = None
+                        state.serial_connected = False
 
         # Open / re-open serial if disconnected. Auto-detect if no explicit
         # port was set OR re-scan in case the operator plugged it in a
@@ -407,20 +410,30 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # Deliberately NOT setting SO_REUSEPORT - empirically QLC+'s Art-Net
-    # plugin binds [::]:6454 (IPv6 wildcard) and a SO_REUSEPORT share
-    # across address families routes all loopback IPv4 packets to QLC+
-    # via macOS dual-stack mapping, starving the shim. Exclusive bind
-    # means QLC+'s input bind fails silently (it warns but keeps going
-    # as output-only); QLC+'s output to 127.0.0.1:6454 then reaches us
-    # cleanly. The cost is a launch-order requirement (shim first, then
-    # QLC+).
+    # Bind BOTH IPv4 and IPv6 wildcards on port 6454.
+    #
+    # Why both: on macOS, QLC+'s Art-Net plugin binds [::]:6454 (IPv6
+    # wildcard) with default IPV6_V6ONLY=0. That dual-stack socket
+    # silently shadows ALL IPv4 loopback traffic to port 6454 via IPv4-
+    # mapped-IPv6 delivery - so if QLC+ wins the IPv6 race, packets sent
+    # to 127.0.0.1:6454 are delivered to QLC+'s listener and our IPv4-
+    # only socket sees nothing (bench-confirmed via lsof + netcat).
+    #
+    # By grabbing both stacks at startup (IPv6 bound with IPV6_V6ONLY=1
+    # so it doesn't double-receive our IPv4 traffic), QLC+'s subsequent
+    # [::]:6454 bind fails. QLC+ logs a harmless warning, falls back to
+    # send-only, and its output to 127.0.0.1:6454 reaches our IPv4
+    # socket cleanly.
+    sockets = []
+
+    sock4 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((args.bind, args.artnet_port))
+        sock4.bind((args.bind, args.artnet_port))
+        sock4.setblocking(False)
+        sockets.append(sock4)
     except OSError as e:
-        print(f"Failed to bind UDP {args.bind}:{args.artnet_port}: {e}",
+        print(f"Failed to bind IPv4 UDP {args.bind}:{args.artnet_port}: {e}",
               file=sys.stderr)
         if e.errno == 48:   # EADDRINUSE on macOS
             print(
@@ -428,15 +441,33 @@ def main() -> int:
                 "  lsof -i UDP:6454\n"
                 "\nIf it's a stale shim, kill it:\n"
                 "  pkill -f artnet-to-enttec-pro\n"
-                "\nIf it's qlcplus, you need to start the shim BEFORE QLC+\n"
-                "launches its Art-Net plugin. Quit QLC+, start the shim,\n"
-                "then relaunch QLC+. QLC+'s Art-Net plugin will warn that\n"
-                "it can't bind for input but will continue to send output\n"
-                "to 127.0.0.1:6454, which the shim will receive normally.",
+                "\nIf it's qlcplus, quit QLC+, start the shim first, then\n"
+                "relaunch QLC+. QLC+'s Art-Net input bind will fail (it\n"
+                "logs a warning and continues as send-only); QLC+'s\n"
+                "output to 127.0.0.1:6454 then reaches the shim.",
                 file=sys.stderr,
             )
         return 1
-    sock.setblocking(False)
+
+    try:
+        sock6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        sock6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock6.bind(("::", args.artnet_port))
+        sock6.setblocking(False)
+        sockets.append(sock6)
+    except OSError as e:
+        # Non-fatal but critical to warn about on macOS - if we couldn't
+        # grab IPv6 and QLC+ is running, QLC+'s [::] listener will steal
+        # all loopback traffic via dual-stack mapping.
+        print(
+            f"Warning: IPv6 bind failed ({e}).\n"
+            "On macOS this likely means another process (probably QLC+)\n"
+            "already owns [::]:6454 and will intercept loopback Art-Net\n"
+            "packets via dual-stack mapping before they reach this shim.\n"
+            "Quit QLC+, restart this shim, then relaunch QLC+.",
+            file=sys.stderr,
+        )
 
     state = ShimState(
         serial_port=args.port,
@@ -465,7 +496,7 @@ def main() -> int:
                         f"fps={state.fps:.1f} err={state.errors}"
                     )
 
-            run_loop(state, sock, args.port, args.baud, headless_tick)
+            run_loop(state, sockets, args.port, args.baud, headless_tick)
         else:
             with Live(
                 build_status_layout(state),
@@ -475,11 +506,15 @@ def main() -> int:
             ) as live:
                 def ui_tick():
                     live.update(build_status_layout(state))
-                run_loop(state, sock, args.port, args.baud, ui_tick)
+                run_loop(state, sockets, args.port, args.baud, ui_tick)
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down.[/yellow]")
     finally:
-        sock.close()
+        for s in sockets:
+            try:
+                s.close()
+            except Exception:
+                pass
     return 0
 
 
