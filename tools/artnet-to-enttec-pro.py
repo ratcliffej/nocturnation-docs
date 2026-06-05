@@ -190,6 +190,15 @@ class ShimState:
         self.last_artnet_ts = now
         self.last_payload = payload
         self._frame_times.append(now)
+        self._recompute_fps(now)
+
+    def tick_fps(self) -> None:
+        """Recompute FPS using the current wall clock. Lets the displayed
+        rate decay to 0 when no frames are arriving - without this, fps
+        sticks at its last-computed value forever."""
+        self._recompute_fps(time.monotonic())
+
+    def _recompute_fps(self, now: float) -> None:
         cutoff = now - 1.0
         while self._frame_times and self._frame_times[0] < cutoff:
             self._frame_times.pop(0)
@@ -358,6 +367,7 @@ def run_loop(
                 ser = open_serial(chosen, baud)
                 state.serial_connected = ser is not None
 
+        state.tick_fps()
         on_tick()
         time.sleep(0.005)
 
