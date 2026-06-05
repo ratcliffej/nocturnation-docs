@@ -422,15 +422,19 @@ def run_loop(
                 state.record_frame(payload)
 
                 # Try to send if serial is up. Apply the cable encoding
-                # chosen at startup; "hex" appends a newline so the
-                # device firmware's line-based reader can find frame
-                # boundaries.
+                # chosen at startup; "hex" appends a `;` delimiter so
+                # the device firmware's line-based reader can find
+                # frame boundaries. (Was `\n` originally - MicroPython
+                # text-mode reads strip newlines, so the device-side
+                # line buffer never saw any delimiter. `;` is not in
+                # the hex alphabet and isn't a newline so MicroPython's
+                # line handling can't eat it.)
                 if ser is not None:
                     try:
                         framed = wrap_enttec_pro(payload)
                         if encoding == "hex":
                             ser.write(binascii.hexlify(framed))
-                            ser.write(b"\n")
+                            ser.write(b";")
                         else:
                             ser.write(framed)
                         state.record_sent()
