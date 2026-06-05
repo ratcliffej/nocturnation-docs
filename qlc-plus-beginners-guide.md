@@ -245,61 +245,98 @@ You should see Stick boot output and any debug messages the firmware prints. Pre
 
 ---
 
-## 6. Configuring QLC+ output
+## 6. Install + start the shim, then configure QLC+ output
 
-> **Heads-up on scope.** Section 6 is *preparation*. After completing it, QLC+ will be configured to point its DMX output at the StickC's serial port, but no light will yet change colour. The first-light moment - where a slider in QLC+ produces a visible Lume flash - is **section 7**, and section 7 depends on Epic 7 firmware blocks B1-B3 landing on the StickC. Until those ship, finish section 6's clicks anyway so the workflow is rehearsed and the configuration is saved.
+NocturNation's DMX path goes through a small **bridge daemon** (a "shim") that runs on your laptop alongside QLC+. The shim listens for the network protocol QLC+ speaks (**Art-Net**), wraps it into the framing the Stick speaks (**Enttec DMX USB Pro** over USB-CDC), and writes it down the cable. Architecture summary:
 
-### Open the Inputs/Outputs panel
+```
+QLC+  ──Art-Net UDP──>  shim on laptop  ──Enttec Pro USB-CDC──>  StickC / Tildagon
+       (port 6454,        (artnet-to-                                 (the receiver
+        loopback)          enttec-pro.py)                              firmware)
+```
 
-In QLC+, open the **Inputs/Outputs** panel. The exact route varies by version:
+You won't think about most of this once it's running. The one-time setup is in **6.1**; the recurring "start the shim before launching QLC+" routine is **6.2**; QLC+'s Art-Net configuration is **6.3**; the connectivity check is **6.4**.
 
-- Some versions expose it as a button on the main toolbar alongside Fixtures / Functions / Virtual Console / Simple Desk.
-- Others put it under **Tools → Plugin Manager** or **Inputs/Outputs** in the application menu bar.
-- In recent versions there's also a dedicated **Universes** tab inside the Fixtures panel that shows the same configuration in a different layout.
+> **Heads-up on scope.** Section 6 gets the shim running and QLC+ pointed at it. No Lume will respond until you also enter DMX Bridge mode on the Stick in section 7. Until that step, this section is *preparation*: the laptop side can be verified without any Lumes around if you want to rehearse.
 
-<!-- Verify-against-install: which route does QLC+ 4.13.x take on your machine? Pick the one that worked and rewrite this section to lead with it; the other routes can become a single "(also reachable via …)" line. -->
+### 6.1 Install the shim (one-time)
 
-You should land on a page with two main columns: **Universe** on the left (a row per universe; new installs have Universe 1 only) and **Output Plugin** alongside it.
+The shim lives in the `tools/` folder of the [nocturnation-docs repository](https://github.com/ratcliffej/nocturnation-docs/tree/main/tools). One Python file (`artnet-to-enttec-pro.py`) plus per-OS wrapper scripts that auto-create a local Python virtual environment the first time you run them.
 
-<!-- Verify-and-screenshot: capture the Inputs/Outputs panel as QLC+ shows it on first open. -->
+**Prerequisite: Python 3.9 or later.** macOS 13+ ships it by default; Windows users install from [python.org](https://www.python.org/downloads/windows/) (tick "Add Python to PATH" during the installer); Linux always has it. Verify with `python3 --version`.
 
-### Pick the Enttec DMX USB Pro plugin
+Grab the tools folder:
 
-Click the **Universe 1** row to select it. In the plugin column or the panel below, choose **Enttec DMX USB Pro** as the output plugin.
+```sh
+# Clone the docs repo
+git clone https://github.com/ratcliffej/nocturnation-docs.git
+cd nocturnation-docs/tools
+```
 
-> If you don't see Enttec DMX USB Pro in the list, the plugin may be disabled. Check **Tools → Plugin Manager** (or equivalent) and confirm the Enttec plugin is enabled. Restart QLC+ if you toggle it.
+You're now in the folder with the wrapper scripts. The wrappers will create `tools/.venv/` (a local Python virtual environment) the first time they run, install `pyserial` + `rich` into it (~10 seconds), and start the shim. Every subsequent run starts immediately.
 
-<!-- Verify-against-install: confirm the plugin appears in the list. If QLC+ on macOS ships with the Enttec plugin built-in (it usually does), no extra install is needed. If your install is missing it, that's the bigger find - document the install path for it. -->
+### 6.2 Start the shim — BEFORE launching QLC+
 
-### Point the plugin at the Stick's serial port
+**Launch order matters.** QLC+'s Art-Net plugin binds UDP port 6454 for input as a side-effect even when you only want to send. If QLC+ launches first, the shim's bind fails with "Address already in use". The shim must claim port 6454 first; QLC+'s subsequent bind quietly fails (a harmless warning in its log) and QLC+ continues as send-only — which is what we want.
 
-With Enttec DMX USB Pro selected, there should be a **Configure** button (or similar) that opens the plugin's settings. Inside:
+The session routine:
 
-- Find the **Serial port** dropdown (or text field).
-- Choose the port you identified in section 5:
-  - macOS: `/dev/cu.usbmodem14101` (your number will differ)
-  - Linux: `/dev/ttyACM0` or `/dev/ttyUSB0`
-  - Windows: `COM3` (your number will differ)
-- Save / OK to close the plugin config.
+1. **Plug the Stick into the laptop.**
+2. **Open a terminal, navigate to `nocturnation-docs/tools/`, and start the shim:**
 
-<!-- Verify-and-screenshot: the plugin's Configure dialog with the serial port selected. -->
+   ```sh
+   ./run-macos.sh                 # macOS / Linux, with the rich two-panel UI
+   ./run-macos.sh --no-ui         # macOS / Linux, log-only (single status line every 5 s)
+   run-windows.bat                # Windows
+   ```
 
-### Address the universe
+3. **Confirm the shim is running.** In the rich UI's "Status" panel you should see `Serial: /dev/cu.usbmodem...` (green), `Listening on: UDP 0.0.0.0:6454`, and `Art-Net frames in: 0`. In `--no-ui` mode the first periodic line looks like:
 
-Back on the Inputs/Outputs panel, the Universe 1 row should now show the Enttec plugin assigned, with the Stick's serial port as the output. That means: any DMX values QLC+ generates for Universe 1 channels 1-512 will be packed into Enttec Pro frames and written down the cable to the Stick.
+   ```
+   [12:43:00] serial=OK in=0 out=0 fps=0.0 err=0
+   ```
 
-In a normal DMX rig you'd also set a *base address* on each fixture (channel 1 vs channel 13 vs channel 25, etc.) to slot multiple fixtures into one universe. NocturNation's fixture lands in section 8 once the `.qxf` ships; for now the universe is configured but empty.
+4. **Now launch QLC+.** It will log a harmless warning about not being able to bind Art-Net for input. Ignore it.
 
-### What QLC+ will look like
+If you ever see `Failed to bind UDP 0.0.0.0:6454: [Errno 48] Address already in use`, something else has the port. Most common cause: QLC+ launched before the shim. Fix: quit QLC+ entirely, restart the shim, then relaunch QLC+. The shim's error message walks you through the recovery commands.
 
-After section 6, QLC+ should show:
+> **Port hogging.** While the shim is running, no other Art-Net receiver on this machine can run — a second QLC+ instance, MagicQ, Resolume, etc. will all fail to bind 6454. Art-Net uses one port for all universes by protocol design; sharing the port among receiver apps isn't possible. **Operational rule: only run the shim while actively bridging NocturNation.**
 
-- **Inputs/Outputs panel:** Universe 1 mapped to "Enttec DMX USB Pro - `<your serial port>`".
-- **No errors** at the top of the QLC+ window. Some versions of the Enttec plugin do a handshake (send a "Get Widget Serial Number" command, expect a response) at startup. Until Epic 7 firmware lands on the Stick, the Stick won't respond to that handshake and QLC+ may show "device not responding" or "widget not identified" in the plugin's status line. **That is expected at this point** - the configuration is correct; the Stick just doesn't speak Enttec Pro back yet. Section 7 closes that loop.
+### 6.3 Configure QLC+'s Art-Net output
+
+In QLC+, click the **Inputs/Outputs** tab (top of window) — or in some QLC+ versions a panel under the application menu bar.
+
+You'll see a left column listing **Universes** (new installs have Universe 1) and a right column listing **devices / plugins**. Among the plugins should be **Art-Net** (sometimes labelled **ArtNet** or **ART NET**), typically detected on every network interface on your machine. Pick the **`127.0.0.1`** (loopback) entry — that's the one the shim is listening on.
+
+1. **Click Universe 1** in the left column.
+2. **Tick the Output indicator** next to the `127.0.0.1` Art-Net entry. In QLC+ 5.x this is usually a small green eye / play icon — clicking it enables transmission.
+3. **Click the wrench (Configure) icon** for the Art-Net plugin on the same row. A dialog opens listing the patched universes. Confirm:
+   - Interface: `127.0.0.1`
+   - Universe: `1` (QLC+'s internal name for the universe you patched)
+   - IP Address: `127.0.0.1`
+   - **ArtNet Universe: `0`** (the actual wire universe value — see the gotcha below)
+   - Transmission Mode: `Full` (sends all 512 channels per frame — what we want)
+4. **OK** to save.
+
+> **Universe-mapping gotcha.** QLC+ has two universe-related fields per output row. "Universe" is QLC+'s internal patch number (1-indexed). "ArtNet Universe" is the value stamped in the wire packet (0-indexed by default). So QLC+'s Universe 1 emits **wire universe 0** by default. The shim's `--universe` default is 0 to match this, so the out-of-box configuration works. If you change "ArtNet Universe" in QLC+ to a different value, pass the matching `--universe N` to the shim.
+
+### 6.4 Confirm the path is alive
+
+In your shim terminal, watch the `Art-Net frames in` counter (or `in=` in `--no-ui` mode):
+
+- **Open QLC+'s Simple Desk panel** (top of window).
+- **Drag slider 1** up from 0.
+- **Watch the shim** — within a second the frame counter should start climbing, FPS should rise to ~35-44, and the channel 01 row in the UI's "DMX channels" panel should mirror the slider value with a green bar.
+
+If frames flow, **the QLC+ → shim path is verified end-to-end**. You're ready for section 7.
+
+If `in=` stays at 0 with frames=0 forever, see "Troubleshooting" at the end of section 7 — the same symptoms there cover the QLC+-side issues.
+
+If `in=` stays at 0 but `drops=N` is climbing in the `--no-ui` output, that's the universe-mismatch gotcha: QLC+ is sending on a wire universe the shim isn't listening to. Quit the shim and restart with `--universe N` matching what QLC+ sends, or change QLC+'s "ArtNet Universe" to match the shim's default of 0.
 
 ### Save the workspace
 
-File → Save Workspace. Pick a name like `nocturnation-test.qxw` and save it somewhere you'll find again. Reopening QLC+ and loading this workspace gets you back to this state without redoing the clicks.
+In QLC+: **File → Save Workspace**. Pick a name like `nocturnation-test.qxw`. Reopening QLC+ and loading this workspace restores the Universe 1 → Art-Net config without redoing the clicks. (You still need to start the shim first each session.)
 
 ---
 
@@ -309,25 +346,32 @@ This is the validation moment - the first time a slider you drag in QLC+ produce
 
 > **Pre-flight checklist:**
 >
-> - Sections 1-6 done (QLC+ installed, output configured, Stick recognised).
+> - Sections 1-6 done (QLC+ installed, shim installed, output configured).
+> - **The shim is running** in a terminal alongside QLC+ (section 6.2). `serial=OK in=N` where N is climbing when you wiggle a QLC+ slider (section 6.4).
 > - The Stick is plugged into the laptop and showing the boot screen.
 > - At least one Lume is on the same ESP-NOW channel as the Stick will be - a second StickC running Lume mode, a Tildagon running Lume mode, or a PixMob bracelet within IR range of the Stick.
 > - QLC+ is open and the workspace from section 6 is loaded.
 
 ### Step 1: enter DMX Bridge mode on the Stick
 
-The Stick boots into the Menu. Cycle with Btn2 (the side button) until "DMX Bridge" is highlighted, then press Btn1 (the top button) to select.
+DMX Bridge is a sub-mode inside the Stick's Director mode. Conceptually: "the Director is still directing the fleet; the *source* of its commands is the external DMX stream rather than local interaction."
 
-The Stick's LCD switches to the DMX Bridge screen:
+1. **From the Stick's Menu, enter Director mode** — Btn1 selects it as the default first menu entry, or cycle with Btn2 if you've moved the cursor elsewhere.
+2. **Open the Director's picker** — Btn2 long-press from inside Director mode opens the picker overlay. Cycle with Btn2 short-press until "DMX Bridge" is highlighted, then Btn1 to confirm.
 
-- A header reading either **"ACTIVE"** (green) when QLC+ is sending frames, or **"IDLE"** (red) when nothing has arrived recently.
-- `age: ... ms` - milliseconds since the last frame.
-- `f: ... b: ...` - total frames received and total bytes read since mode entry.
-- A footer hint reminding you that a long-press on Btn2 exits back to Menu.
+The Stick's LCD switches to the DMX Bridge **status view**:
 
-<!-- Verify-and-screenshot: capture the Stick's LCD when DmxBridge mode first opens and QLC+ is connected but idle. Header should read "IDLE" with all counters at 0. -->
+- Header: **"DMX Bridge"** and the source (USB, or Grove in future hardware-bridge setups).
+- Connection state — "connected" (green) when bytes are arriving recently, "idle" (amber) otherwise.
+- Frame count, frames-per-second, and the timestamp of the most recent frame.
 
-If the header stays "IDLE" indefinitely after this point, jump to *Troubleshooting* at the bottom of this section.
+A **diagnostics view** is available via Btn1 short-press: 12 rows showing the live hex value + role label + a bar visualisation of each NocturNation channel (Master / Strobe / Pulse RGB+Trigger / Wash A RGB / Wash B RGB). Useful for confirming QLC+ is sending what you expect. Btn1 toggles back to the status view.
+
+**Back-gesture exits to the Director picker** (Btn2 long-press). Other inputs are deliberately ignored while in DMX Bridge — the only valid actions are "look" and "leave", so an operator can't accidentally derail a live show by hitting the wrong button.
+
+<!-- Verify-and-screenshot: capture the Stick's LCD when DMX Bridge mode first opens and the shim is connected but QLC+ is idle. Status view should show "idle" with frame count at 0. -->
+
+If the LCD stays "idle" indefinitely after this point, jump to *Troubleshooting* at the bottom of this section.
 
 ### Step 2: open Simple Desk in QLC+
 
@@ -387,29 +431,44 @@ Strobe and the manual trigger are independent: you can have a 1 Hz auto-strobe A
 
 ### Step 6: exit cleanly
 
-Long-press Btn2 on the Stick to return to Menu. The mode emits a 1 s release fade on the way out so the Lumes go to black smoothly rather than snapping off. The Stick restores its console at 115 200 baud, so any developer-side debug output works again.
+Long-press Btn2 on the Stick to return to the Director picker, then again to leave Director back to the Menu. DMX Bridge emits a 1 s release fade on the way out so the Lumes go to black smoothly rather than snapping off.
+
+You can leave the shim running in its terminal — it will sit at `serial=WAIT` once the Stick exits DMX Bridge mode (the Stick has stopped consuming the cable) and pick back up automatically when you re-enter DMX Bridge.
 
 ### Troubleshooting
 
-If the Stick stays "IDLE" or the Lume doesn't respond:
+The path is now three-stage: **QLC+ → shim → Stick → Lume**. Troubleshoot in order; each stage's symptoms point at the next link.
 
-**Check Stick → laptop wire path:**
-- Does `ls /dev/cu.usbmodem*` (macOS / Linux equivalent) still show the Stick's port?
-- Does QLC+'s Inputs/Outputs panel still show the Enttec plugin pointed at that port? (Switching mode sometimes resets the binding; re-check.)
-- Is anything else (terminal, screen, IDE serial monitor) holding the port open? Close it.
+**Stage 1 — is QLC+ actually sending Art-Net to the shim?**
 
-**Check QLC+ output is actually emitting:**
-- Drag a non-zero value on a slider you haven't touched. Does Simple Desk give visual feedback at the slider itself?
-- Some QLC+ versions need the workspace to be in "Operate Mode" (not "Design Mode") for Simple Desk to drive output. Toggle if needed.
+Check the shim's `in=` counter (or `Art-Net frames in` in the rich UI). It should climb when you wiggle a slider in QLC+ Simple Desk.
 
-**Check Stick is in DMX Bridge mode:**
-- The LCD must show the DMX Bridge screen, not the Menu, not Director, not anything else.
-- If `f` / `b` stays at 0 after a slider drag, the Stick isn't seeing bytes.
+- If `in=0` and `drops=0`: QLC+ isn't transmitting. Check the Output indicator on the `127.0.0.1` Art-Net row in QLC+'s Inputs/Outputs panel — it must be enabled (the green eye / play icon in QLC+ 5.x). Some QLC+ versions also need the workspace to be in "Operate Mode" rather than "Design Mode" for Simple Desk to drive output.
+- If `in=0` but `drops=N` climbing: universe mismatch. Restart the shim with `--universe N` matching what QLC+ sends, OR change QLC+'s "ArtNet Universe" field to match the shim's default of 0.
+- If `in=N` is climbing but `out=0`: the shim is receiving but can't write to the serial port. Check the `Errors` count in the rich UI or `err=N` in `--no-ui`. Usually means the Stick has been unplugged or another app is holding the port.
 
-**Check Lume reachability:**
+**Stage 2 — is the shim actually writing to the Stick?**
+
+Check the shim's `out=` counter (should equal or near-equal `in=` once both are climbing).
+
+- If `out=0` while `in>0`: serial port not connected. Look at the `Serial` line in the rich UI — should say `Serial: /dev/cu.usbmodem...` (green). If it says `no device detected` or `waiting for ...`, unplug + replug the Stick.
+- Try a different USB-C cable. Charge-only cables (no data lines) are the most common cause of an otherwise-healthy Stick not appearing as `/dev/cu.usbmodem*`.
+
+**Stage 3 — is the Stick actually parsing what the shim sent?**
+
+Check the Stick's DMX Bridge status view.
+
+- The LCD must show DMX Bridge (not Menu, not Director's idle state). Re-enter if necessary.
+- The "connected" indicator should turn green within a second of frames arriving. If it stays "idle" while the shim's `out=` is climbing, bytes aren't reaching the parser — usually a wrong-port issue (the shim is writing to some other `cu.usbmodem*` that isn't your Stick). Restart the shim with `--port /dev/cu.usbmodemNNN` matching your Stick's exact port.
+- Use the diagnostics view (Btn1 short-press) to confirm the channel values match what QLC+ is sending.
+
+**Stage 4 — is the Lume responding to the Stick's broadcasts?**
+
+If the Stick's DMX Bridge view is "connected" with frames flowing but no Lume lights up:
+
 - Is the Lume on the same ESP-NOW channel as the Stick? (Default is channel 1 for the hobby band; verify in the Lume's own Config menu.)
-- Is the Lume in the right `target_group` for the broadcast? For v1 the DMX Bridge fires to "00:00" which is every-class-every-group, so any Lume should respond. If your Lume has a group filter set, clear it.
-- Is the Lume's binding actually rendering? Try Director mode briefly to confirm the Lume is responsive at all.
+- Is the Lume in the right `target_group` for the broadcast? For v1 the DMX Bridge fires to "00:00" which is every-class-every-group, so any Lume should respond. If your Lume has a group filter set, clear it temporarily.
+- Is the Lume's binding actually rendering? Try Director mode briefly to confirm the Lume is responsive at all — if it doesn't respond to a normal Director either, the issue is the Lume itself, not anything in this guide.
 
 ---
 
@@ -609,22 +668,29 @@ The village-talk demo will ship its workspace file alongside the slide deck as p
 
 | Term | Meaning |
 |------|---------|
+| **Art-Net** | An Ethernet/UDP-based protocol that carries DMX-512 channel data over a network. NocturNation's shim listens for Art-Net packets on UDP port 6454 from QLC+. The standard port for Art-Net is 6454 regardless of universe. |
+| **ArtNet Universe** | The 15-bit wire-universe value stamped in an Art-Net packet (0-indexed). Distinct from QLC+'s internal "Universe" patch number (1-indexed). QLC+'s Universe 1 patches to ArtNet Universe 0 by default - see section 6.3's universe-mapping gotcha. |
 | **ASR envelope** | Attack / Sustain / Release - the three-stage shape of a NocturNation pulse. QLC+ doesn't expose ASR directly; NocturNation's `LIGHT_PULSE` carries it via the wire. |
 | **Chaser** | A QLC+ Function that plays Scenes in a timed sequence. See section 9. |
 | **Channel** | One of the 512 lines in a DMX universe. Carries an 8-bit value. See section 4. |
 | **Cue / Cue List** | A numbered list of triggerable lighting states. QLC+ exposes this via Virtual Console's Cue List widget. Less relevant for track-driven shows; standard for live performance. |
 | **DMX-512** | The 1986 ESTA standard for lighting console-to-fixture communication. 512 channels per universe, 8 bits each, sent at 250 kbit/s over RS-485 (or, in NocturNation's case, 921 600 baud over USB-CDC with Enttec Pro framing). |
-| **Enttec Pro framing** | The byte-format an Enttec DMX USB Pro dongle uses to carry DMX over USB-CDC. NocturNation's Stick implements this format directly. |
+| **DMX Bridge** | A NocturNation sub-mode within Director that swaps the input source from local interaction to an external DMX stream. Entered via the Director's picker overlay (section 7); exited via back-gesture. |
+| **Enttec DMX USB Pro** | A widely-supported FTDI-based USB-DMX adapter from Enttec. NocturNation's Stick speaks the same byte-framing this adapter does, over USB-CDC, so consoles that support Enttec Pro can output to it (via the shim on macOS / direct on other paths). |
+| **Enttec Pro framing** | The byte-format Enttec DMX USB Pro carries DMX in: `0x7E` start, label, length, DMX start code, 512 channel bytes, `0xE7` end. The shim wraps each Art-Net packet in this framing before writing to the Stick. |
 | **Fixture** | A logical lighting device occupying a contiguous range of DMX channels. The NocturNation fixture is 12 channels per Lume group. See section 4 + the channel layout in section 7. |
 | **Lume** | A NocturNation receive-only device that renders lighting events (PixMob bracelet, Tildagon badge, second Stick in Lume mode). |
 | **Master Intensity** | Channel 1 in the NocturNation fixture. Multiplies the wash + pulse output brightness. Set to 0 = blackout. |
 | **Patch** | Lighting-design jargon for the mapping between fixtures and DMX channel addresses. QLC+'s Fixtures panel does the patch. |
 | **Pulse** | A short flash (NocturNation's `LIGHT_PULSE` wire frame). Fired by the Pulse Trigger channel (rising edge) or by the strobe channel (continuous cadence). |
+| **sACN (E1.31)** | The other modern Ethernet-based DMX transport, also supported by QLC+. NocturNation's shim uses Art-Net because mich181189/Tildagon-ArtNet provided a reference implementation we could lean on; the architectural design would work identically with sACN. |
 | **Scene** | A QLC+ Function that holds a snapshot of channel values. See section 8. |
+| **Shim** | The Python bridge daemon (`artnet-to-enttec-pro.py`) that runs on the laptop alongside QLC+. Listens for Art-Net UDP packets, wraps the DMX payload in Enttec Pro framing, writes to the Stick's serial port. See section 6. |
 | **Show** | A QLC+ Function that lays Scenes / Chasers against a timeline tied to an audio file. See section 10. |
 | **Simple Desk** | A QLC+ panel with raw per-channel sliders. The fastest way to test that channels reach Lumes; the foundation everything else builds on. |
 | **Strobe** | Continuous repeated flashing at a configured rate. NocturNation Channel 2 sets the rate; the architecture spec §15.1 caps it at 4 Hz for safety. |
 | **Universe** | A group of 512 DMX channels addressed as a unit. NocturNation uses one universe per laptop. See section 4. |
+| **USB-CDC** | USB Communications Device Class - the standard way operating systems expose USB devices as serial ports. The Stick enumerates as a USB-CDC device (`/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux, `COMn` on Windows). The shim writes Enttec Pro framing into this serial port. |
 | **Virtual Console** | A QLC+ panel for building a custom performance UI - buttons, sliders, cue list widgets you operate during a live show. Optional for track-driven shows. |
 | **Wash** | A continuous baseline lighting state (NocturNation's `LIGHT_WASH` wire frame). The Wash A + Wash B anchors on channels 7-12 define the colour. |
 
