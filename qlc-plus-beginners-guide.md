@@ -328,6 +328,8 @@ In your shim terminal, watch the `Art-Net frames in` counter (or `in=` in `--no-
 - **Drag slider 1** up from 0.
 - **Watch the shim** — within a second the frame counter should start climbing, FPS should rise to ~35-44, and the channel 01 row in the UI's "DMX channels" panel should mirror the slider value with a green bar.
 
+> **Note:** this step confirms QLC+ → shim. It does **not** confirm anything visible on a Lume yet — slider 1 (Master Intensity) is a brightness scalar and produces black until you also raise a wash anchor (covered in section 7). If you have a Lume connected you can ignore it for now; the shim's UI is the load-bearing diagnostic at this point.
+
 If frames flow, **the QLC+ → shim path is verified end-to-end**. You're ready for section 7.
 
 If `in=` stays at 0 with frames=0 forever, see "Troubleshooting" at the end of section 7 — the same symptoms there cover the QLC+-side issues.
@@ -343,6 +345,12 @@ In QLC+: **File → Save Workspace**. Pick a name like `nocturnation-test.qxw`. 
 ## 7. First light
 
 This is the validation moment - the first time a slider you drag in QLC+ produces a visible response on a Lume. If section 6 was preparation, section 7 is the closing-the-loop. Once first light works, every other section in this guide is layering on top of a system that's already alive.
+
+> **⚠ Important - Master Intensity is a brightness scalar, not a colour source.**
+>
+> The most common first-light surprise: dragging **only** slider 1 (Master Intensity) appears to do nothing. The data IS reaching the Lumes (the shim's frame count climbs; the Stick's `f:` counter climbs; the Lume is receiving messages), but **the emitted colour is `wash_RGB × master / 255` per channel**, and with the wash anchor RGBs all at zero the result is `0 × master = 0` — black, however high you push master.
+>
+> **To see colour, set a Wash A RGB anchor first (slider 7, 8, or 9), THEN raise master.** That order is the sanity check the steps below walk you through.
 
 > **Pre-flight checklist:**
 >
