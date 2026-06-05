@@ -56,20 +56,30 @@ on universe 1. The shim listens on all interfaces by default, so any
 network-reachable address also works if you want to drive the shim from a
 different machine.
 
-**Universe mapping gotcha.** QLC+'s Art-Net plugin configuration shows
-two universe-related fields per output row: "Universe" (QLC+'s internal
+**Universe mapping.** QLC+'s Art-Net plugin configuration shows two
+universe-related fields per output row: "Universe" (QLC+'s internal
 universe, 1-indexed) and "ArtNet Universe" (the value stamped in the
 wire packet, 0-indexed by default). So a default patch of QLC+ Universe
-1 -> "ArtNet Universe 0" ends up on the wire as universe **0**, not 1.
-The shim defaults to filtering universe 1. Two fixes:
-
-- **In QLC+**: edit the row to set "ArtNet Universe" to **1** so wire
-  universe matches NocturNation's fixture universe.
-- **On the shim**: run with `--universe 0` to accept whatever QLC+
-  emits by default.
+1 -> "ArtNet Universe 0" puts the packet on the wire as **wire universe
+0**, not 1. The shim defaults to `--universe 0` to match QLC+'s
+default. If you change QLC+'s "ArtNet Universe" to a different value,
+pass the matching `--universe N` to the shim.
 
 If the headless output shows `in=0 drops=N` with N climbing, you've
-hit this. Pick one of the fixes above.
+got a universe mismatch - the shim is receiving packets and dropping
+them because they're on a universe it isn't watching.
+
+**Port hogging.** The shim binds UDP 6454 exclusively on both IPv4
+and IPv6 stacks to prevent QLC+'s dual-stack listener from intercepting
+loopback packets. That means **no other Art-Net receiver on this
+machine can run while the shim is up** - including a second QLC+
+instance, MagicQ, Resolume, or any other lighting console. (Art-Net
+fundamentally uses one port for all universes; sharing the port among
+multiple receiver applications isn't how the protocol works.) QLC+ is
+the special case: its Art-Net plugin gracefully falls back to
+send-only when it can't bind for input. Other apps may abort entirely.
+**Operational rule: only run the shim while actively bridging
+NocturNation.**
 
 **Important: launch order is shim FIRST, then QLC+.** QLC+'s Art-Net
 plugin binds UDP 6454 for input as a side-effect even if you only want

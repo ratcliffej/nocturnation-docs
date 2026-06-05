@@ -401,8 +401,10 @@ def main() -> int:
         help="UDP bind address.",
     )
     parser.add_argument(
-        "--universe", type=int, default=1,
-        help="Art-Net universe to filter on (0-32767).",
+        "--universe", type=int, default=0,
+        help="Art-Net universe to filter on (0-32767). Default 0 matches "
+             "QLC+'s default 'ArtNet Universe' value when QLC+'s internal "
+             "Universe 1 is patched to Art-Net output.",
     )
     parser.add_argument(
         "--no-ui", action="store_true",
