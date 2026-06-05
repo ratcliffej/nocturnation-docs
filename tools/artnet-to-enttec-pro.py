@@ -164,6 +164,21 @@ def find_candidate_ports_with_info() -> list[tuple[str, str]]:
     return candidates
 
 
+def _device_kind_from_port(port_path: str) -> str:
+    """Identify whether a serial port is a Tildagon or something else,
+    used by --encode auto. Matches on the USB device's manufacturer +
+    product strings (Tildagon shows up as 'Electromagnetic Field
+    TiLDAGON' on macOS).
+    """
+    for port in serial.tools.list_ports.comports():
+        if port.device == port_path:
+            desc = _describe_port(port).lower()
+            if "tildagon" in desc:
+                return "tildagon"
+            break
+    return "other"
+
+
 def _describe_port(port) -> str:
     """Best-effort human label for a serial.tools.list_ports.ListPortInfo.
 
@@ -422,17 +437,28 @@ def run_loop(
                 state.record_frame(payload)
 
                 # Try to send if serial is up. Apply the cable encoding
-                # chosen at startup; "hex" appends a `;` delimiter so
-                # the device firmware's line-based reader can find
-                # frame boundaries. (Was `\n` originally - MicroPython
-                # text-mode reads strip newlines, so the device-side
-                # line buffer never saw any delimiter. `;` is not in
-                # the hex alphabet and isn't a newline so MicroPython's
-                # line handling can't eat it.)
+                # chosen at startup. Three modes, pick determined by
+                # --encode (auto-resolves based on device kind):
+                #   "python"  -> "#<hex>\n" - a Python comment + NL.
+                #                Tildagons need this because their
+                #                USB-CDC IS the MicroPython REPL
+                #                channel; valid-Python bytes get
+                #                no-op'd by the REPL rather than
+                #                causing tracebacks (which hang the
+                #                device).
+                #   "hex"     -> "<hex>;" - generic ASCII-safe; no
+                #                REPL friendliness.
+                #   "binary"  -> raw Enttec bytes; lowest bandwidth;
+                #                used by Stick firmware reading binary
+                #                serial directly.
                 if ser is not None:
                     try:
                         framed = wrap_enttec_pro(payload)
-                        if encoding == "hex":
+                        if encoding == "python":
+                            ser.write(b"#")
+                            ser.write(binascii.hexlify(framed))
+                            ser.write(b"\n")
+                        elif encoding == "hex":
                             ser.write(binascii.hexlify(framed))
                             ser.write(b";")
                         else:
@@ -503,13 +529,21 @@ def main() -> int:
         help="Disable the rich terminal UI; print plain text status only.",
     )
     parser.add_argument(
-        "--encode", choices=["hex", "binary"], default="hex",
-        help="Cable protocol. 'hex' (default) ASCII-hex encodes each "
-             "Enttec Pro frame + newline; works on every device including "
-             "ones where binary USB-CDC reads aren't reliable (Tildagon "
-             "MicroPython). 'binary' writes raw Enttec Pro bytes - lower "
-             "bandwidth, requires the device to do binary serial reads "
-             "(e.g. an external FTDI cable into a GPIO UART, see B7).",
+        "--encode",
+        choices=["auto", "binary", "hex", "python"],
+        default="auto",
+        help="Cable protocol. 'auto' (default) picks based on the port's "
+             "device description: 'python' for Tildagon (its USB-CDC is "
+             "the MicroPython REPL channel, so we disguise frames as "
+             "Python comments the REPL no-ops on), 'binary' for everything "
+             "else. 'python' wraps each Enttec Pro frame as '#<hex>\\n' - "
+             "a comment + newline, valid Python that the REPL parses, "
+             "evaluates as a no-op, and leaves intact for our line "
+             "reader. 'hex' uses '<hex>;' (no REPL-friendliness). "
+             "'binary' writes raw Enttec Pro bytes - lower bandwidth, "
+             "requires the device to do binary serial reads (Stick "
+             "firmware reading from a hardware UART via external FTDI, "
+             "see B7).",
     )
     args = parser.parse_args()
 
@@ -588,6 +622,19 @@ def main() -> int:
                     pass
             return 1
 
+    # Resolve --encode auto: Tildagons need python-comment envelope
+    # because their USB-CDC IS the MicroPython REPL channel; everything
+    # else gets binary by default (Stick firmware reads raw bytes).
+    chosen_encoding = args.encode
+    if chosen_encoding == "auto":
+        if chosen_port:
+            kind = _device_kind_from_port(chosen_port)
+            chosen_encoding = "python" if kind == "tildagon" else "binary"
+        else:
+            chosen_encoding = "binary"
+        print(f"Encoding: auto-selected '{chosen_encoding}' "
+              f"(port: {chosen_port or '<not yet resolved>'})")
+
     state = ShimState(
         serial_port=chosen_port,
         bind_addr=args.bind,
@@ -622,7 +669,7 @@ def main() -> int:
                     )
 
             run_loop(state, sockets, chosen_port, args.baud,
-                     headless_tick, encoding=args.encode)
+                     headless_tick, encoding=chosen_encoding)
         else:
             with Live(
                 build_status_layout(state),
@@ -633,7 +680,7 @@ def main() -> int:
                 def ui_tick():
                     live.update(build_status_layout(state))
                 run_loop(state, sockets, chosen_port, args.baud,
-                         ui_tick, encoding=args.encode)
+                         ui_tick, encoding=chosen_encoding)
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down.[/yellow]")
     finally:
