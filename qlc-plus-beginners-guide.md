@@ -336,9 +336,43 @@ If `in=` stays at 0 with frames=0 forever, see "Troubleshooting" at the end of s
 
 If `in=` stays at 0 but `drops=N` is climbing in the `--no-ui` output, that's the universe-mismatch gotcha: QLC+ is sending on a wire universe the shim isn't listening to. Quit the shim and restart with `--universe N` matching what QLC+ sends, or change QLC+'s "ArtNet Universe" to match the shim's default of 0.
 
+### 6.5 Add the NocturNation fixtures
+
+NocturNation v2 uses a **10-fixture-per-universe** layout — one Broadcast (reaches every Lume regardless of configured group) plus nine Group fixtures (each addressing a distinct Lume group). One fixture instance per addressable group means the LD can scene each group independently — "audience zone A red, zone B blue, broadcast dark".
+
+**Install the fixture definition (one-time):**
+
+1. Download [`nocturnation-lume-group-v2.qxf`](qlc-fixtures/nocturnation-lume-group-v2.qxf) from this repo.
+2. Drop it into QLC+'s user fixture directory:
+   - **macOS:** `~/Library/Application Support/QLC+/Fixtures/`
+   - **Windows:** `%USERPROFILE%\QLC+\Fixtures\`
+   - **Linux:** `~/.qlcplus/fixtures/`
+3. Restart QLC+ so it picks up the new file.
+
+**Patch the 10 fixture instances** (Fixtures panel → "Add fixture" / "+" button):
+
+| # | Manufacturer | Model | Mode | Universe address |
+|---|--------------|-------|------|---------|
+| 1 | NocturNation | Lume Group v2 (DMX bridge) | **Broadcast (49ch)** | **1** |
+| 2 | NocturNation | Lume Group v2 | Group (50ch) | **50** |
+| 3 | NocturNation | Lume Group v2 | Group (50ch) | **100** |
+| 4 | NocturNation | Lume Group v2 | Group (50ch) | **150** |
+| 5 | NocturNation | Lume Group v2 | Group (50ch) | **200** |
+| 6 | NocturNation | Lume Group v2 | Group (50ch) | **250** |
+| 7 | NocturNation | Lume Group v2 | Group (50ch) | **300** |
+| 8 | NocturNation | Lume Group v2 | Group (50ch) | **350** |
+| 9 | NocturNation | Lume Group v2 | Group (50ch) | **400** |
+| 10 | NocturNation | Lume Group v2 | Group (50ch) | **450** |
+
+Name them descriptively in QLC+ — "Broadcast", "Group 1", "Group 2", … — so Scenes and Chasers later read clearly. The exact address spacing matches the firmware's per-block parser; do not shift them.
+
+**You don't have to patch all ten today.** Broadcast plus Group 1 is enough for first light. The other eight can wait until you have multiple Lumes configured to different `group_id`s via the Settings menu.
+
+> **Group routing on the Lume side.** Each Lume has a `group_id` setting (Tildagon Settings menu / StickC Config menu). A Lume with `group_id=0` accepts only Broadcast. A Lume with `group_id=2` accepts Broadcast AND Group 2 fixture events. Don't worry about this for first light — leave Lumes at the default (`group_id=0`) and drive the Broadcast fixture.
+
 ### Save the workspace
 
-In QLC+: **File → Save Workspace**. Pick a name like `nocturnation-test.qxw`. Reopening QLC+ and loading this workspace restores the Universe 1 → Art-Net config without redoing the clicks. (You still need to start the shim first each session.)
+In QLC+: **File → Save Workspace**. Pick a name like `nocturnation-test.qxw`. Reopening QLC+ and loading this workspace restores the Universe 1 → Art-Net config AND your 10 patched fixtures without redoing the clicks. (You still need to start the shim first each session.)
 
 ---
 
@@ -348,9 +382,9 @@ This is the validation moment - the first time a slider you drag in QLC+ produce
 
 > **⚠ Important - Master Intensity is a brightness scalar, not a colour source.**
 >
-> The most common first-light surprise: dragging **only** slider 1 (Master Intensity) appears to do nothing. The data IS reaching the Lumes (the shim's frame count climbs; the Stick's `f:` counter climbs; the Lume is receiving messages), but **the emitted colour is `wash_RGB × master / 255` per channel**, and with the wash anchor RGBs all at zero the result is `0 × master = 0` — black, however high you push master.
+> The most common first-light surprise: dragging **only** universe channel 1 (Broadcast Master Intensity) appears to do nothing. The data IS reaching the Lumes (the shim's frame count climbs; the Stick's `f:` counter climbs; the Lume is receiving messages), but **the emitted colour is `wash_RGB × master / 255` per channel**, and with the wash anchor RGBs all at zero the result is `0 × master = 0` — black, however high you push master.
 >
-> **To see colour, set a Wash A RGB anchor first (slider 7, 8, or 9), THEN raise master.** That order is the sanity check the steps below walk you through.
+> **To see colour, set a Wash A RGB anchor first (channel 11, 12, or 13), THEN raise master.** That order is the sanity check the steps below walk you through.
 
 > **Pre-flight checklist:**
 >
@@ -391,31 +425,46 @@ Click the **Simple Desk** panel in QLC+. You should see a horizontal strip of ch
 
 ### Step 3: light a Lume
 
-NocturNation's 12-channel fixture layout (Epic 7 B0):
+NocturNation's 23-channel-per-fixture layout (Epic 7 B7). Channels 24+ in each fixture instance are reserved for future expansion and ignored by the firmware.
 
-| Channel | Field |
-|--------:|-------|
-| 1 | Master intensity |
-| 2 | Strobe rate |
-| 3 | Pulse R |
-| 4 | Pulse G |
-| 5 | Pulse B |
-| 6 | Pulse trigger |
-| 7 | Wash anchor A R |
-| 8 | Wash anchor A G |
-| 9 | Wash anchor A B |
-| 10 | Wash anchor B R |
-| 11 | Wash anchor B G |
-| 12 | Wash anchor B B |
+| Fixture offset | Universe address (Broadcast at 1) | Field |
+|---:|---:|-------|
+| 1 | 1 | Master Intensity *(brightness scalar)* |
+| 2 | 2 | Strobe Rate |
+| 3 | 3 | Pulse R |
+| 4 | 4 | Pulse G |
+| 5 | 5 | Pulse B |
+| 6 | 6 | Pulse Trigger *(rising edge past 128 fires)* |
+| 7 | 7 | Pulse Attack *(named-range enum)* |
+| 8 | 8 | Pulse Sustain |
+| 9 | 9 | Pulse Release |
+| 10 | 10 | Pulse Probability *(low slider = rare; high = always)* |
+| **11** | **11** | **Wash A R** |
+| 12 | 12 | Wash A G |
+| 13 | 13 | Wash A B |
+| 14 | 14 | Wash B R |
+| 15 | 15 | Wash B G |
+| 16 | 16 | Wash B B |
+| 17 | 17 | Wash Cycle *(0 = hold A; 1..255 = 0.1..25.5 s A↔B↔A)* |
+| 18 | 18 | Wash Intensity *(independent of Master)* |
+| 19 | 19 | Wash Attack *(100 ms units)* |
+| 20 | 20 | Wash Release *(100 ms units)* |
+| 21 | 21 | Wash TTL Lo *(seconds, low byte)* |
+| 22 | 22 | Wash TTL Hi *(seconds, high byte)* |
+| 23 | 23 | Wash Pulse Response *(<128 suppress; ≥128 overlay)* |
 
-The plan: set wash anchor A to a colour, then raise the master to make it visible.
+Group fixtures use the same offsets but shifted: Group 1's Wash A R is at universe address 60 (50 + 10), Group 2's at 110, and so on.
 
-1. **Drag channel 7 (Wash A R) to 255.** Nothing visible yet - the master is still 0, which scales the wash brightness to nothing.
-2. **Drag channel 1 (Master intensity) to 255.** The Lume should light up red. The Stick's LCD header should flip to **"ACTIVE"** (green) and the `f` / `b` counters should be incrementing as QLC+ pumps frames.
-3. **Drag channel 8 (Wash A G) up.** The Lume's red shifts toward orange / yellow as green is added.
-4. **Drag channel 1 (Master) back to 0.** The Lume fades to black again. Nothing about the wash colour was lost - master is a pure brightness scalar.
+The plan: set Broadcast's Wash A anchor to red, then raise the master to make it visible.
+
+1. **Drag universe channel 11 (Broadcast Wash A R) to 255.** Nothing visible yet — the master is still 0, which scales the wash brightness to nothing.
+2. **Drag universe channel 1 (Broadcast Master Intensity) to 255.** Every Lume should light up red. The Stick's LCD header should flip to **"ACTIVE"** (green) and the `f` / `b` counters should be incrementing as QLC+ pumps frames.
+3. **Drag universe channel 12 (Broadcast Wash A G) up.** Red shifts toward orange / yellow as green is added.
+4. **Drag universe channel 1 (Master) back to 0.** The Lume fades to black again. Nothing about the wash colour was lost — master is a pure brightness scalar.
 
 **Congratulations - this is first light.** Every section onwards is making this richer, not different in kind.
+
+> **Try the per-group routing.** Drag universe channel **60** (Group 1 Wash A R) to 255 + universe channel **50** (Group 1 Master) to 255. **Only Lumes whose `group_id=1` should light up.** Lumes at default `group_id=0` ignore it because Group 1 is not Broadcast. To exercise this you need at least one Lume configured to group 1 via its Settings menu; if all your Lumes are at the default, this slider has no visible effect (which is itself a valid "broadcast isolation" check).
 
 <!-- Verify-and-screenshot: a Lume responding to a slider drag on Simple Desk. Phone camera + the bracelet / Tildagon ring lit up; QLC+ window in the background. -->
 
