@@ -15,6 +15,7 @@
 # the full architecture rationale.
 
 import argparse
+import binascii
 import socket
 import sys
 import time
@@ -137,6 +138,16 @@ def wrap_enttec_pro(payload: bytes) -> bytes:
 def find_candidate_ports() -> list[str]:
     """List likely NocturNation device serial ports on the current OS.
 
+    Wrapper around find_candidate_ports_with_info() that returns just
+    the device paths - kept for callers that don't need the descriptions.
+    """
+    return [device for device, _desc in find_candidate_ports_with_info()]
+
+
+def find_candidate_ports_with_info() -> list[tuple[str, str]]:
+    """List likely NocturNation device serial ports with a human
+    description of each, used by the interactive picker.
+
     On macOS, USB-CDC devices appear as /dev/cu.usbmodemNNNN. On Linux,
     /dev/ttyACMn. On Windows, USB-CDC devices show as COMn with a
     description containing 'USB Serial' or the device's product string -
@@ -147,10 +158,81 @@ def find_candidate_ports() -> list[str]:
     for port in serial.tools.list_ports.comports():
         device = port.device
         if "usbmodem" in device or "ttyACM" in device:
-            candidates.append(device)
+            candidates.append((device, _describe_port(port)))
         elif device.upper().startswith("COM"):   # Windows
-            candidates.append(device)
+            candidates.append((device, _describe_port(port)))
     return candidates
+
+
+def _device_kind_from_port(port_path: str) -> str:
+    """Identify whether a serial port is a Tildagon or something else,
+    used by --encode auto. Matches on the USB device's manufacturer +
+    product strings (Tildagon shows up as 'Electromagnetic Field
+    TiLDAGON' on macOS).
+    """
+    for port in serial.tools.list_ports.comports():
+        if port.device == port_path:
+            desc = _describe_port(port).lower()
+            if "tildagon" in desc:
+                return "tildagon"
+            break
+    return "other"
+
+
+def _describe_port(port) -> str:
+    """Best-effort human label for a serial.tools.list_ports.ListPortInfo.
+
+    Combines the manufacturer / product strings the OS exposes for the
+    USB device behind the serial port, so the picker can show
+    "M5StickC Plus2" or "Espressif S3" rather than just opaque
+    /dev/cu.usbmodemNNNN paths.
+    """
+    bits = []
+    if getattr(port, "manufacturer", None):
+        bits.append(str(port.manufacturer))
+    if getattr(port, "product", None):
+        bits.append(str(port.product))
+    if not bits and getattr(port, "description", None):
+        bits.append(str(port.description))
+    return " ".join(bits) if bits else "(unknown device)"
+
+
+def interactive_pick_port() -> Optional[str]:
+    """Show the available serial ports and let the operator pick one.
+
+    Returns the chosen device path, or None if the user cancels or
+    there are no candidates. Skips the prompt entirely when there's
+    only one candidate (no choice to make).
+    """
+    candidates = find_candidate_ports_with_info()
+    if not candidates:
+        print("No serial ports detected. Plug in your StickC or "
+              "Tildagon and try again, or pass --port explicitly.",
+              file=sys.stderr)
+        return None
+    if len(candidates) == 1:
+        device, desc = candidates[0]
+        print(f"Auto-selecting only available port: {device}  ({desc})")
+        return device
+    print("Multiple serial ports detected. Pick one:")
+    for idx, (device, desc) in enumerate(candidates, start=1):
+        print(f"  [{idx}] {device:30}  {desc}")
+    while True:
+        try:
+            choice = input(
+                f"Enter 1-{len(candidates)} (or q to quit): "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice in ("q", "quit", "exit"):
+            return None
+        try:
+            n = int(choice)
+            if 1 <= n <= len(candidates):
+                return candidates[n - 1][0]
+        except ValueError:
+            pass
+        print("  not a valid choice; try again.")
 
 
 def open_serial(port: str, baud: int) -> Optional[serial.Serial]:
@@ -316,9 +398,22 @@ def run_loop(
     serial_port_name: Optional[str],
     baud: int,
     on_tick: callable,
+    encoding: str = "hex",
 ) -> None:
     """The pump. Reads UDP from all listening sockets, writes serial, calls
-    on_tick once per cycle."""
+    on_tick once per cycle.
+
+    `encoding` controls what goes on the cable:
+      * "hex" (default) - ASCII hex of each Enttec Pro frame, terminated
+        by a newline. Survives MicroPython's text-mode USB-CDC layer
+        intact, so devices on either side (StickC firmware + Tildagon
+        DmxBridge) see the same encoded protocol. The device firmware
+        does the hex decode before feeding its parser.
+      * "binary" - raw Enttec Pro bytes, no encoding. Lower bandwidth.
+        Used when the device receives via a GPIO UART through an
+        external FTDI cable (B7 future work) - the FTDI is binary-safe
+        end-to-end so the encoding tax isn't justified.
+    """
     ser: Optional[serial.Serial] = None
     last_serial_attempt = 0.0
     SERIAL_RETRY_INTERVAL = 1.0
@@ -341,10 +436,41 @@ def run_loop(
                     continue
                 state.record_frame(payload)
 
-                # Try to send if serial is up.
+                # Try to send if serial is up. Apply the cable encoding
+                # chosen at startup. Three modes, pick determined by
+                # --encode (auto-resolves based on device kind):
+                #   "python"  -> "#<hex>\n" - a Python comment + NL.
+                #                Tildagons need this because their
+                #                USB-CDC IS the MicroPython REPL
+                #                channel; valid-Python bytes get
+                #                no-op'd by the REPL rather than
+                #                causing tracebacks (which hang the
+                #                device).
+                #   "hex"     -> "<hex>;" - generic ASCII-safe; no
+                #                REPL friendliness.
+                #   "binary"  -> raw Enttec bytes; lowest bandwidth;
+                #                used by Stick firmware reading binary
+                #                serial directly.
                 if ser is not None:
                     try:
-                        ser.write(wrap_enttec_pro(payload))
+                        framed = wrap_enttec_pro(payload)
+                        if encoding == "python":
+                            # Envelope: #"<hex>"\n
+                            #   # opens a Python comment (REPL no-ops)
+                            #   " starts the "string" inside the comment
+                            #     and IS what the device parser uses as
+                            #     the frame terminator
+                            #   \n lets the REPL move on between frames
+                            # The frame boundaries are the " marks,
+                            # because \n is consumed by the REPL.
+                            ser.write(b'#"')
+                            ser.write(binascii.hexlify(framed))
+                            ser.write(b'"\n')
+                        elif encoding == "hex":
+                            ser.write(binascii.hexlify(framed))
+                            ser.write(b";")
+                        else:
+                            ser.write(framed)
                         state.record_sent()
                     except (serial.SerialException, OSError) as e:
                         state.record_error(f"write failed: {e}")
@@ -410,6 +536,23 @@ def main() -> int:
         "--no-ui", action="store_true",
         help="Disable the rich terminal UI; print plain text status only.",
     )
+    parser.add_argument(
+        "--encode",
+        choices=["auto", "binary", "hex", "python"],
+        default="auto",
+        help="Cable protocol. 'auto' (default) picks based on the port's "
+             "device description: 'python' for Tildagon (its USB-CDC is "
+             "the MicroPython REPL channel, so we disguise frames as "
+             "Python comments the REPL no-ops on), 'binary' for everything "
+             "else. 'python' wraps each Enttec Pro frame as '#<hex>\\n' - "
+             "a comment + newline, valid Python that the REPL parses, "
+             "evaluates as a no-op, and leaves intact for our line "
+             "reader. 'hex' uses '<hex>;' (no REPL-friendliness). "
+             "'binary' writes raw Enttec Pro bytes - lower bandwidth, "
+             "requires the device to do binary serial reads (Stick "
+             "firmware reading from a hardware UART via external FTDI, "
+             "see B7).",
+    )
     args = parser.parse_args()
 
     # Bind BOTH IPv4 and IPv6 wildcards on port 6454.
@@ -471,8 +614,37 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    # Resolve serial port: explicit --port wins; otherwise, if
+    # interactive (not --no-ui), prompt the user to pick from the
+    # detected candidates. Headless mode falls through to the run
+    # loop's existing auto-detect-first-port behaviour.
+    chosen_port = args.port
+    if chosen_port is None and not args.no_ui:
+        chosen_port = interactive_pick_port()
+        if chosen_port is None:
+            print("No port selected; exiting.", file=sys.stderr)
+            for s in sockets:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            return 1
+
+    # Resolve --encode auto: Tildagons need python-comment envelope
+    # because their USB-CDC IS the MicroPython REPL channel; everything
+    # else gets binary by default (Stick firmware reads raw bytes).
+    chosen_encoding = args.encode
+    if chosen_encoding == "auto":
+        if chosen_port:
+            kind = _device_kind_from_port(chosen_port)
+            chosen_encoding = "python" if kind == "tildagon" else "binary"
+        else:
+            chosen_encoding = "binary"
+        print(f"Encoding: auto-selected '{chosen_encoding}' "
+              f"(port: {chosen_port or '<not yet resolved>'})")
+
     state = ShimState(
-        serial_port=args.port,
+        serial_port=chosen_port,
         bind_addr=args.bind,
         artnet_port=args.artnet_port,
         universe=args.universe,
@@ -504,7 +676,8 @@ def main() -> int:
                         f"fps={state.fps:.1f} err={state.errors}{drop_str}"
                     )
 
-            run_loop(state, sockets, args.port, args.baud, headless_tick)
+            run_loop(state, sockets, chosen_port, args.baud,
+                     headless_tick, encoding=chosen_encoding)
         else:
             with Live(
                 build_status_layout(state),
@@ -514,7 +687,8 @@ def main() -> int:
             ) as live:
                 def ui_tick():
                     live.update(build_status_layout(state))
-                run_loop(state, sockets, args.port, args.baud, ui_tick)
+                run_loop(state, sockets, chosen_port, args.baud,
+                         ui_tick, encoding=chosen_encoding)
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down.[/yellow]")
     finally:
