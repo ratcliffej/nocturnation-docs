@@ -4,3 +4,8 @@ epics/
 
 # macOS noise
 .DS_Store
+
+# Python shim artefacts (tools/) - venv + bytecode cache, never tracked
+tools/.venv/
+__pycache__/
+*.pyc
