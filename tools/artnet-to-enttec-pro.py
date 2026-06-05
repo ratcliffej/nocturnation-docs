@@ -455,9 +455,17 @@ def run_loop(
                     try:
                         framed = wrap_enttec_pro(payload)
                         if encoding == "python":
-                            ser.write(b"#")
+                            # Envelope: #"<hex>"\n
+                            #   # opens a Python comment (REPL no-ops)
+                            #   " starts the "string" inside the comment
+                            #     and IS what the device parser uses as
+                            #     the frame terminator
+                            #   \n lets the REPL move on between frames
+                            # The frame boundaries are the " marks,
+                            # because \n is consumed by the REPL.
+                            ser.write(b'#"')
                             ser.write(binascii.hexlify(framed))
-                            ser.write(b"\n")
+                            ser.write(b'"\n')
                         elif encoding == "hex":
                             ser.write(binascii.hexlify(framed))
                             ser.write(b";")
