@@ -137,6 +137,16 @@ def wrap_enttec_pro(payload: bytes) -> bytes:
 def find_candidate_ports() -> list[str]:
     """List likely NocturNation device serial ports on the current OS.
 
+    Wrapper around find_candidate_ports_with_info() that returns just
+    the device paths - kept for callers that don't need the descriptions.
+    """
+    return [device for device, _desc in find_candidate_ports_with_info()]
+
+
+def find_candidate_ports_with_info() -> list[tuple[str, str]]:
+    """List likely NocturNation device serial ports with a human
+    description of each, used by the interactive picker.
+
     On macOS, USB-CDC devices appear as /dev/cu.usbmodemNNNN. On Linux,
     /dev/ttyACMn. On Windows, USB-CDC devices show as COMn with a
     description containing 'USB Serial' or the device's product string -
@@ -147,10 +157,66 @@ def find_candidate_ports() -> list[str]:
     for port in serial.tools.list_ports.comports():
         device = port.device
         if "usbmodem" in device or "ttyACM" in device:
-            candidates.append(device)
+            candidates.append((device, _describe_port(port)))
         elif device.upper().startswith("COM"):   # Windows
-            candidates.append(device)
+            candidates.append((device, _describe_port(port)))
     return candidates
+
+
+def _describe_port(port) -> str:
+    """Best-effort human label for a serial.tools.list_ports.ListPortInfo.
+
+    Combines the manufacturer / product strings the OS exposes for the
+    USB device behind the serial port, so the picker can show
+    "M5StickC Plus2" or "Espressif S3" rather than just opaque
+    /dev/cu.usbmodemNNNN paths.
+    """
+    bits = []
+    if getattr(port, "manufacturer", None):
+        bits.append(str(port.manufacturer))
+    if getattr(port, "product", None):
+        bits.append(str(port.product))
+    if not bits and getattr(port, "description", None):
+        bits.append(str(port.description))
+    return " ".join(bits) if bits else "(unknown device)"
+
+
+def interactive_pick_port() -> Optional[str]:
+    """Show the available serial ports and let the operator pick one.
+
+    Returns the chosen device path, or None if the user cancels or
+    there are no candidates. Skips the prompt entirely when there's
+    only one candidate (no choice to make).
+    """
+    candidates = find_candidate_ports_with_info()
+    if not candidates:
+        print("No serial ports detected. Plug in your StickC or "
+              "Tildagon and try again, or pass --port explicitly.",
+              file=sys.stderr)
+        return None
+    if len(candidates) == 1:
+        device, desc = candidates[0]
+        print(f"Auto-selecting only available port: {device}  ({desc})")
+        return device
+    print("Multiple serial ports detected. Pick one:")
+    for idx, (device, desc) in enumerate(candidates, start=1):
+        print(f"  [{idx}] {device:30}  {desc}")
+    while True:
+        try:
+            choice = input(
+                f"Enter 1-{len(candidates)} (or q to quit): "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice in ("q", "quit", "exit"):
+            return None
+        try:
+            n = int(choice)
+            if 1 <= n <= len(candidates):
+                return candidates[n - 1][0]
+        except ValueError:
+            pass
+        print("  not a valid choice; try again.")
 
 
 def open_serial(port: str, baud: int) -> Optional[serial.Serial]:
@@ -471,8 +537,24 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    # Resolve serial port: explicit --port wins; otherwise, if
+    # interactive (not --no-ui), prompt the user to pick from the
+    # detected candidates. Headless mode falls through to the run
+    # loop's existing auto-detect-first-port behaviour.
+    chosen_port = args.port
+    if chosen_port is None and not args.no_ui:
+        chosen_port = interactive_pick_port()
+        if chosen_port is None:
+            print("No port selected; exiting.", file=sys.stderr)
+            for s in sockets:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            return 1
+
     state = ShimState(
-        serial_port=args.port,
+        serial_port=chosen_port,
         bind_addr=args.bind,
         artnet_port=args.artnet_port,
         universe=args.universe,
@@ -504,7 +586,7 @@ def main() -> int:
                         f"fps={state.fps:.1f} err={state.errors}{drop_str}"
                     )
 
-            run_loop(state, sockets, args.port, args.baud, headless_tick)
+            run_loop(state, sockets, chosen_port, args.baud, headless_tick)
         else:
             with Live(
                 build_status_layout(state),
@@ -514,7 +596,7 @@ def main() -> int:
             ) as live:
                 def ui_tick():
                     live.update(build_status_layout(state))
-                run_loop(state, sockets, args.port, args.baud, ui_tick)
+                run_loop(state, sockets, chosen_port, args.baud, ui_tick)
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down.[/yellow]")
     finally:
