@@ -15,6 +15,7 @@
 # the full architecture rationale.
 
 import argparse
+import binascii
 import socket
 import sys
 import time
@@ -382,9 +383,22 @@ def run_loop(
     serial_port_name: Optional[str],
     baud: int,
     on_tick: callable,
+    encoding: str = "hex",
 ) -> None:
     """The pump. Reads UDP from all listening sockets, writes serial, calls
-    on_tick once per cycle."""
+    on_tick once per cycle.
+
+    `encoding` controls what goes on the cable:
+      * "hex" (default) - ASCII hex of each Enttec Pro frame, terminated
+        by a newline. Survives MicroPython's text-mode USB-CDC layer
+        intact, so devices on either side (StickC firmware + Tildagon
+        DmxBridge) see the same encoded protocol. The device firmware
+        does the hex decode before feeding its parser.
+      * "binary" - raw Enttec Pro bytes, no encoding. Lower bandwidth.
+        Used when the device receives via a GPIO UART through an
+        external FTDI cable (B7 future work) - the FTDI is binary-safe
+        end-to-end so the encoding tax isn't justified.
+    """
     ser: Optional[serial.Serial] = None
     last_serial_attempt = 0.0
     SERIAL_RETRY_INTERVAL = 1.0
@@ -407,10 +421,18 @@ def run_loop(
                     continue
                 state.record_frame(payload)
 
-                # Try to send if serial is up.
+                # Try to send if serial is up. Apply the cable encoding
+                # chosen at startup; "hex" appends a newline so the
+                # device firmware's line-based reader can find frame
+                # boundaries.
                 if ser is not None:
                     try:
-                        ser.write(wrap_enttec_pro(payload))
+                        framed = wrap_enttec_pro(payload)
+                        if encoding == "hex":
+                            ser.write(binascii.hexlify(framed))
+                            ser.write(b"\n")
+                        else:
+                            ser.write(framed)
                         state.record_sent()
                     except (serial.SerialException, OSError) as e:
                         state.record_error(f"write failed: {e}")
@@ -475,6 +497,15 @@ def main() -> int:
     parser.add_argument(
         "--no-ui", action="store_true",
         help="Disable the rich terminal UI; print plain text status only.",
+    )
+    parser.add_argument(
+        "--encode", choices=["hex", "binary"], default="hex",
+        help="Cable protocol. 'hex' (default) ASCII-hex encodes each "
+             "Enttec Pro frame + newline; works on every device including "
+             "ones where binary USB-CDC reads aren't reliable (Tildagon "
+             "MicroPython). 'binary' writes raw Enttec Pro bytes - lower "
+             "bandwidth, requires the device to do binary serial reads "
+             "(e.g. an external FTDI cable into a GPIO UART, see B7).",
     )
     args = parser.parse_args()
 
@@ -586,7 +617,8 @@ def main() -> int:
                         f"fps={state.fps:.1f} err={state.errors}{drop_str}"
                     )
 
-            run_loop(state, sockets, chosen_port, args.baud, headless_tick)
+            run_loop(state, sockets, chosen_port, args.baud,
+                     headless_tick, encoding=args.encode)
         else:
             with Live(
                 build_status_layout(state),
@@ -596,7 +628,8 @@ def main() -> int:
             ) as live:
                 def ui_tick():
                     live.update(build_status_layout(state))
-                run_loop(state, sockets, chosen_port, args.baud, ui_tick)
+                run_loop(state, sockets, chosen_port, args.baud,
+                         ui_tick, encoding=args.encode)
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down.[/yellow]")
     finally:
