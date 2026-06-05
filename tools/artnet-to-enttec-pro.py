@@ -409,11 +409,32 @@ def main() -> int:
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEPORT lets us share UDP 6454 with QLC+ (which may bind it
+    # for Art-Net input even when we only need output). All processes
+    # binding the same port must set this option for the share to work;
+    # on macOS this is checked at bind time. Not all platforms expose
+    # the constant - silently skip on those.
+    if hasattr(socket, "SO_REUSEPORT"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
     try:
         sock.bind((args.bind, args.artnet_port))
     except OSError as e:
         print(f"Failed to bind UDP {args.bind}:{args.artnet_port}: {e}",
               file=sys.stderr)
+        if e.errno == 48:   # EADDRINUSE on macOS
+            print(
+                "\nUDP 6454 is already in use by another process. Diagnose:\n"
+                "  lsof -i UDP:6454\n"
+                "If it's a stale shim, kill it:\n"
+                "  pkill -f artnet-to-enttec-pro\n"
+                "If it's QLC+, quit QLC+ once, start the shim, then\n"
+                "relaunch QLC+ (the second-to-bind needs SO_REUSEPORT\n"
+                "set too - QLC+'s Art-Net plugin may not).",
+                file=sys.stderr,
+            )
         return 1
     sock.setblocking(False)
 
