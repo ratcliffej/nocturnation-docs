@@ -338,7 +338,7 @@ If `in=` stays at 0 but `drops=N` is climbing in the `--no-ui` output, that's th
 
 ### 6.5 Add the NocturNation fixtures
 
-NocturNation v2 uses a **10-fixture-per-universe** layout — one Broadcast (reaches every Lume regardless of configured group) plus nine Group fixtures (each addressing a distinct Lume group). One fixture instance per addressable group means the LD can scene each group independently — "audience zone A red, zone B blue, broadcast dark".
+NocturNation v2 uses a **7-fixture-per-universe** layout — one Broadcast (reaches every Lume regardless of configured group) plus six Group fixtures (each addressing a distinct Lume group). One fixture instance per addressable group means the LD can scene each group independently — "audience zone A red, zone B blue, broadcast dark".
 
 **Install the fixture definition (one-time):**
 
@@ -349,24 +349,21 @@ NocturNation v2 uses a **10-fixture-per-universe** layout — one Broadcast (rea
    - **Linux:** `~/.qlcplus/fixtures/`
 3. Restart QLC+ so it picks up the new file.
 
-**Patch the 10 fixture instances** (Fixtures panel → "Add fixture" / "+" button):
+**Patch the 7 fixture instances** (Fixtures panel → "Add fixture" / "+" button). All seven use the **same** "Block (40ch)" mode — just patched at different addresses.
 
 | # | Manufacturer | Model | Mode | Universe address |
 |---|--------------|-------|------|---------|
-| 1 | NocturNation | Lume Group v2 (DMX bridge) | **Broadcast (49ch)** | **1** |
-| 2 | NocturNation | Lume Group v2 | Group (50ch) | **50** |
-| 3 | NocturNation | Lume Group v2 | Group (50ch) | **100** |
-| 4 | NocturNation | Lume Group v2 | Group (50ch) | **150** |
-| 5 | NocturNation | Lume Group v2 | Group (50ch) | **200** |
-| 6 | NocturNation | Lume Group v2 | Group (50ch) | **250** |
-| 7 | NocturNation | Lume Group v2 | Group (50ch) | **300** |
-| 8 | NocturNation | Lume Group v2 | Group (50ch) | **350** |
-| 9 | NocturNation | Lume Group v2 | Group (50ch) | **400** |
-| 10 | NocturNation | Lume Group v2 | Group (50ch) | **450** |
+| 1 | NocturNation | Lume Group v2 (DMX bridge) | Block (40ch) | **1** (Broadcast) |
+| 2 | NocturNation | Lume Group v2 | Block (40ch) | **41** (Group 1) |
+| 3 | NocturNation | Lume Group v2 | Block (40ch) | **81** (Group 2) |
+| 4 | NocturNation | Lume Group v2 | Block (40ch) | **121** (Group 3) |
+| 5 | NocturNation | Lume Group v2 | Block (40ch) | **161** (Group 4) |
+| 6 | NocturNation | Lume Group v2 | Block (40ch) | **201** (Group 5) |
+| 7 | NocturNation | Lume Group v2 | Block (40ch) | **241** (Group 6) |
 
 Name them descriptively in QLC+ — "Broadcast", "Group 1", "Group 2", … — so Scenes and Chasers later read clearly. The exact address spacing matches the firmware's per-block parser; do not shift them.
 
-**You don't have to patch all ten today.** Broadcast plus Group 1 is enough for first light. The other eight can wait until you have multiple Lumes configured to different `group_id`s via the Settings menu.
+**You don't have to patch all seven today.** Broadcast plus Group 1 is enough for first light. The other five can wait until you have multiple Lumes configured to different `group_id`s via the Settings menu.
 
 > **Group routing on the Lume side.** Each Lume has a `group_id` setting (Tildagon Settings menu / StickC Config menu). A Lume with `group_id=0` accepts only Broadcast. A Lume with `group_id=2` accepts Broadcast AND Group 2 fixture events. Don't worry about this for first light — leave Lumes at the default (`group_id=0`) and drive the Broadcast fixture.
 
@@ -453,7 +450,7 @@ NocturNation's 23-channel-per-fixture layout (Epic 7 B7). Channels 24+ in each f
 | 22 | 22 | Wash TTL Hi *(seconds, high byte)* |
 | 23 | 23 | Wash Pulse Response *(<128 suppress; ≥128 overlay)* |
 
-Group fixtures use the same offsets but shifted: Group 1's Wash A R is at universe address 60 (50 + 10), Group 2's at 110, and so on.
+Group fixtures use the same offsets but shifted: Group 1's Wash A R is at universe address 51 (41 + 10), Group 2's at 91, Group 3's at 131, and so on (add 40 per group).
 
 The plan: set Broadcast's Wash A anchor to red, then raise the master to make it visible.
 
@@ -464,7 +461,7 @@ The plan: set Broadcast's Wash A anchor to red, then raise the master to make it
 
 **Congratulations - this is first light.** Every section onwards is making this richer, not different in kind.
 
-> **Try the per-group routing.** Drag universe channel **60** (Group 1 Wash A R) to 255 + universe channel **50** (Group 1 Master) to 255. **Only Lumes whose `group_id=1` should light up.** Lumes at default `group_id=0` ignore it because Group 1 is not Broadcast. To exercise this you need at least one Lume configured to group 1 via its Settings menu; if all your Lumes are at the default, this slider has no visible effect (which is itself a valid "broadcast isolation" check).
+> **Try the per-group routing.** Drag universe channel **51** (Group 1 Wash A R) to 255 + universe channel **41** (Group 1 Master) to 255. **Only Lumes whose `group_id=1` should light up.** Lumes at default `group_id=0` ignore it because Group 1 is not Broadcast. To exercise this you need at least one Lume configured to group 1 via its Settings menu; if all your Lumes are at the default, this slider has no visible effect (which is itself a valid "broadcast isolation" check).
 
 <!-- Verify-and-screenshot: a Lume responding to a slider drag on Simple Desk. Phone camera + the bracelet / Tildagon ring lit up; QLC+ window in the background. -->
 
