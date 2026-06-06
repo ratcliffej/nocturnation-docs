@@ -54,10 +54,11 @@ DMX_UNIVERSE_BYTES = 512
 
 # Channel role labels for the diagnostics view, matching Epic 7 B7
 # layout (23 active channels per block, grouped by lighting concept).
-# The shim shows the BROADCAST block (addresses 1-23) here; Groups 1-9
-# at addresses 50, 100, ... 450 follow the same per-block layout but
-# emit on their own target_group. To see what a Group is doing, scope
-# the Stick's LCD diagnostics view or trust QLC+'s Simple Desk.
+# The shim shows the BROADCAST block (addresses 1-23) here; Groups
+# 1-6 at addresses 41, 81, 121, 161, 201, 241 follow the same per-
+# block layout but emit on their own target_group. To see what a
+# Group is doing, scope the Stick's LCD diagnostics view or trust
+# QLC+'s Simple Desk.
 CHANNEL_ROLES = [
     "Master Intensity",
     "Strobe Rate",
