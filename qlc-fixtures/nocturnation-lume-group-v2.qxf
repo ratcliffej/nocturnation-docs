@@ -3,7 +3,7 @@
 <FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
  <Creator>
   <Name>NocturNation</Name>
-  <Version>0.2.0</Version>
+  <Version>0.2.1</Version>
   <Author>NocturNation contributors</Author>
  </Creator>
  <Manufacturer>NocturNation</Manufacturer>
@@ -11,18 +11,21 @@
  <Type>Color Changer</Type>
 
  <!--
-   Epic 7 B7: per-group + extended-parameter DMX surface. Two modes:
+   Epic 7 B7: per-group + extended-parameter DMX surface. Single
+   40-channel mode used for ALL 7 fixture instances (broadcast + 6
+   groups). Patch this fixture at these universe addresses:
 
-     Broadcast (49ch)  - patched ONCE at universe address 1.
-                         Reaches every Lume regardless of configured group.
-     Group     (50ch)  - patched up to 9 times at addresses 50, 100, 150,
-                         200, 250, 300, 350, 400, 450. Each instance
-                         targets a distinct group_id (1..9) which Lumes
-                         configure via Settings menu.
+     1   - Broadcast (target_group=0; reaches every Lume)
+     41  - Group 1
+     81  - Group 2
+     121 - Group 3
+     161 - Group 4
+     201 - Group 5
+     241 - Group 6
 
-   23 active channels per block (1..23); channels 24..49/50 reserved
-   for future extension. Channel order within both modes is identical
-   so a Scene built on one fixture is meaningful on the other.
+   23 active channels per block (1..23); channels 24..40 reserved
+   for future extension. Total 280 of 512 addresses consumed; 232
+   spare.
  -->
 
  <!-- ============================================================
@@ -160,7 +163,8 @@
       RESERVED PADDING
       Reserved channels keep adjacent fixture instances from
       overlapping when the LD patches them at the spec'd base
-      addresses (1, 50, 100, ...). The firmware ignores them.
+      addresses (1, 41, 81, 121, 161, 201, 241). The firmware
+      ignores them.
       ============================================================ -->
  <Channel Name="Reserved 24"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 25"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
@@ -179,21 +183,12 @@
  <Channel Name="Reserved 38"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 39"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 40"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 41"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 42"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 43"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 44"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 45"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 46"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 47"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 48"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 49"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 50"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
 
  <!-- ============================================================
-      MODE: Broadcast (49ch) - patch at universe address 1 ONCE
+      MODE: 40-channel block. Used for ALL 7 instances.
+      Patch at universe addresses 1, 41, 81, 121, 161, 201, 241.
       ============================================================ -->
- <Mode Name="Broadcast (49ch)">
+ <Mode Name="Block (40ch)">
   <Channel Number="0">Master Intensity</Channel>
   <Channel Number="1">Strobe Rate</Channel>
   <Channel Number="2">Pulse R</Channel>
@@ -234,75 +229,6 @@
   <Channel Number="37">Reserved 38</Channel>
   <Channel Number="38">Reserved 39</Channel>
   <Channel Number="39">Reserved 40</Channel>
-  <Channel Number="40">Reserved 41</Channel>
-  <Channel Number="41">Reserved 42</Channel>
-  <Channel Number="42">Reserved 43</Channel>
-  <Channel Number="43">Reserved 44</Channel>
-  <Channel Number="44">Reserved 45</Channel>
-  <Channel Number="45">Reserved 46</Channel>
-  <Channel Number="46">Reserved 47</Channel>
-  <Channel Number="47">Reserved 48</Channel>
-  <Channel Number="48">Reserved 49</Channel>
-  <Head><Channel>2</Channel><Channel>3</Channel><Channel>4</Channel></Head>
-  <Head><Channel>10</Channel><Channel>11</Channel><Channel>12</Channel></Head>
-  <Head><Channel>13</Channel><Channel>14</Channel><Channel>15</Channel></Head>
- </Mode>
-
- <!-- ============================================================
-      MODE: Group (50ch) - patch at addresses 50, 100, 150, 200,
-      250, 300, 350, 400, 450 (one instance per group_id 1..9).
-      ============================================================ -->
- <Mode Name="Group (50ch)">
-  <Channel Number="0">Master Intensity</Channel>
-  <Channel Number="1">Strobe Rate</Channel>
-  <Channel Number="2">Pulse R</Channel>
-  <Channel Number="3">Pulse G</Channel>
-  <Channel Number="4">Pulse B</Channel>
-  <Channel Number="5">Pulse Trigger</Channel>
-  <Channel Number="6">Pulse Attack</Channel>
-  <Channel Number="7">Pulse Sustain</Channel>
-  <Channel Number="8">Pulse Release</Channel>
-  <Channel Number="9">Pulse Probability</Channel>
-  <Channel Number="10">Wash A R</Channel>
-  <Channel Number="11">Wash A G</Channel>
-  <Channel Number="12">Wash A B</Channel>
-  <Channel Number="13">Wash B R</Channel>
-  <Channel Number="14">Wash B G</Channel>
-  <Channel Number="15">Wash B B</Channel>
-  <Channel Number="16">Wash Cycle</Channel>
-  <Channel Number="17">Wash Intensity</Channel>
-  <Channel Number="18">Wash Attack</Channel>
-  <Channel Number="19">Wash Release</Channel>
-  <Channel Number="20">Wash TTL Lo</Channel>
-  <Channel Number="21">Wash TTL Hi</Channel>
-  <Channel Number="22">Wash Pulse Response</Channel>
-  <Channel Number="23">Reserved 24</Channel>
-  <Channel Number="24">Reserved 25</Channel>
-  <Channel Number="25">Reserved 26</Channel>
-  <Channel Number="26">Reserved 27</Channel>
-  <Channel Number="27">Reserved 28</Channel>
-  <Channel Number="28">Reserved 29</Channel>
-  <Channel Number="29">Reserved 30</Channel>
-  <Channel Number="30">Reserved 31</Channel>
-  <Channel Number="31">Reserved 32</Channel>
-  <Channel Number="32">Reserved 33</Channel>
-  <Channel Number="33">Reserved 34</Channel>
-  <Channel Number="34">Reserved 35</Channel>
-  <Channel Number="35">Reserved 36</Channel>
-  <Channel Number="36">Reserved 37</Channel>
-  <Channel Number="37">Reserved 38</Channel>
-  <Channel Number="38">Reserved 39</Channel>
-  <Channel Number="39">Reserved 40</Channel>
-  <Channel Number="40">Reserved 41</Channel>
-  <Channel Number="41">Reserved 42</Channel>
-  <Channel Number="42">Reserved 43</Channel>
-  <Channel Number="43">Reserved 44</Channel>
-  <Channel Number="44">Reserved 45</Channel>
-  <Channel Number="45">Reserved 46</Channel>
-  <Channel Number="46">Reserved 47</Channel>
-  <Channel Number="47">Reserved 48</Channel>
-  <Channel Number="48">Reserved 49</Channel>
-  <Channel Number="49">Reserved 50</Channel>
   <Head><Channel>2</Channel><Channel>3</Channel><Channel>4</Channel></Head>
   <Head><Channel>10</Channel><Channel>11</Channel><Channel>12</Channel></Head>
   <Head><Channel>13</Channel><Channel>14</Channel><Channel>15</Channel></Head>
