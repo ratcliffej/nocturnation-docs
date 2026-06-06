@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE FixtureDefinition>
+<FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
+ <Creator>
+  <Name>NocturNation</Name>
+  <Version>0.1.0</Version>
+  <Author>NocturNation contributors</Author>
+ </Creator>
+ <Manufacturer>NocturNation</Manufacturer>
+ <Model>Lume Group (12ch)</Model>
+ <Type>Color Changer</Type>
+
+ <Channel Name="Master Intensity" Preset="IntensityDimmer"/>
+
+ <Channel Name="Strobe Rate">
+  <Group Byte="0">Shutter</Group>
+  <Capability Min="0" Max="0" Preset="ShutterOpen">Off</Capability>
+  <Capability Min="1" Max="255" Preset="StrobeSlowToFast">Slow &gt; Fast (max 4 Hz)</Capability>
+ </Channel>
+
+ <Channel Name="Pulse R" Preset="IntensityRed"/>
+ <Channel Name="Pulse G" Preset="IntensityGreen"/>
+ <Channel Name="Pulse B" Preset="IntensityBlue"/>
+
+ <Channel Name="Pulse Trigger">
+  <Group Byte="0">Effect</Group>
+  <Capability Min="0" Max="127">Idle</Capability>
+  <Capability Min="128" Max="255">Fire (rising edge)</Capability>
+ </Channel>
+
+ <Channel Name="Wash A R" Preset="IntensityRed"/>
+ <Channel Name="Wash A G" Preset="IntensityGreen"/>
+ <Channel Name="Wash A B" Preset="IntensityBlue"/>
+
+ <Channel Name="Wash B R" Preset="IntensityRed"/>
+ <Channel Name="Wash B G" Preset="IntensityGreen"/>
+ <Channel Name="Wash B B" Preset="IntensityBlue"/>
+
+ <Mode Name="12-Channel">
+  <Channel Number="0">Master Intensity</Channel>
+  <Channel Number="1">Strobe Rate</Channel>
+  <Channel Number="2">Pulse R</Channel>
+  <Channel Number="3">Pulse G</Channel>
+  <Channel Number="4">Pulse B</Channel>
+  <Channel Number="5">Pulse Trigger</Channel>
+  <Channel Number="6">Wash A R</Channel>
+  <Channel Number="7">Wash A G</Channel>
+  <Channel Number="8">Wash A B</Channel>
+  <Channel Number="9">Wash B R</Channel>
+  <Channel Number="10">Wash B G</Channel>
+  <Channel Number="11">Wash B B</Channel>
+  <Head>
+   <Channel>2</Channel>
+   <Channel>3</Channel>
+   <Channel>4</Channel>
+  </Head>
+  <Head>
+   <Channel>6</Channel>
+   <Channel>7</Channel>
+   <Channel>8</Channel>
+  </Head>
+  <Head>
+   <Channel>9</Channel>
+   <Channel>10</Channel>
+   <Channel>11</Channel>
+  </Head>
+ </Mode>
+
+ <Physical>
+  <Bulb Type="LED" Lumens="0" ColourTemperature="0"/>
+  <Dimensions Weight="0" Width="0" Height="0" Depth="0"/>
+  <Lens Name="Other" DegreesMin="0" DegreesMax="0"/>
+  <Focus Type="Fixed" PanMax="0" TiltMax="0"/>
+  <Technical PowerConsumption="0" DmxConnector="Other"/>
+ </Physical>
+</FixtureDefinition>
