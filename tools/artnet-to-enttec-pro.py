@@ -52,11 +52,37 @@ ENTTEC_DMX_START_CODE = 0x00
 ENTTEC_BAUD = 921_600
 DMX_UNIVERSE_BYTES = 512
 
-# Channel role labels for the diagnostics view, matching Epic 7 Q2 layout.
+# Channel role labels for the diagnostics view, matching Epic 7 B7
+# layout (23 active channels per block, grouped by lighting concept).
+# The shim shows the BROADCAST block (addresses 1-23) here; Groups
+# 1-6 at addresses 41, 81, 121, 161, 201, 241 follow the same per-
+# block layout but emit on their own target_group. To see what a
+# Group is doing, scope the Stick's LCD diagnostics view or trust
+# QLC+'s Simple Desk.
 CHANNEL_ROLES = [
-    "Master",      "Strobe",      "Pulse R",     "Pulse G",
-    "Pulse B",     "Pulse Trig",  "Wash A R",    "Wash A G",
-    "Wash A B",    "Wash B R",    "Wash B G",    "Wash B B",
+    "Master Intensity",
+    "Strobe Rate",
+    "Pulse R",
+    "Pulse G",
+    "Pulse B",
+    "Pulse Trigger",
+    "Pulse Attack",
+    "Pulse Sustain",
+    "Pulse Release",
+    "Pulse Probability",
+    "Wash A R",
+    "Wash A G",
+    "Wash A B",
+    "Wash B R",
+    "Wash B G",
+    "Wash B B",
+    "Wash Cycle",
+    "Wash Intensity",
+    "Wash Attack",
+    "Wash Release",
+    "Wash TTL Lo",
+    "Wash TTL Hi",
+    "Wash Pulse Resp",
 ]
 
 
@@ -359,10 +385,10 @@ def build_status_layout(state: ShimState) -> Layout:
         info.add_row("Last error", f"[red dim]{state.last_error_msg}[/red dim]")
     layout["info"].update(Panel(info, title="Status", border_style="blue"))
 
-    # Channels panel: 12-row hex view with bar meters (NocturNation layout).
+    # Channels panel: 23-row hex view with bar meters (B7 broadcast block).
     channels = Table(show_header=True, expand=True, padding=(0, 1))
     channels.add_column("Ch", style="dim", width=3)
-    channels.add_column("Role", width=11)
+    channels.add_column("Role", width=18)
     channels.add_column("Hex", width=4)
     channels.add_column("Val", width=4)
     channels.add_column("Level", ratio=1)
@@ -379,7 +405,7 @@ def build_status_layout(state: ShimState) -> Layout:
             )
         else:
             channels.add_row(f"{idx + 1:02d}", role, "----", "-", "[dim]no data[/dim]")
-    layout["channels"].update(Panel(channels, title="DMX channels", border_style="blue"))
+    layout["channels"].update(Panel(channels, title="DMX channels (Broadcast block)", border_style="blue"))
 
     layout["footer"].update(Panel(
         Text("Ctrl+C to quit", justify="center", style="dim"),
