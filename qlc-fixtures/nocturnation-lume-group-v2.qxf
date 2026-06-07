@@ -837,13 +837,129 @@
  </Channel>
 
  <!-- ============================================================
-      RESERVED PADDING (shared definition, used for every offset
-      24-40 across every group block).
+      RESERVED PADDING (one definition per universe address; QLC+
+      collapses consecutive same-named Mode entries so they all
+      need to be distinct).
       ============================================================ -->
- <Channel Name="Reserved">
-  <Group Byte="0">Nothing</Group>
-  <Capability Min="0" Max="255">Reserved for future expansion</Capability>
- </Channel>
+ <Channel Name="Reserved 24"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 25"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 26"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 27"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 28"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 29"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 30"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 31"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 32"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 33"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 34"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 35"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 36"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 37"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 38"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 39"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 40"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 64"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 65"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 66"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 67"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 68"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 69"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 70"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 71"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 72"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 73"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 74"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 75"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 76"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 77"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 78"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 79"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 80"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 104"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 105"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 106"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 107"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 108"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 109"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 110"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 111"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 112"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 113"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 114"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 115"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 116"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 117"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 118"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 119"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 120"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 144"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 145"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 146"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 147"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 148"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 149"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 150"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 151"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 152"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 153"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 154"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 155"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 156"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 157"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 158"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 159"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 160"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 184"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 185"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 186"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 187"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 188"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 189"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 190"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 191"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 192"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 193"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 194"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 195"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 196"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 197"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 198"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 199"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 200"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 224"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 225"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 226"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 227"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 228"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 229"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 230"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 231"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 232"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 233"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 234"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 235"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 236"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 237"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 238"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 239"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 240"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 264"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 265"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 266"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 267"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 268"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 269"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 270"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 271"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 272"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 273"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 274"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 275"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 276"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 277"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 278"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 279"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
+ <Channel Name="Reserved 280"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved for future expansion</Capability></Channel>
 
  <!-- ============================================================
       MODE: Universe (280ch). Patch this fixture ONCE at universe
@@ -873,23 +989,23 @@
   <Channel Number="20">Broadcast Wash TTL Lo</Channel>
   <Channel Number="21">Broadcast Wash TTL Hi</Channel>
   <Channel Number="22">Broadcast Wash Pulse Response</Channel>
-  <Channel Number="23">Reserved</Channel>
-  <Channel Number="24">Reserved</Channel>
-  <Channel Number="25">Reserved</Channel>
-  <Channel Number="26">Reserved</Channel>
-  <Channel Number="27">Reserved</Channel>
-  <Channel Number="28">Reserved</Channel>
-  <Channel Number="29">Reserved</Channel>
-  <Channel Number="30">Reserved</Channel>
-  <Channel Number="31">Reserved</Channel>
-  <Channel Number="32">Reserved</Channel>
-  <Channel Number="33">Reserved</Channel>
-  <Channel Number="34">Reserved</Channel>
-  <Channel Number="35">Reserved</Channel>
-  <Channel Number="36">Reserved</Channel>
-  <Channel Number="37">Reserved</Channel>
-  <Channel Number="38">Reserved</Channel>
-  <Channel Number="39">Reserved</Channel>
+  <Channel Number="23">Reserved 24</Channel>
+  <Channel Number="24">Reserved 25</Channel>
+  <Channel Number="25">Reserved 26</Channel>
+  <Channel Number="26">Reserved 27</Channel>
+  <Channel Number="27">Reserved 28</Channel>
+  <Channel Number="28">Reserved 29</Channel>
+  <Channel Number="29">Reserved 30</Channel>
+  <Channel Number="30">Reserved 31</Channel>
+  <Channel Number="31">Reserved 32</Channel>
+  <Channel Number="32">Reserved 33</Channel>
+  <Channel Number="33">Reserved 34</Channel>
+  <Channel Number="34">Reserved 35</Channel>
+  <Channel Number="35">Reserved 36</Channel>
+  <Channel Number="36">Reserved 37</Channel>
+  <Channel Number="37">Reserved 38</Channel>
+  <Channel Number="38">Reserved 39</Channel>
+  <Channel Number="39">Reserved 40</Channel>
   <Channel Number="40">Group 1 Master Intensity</Channel>
   <Channel Number="41">Group 1 Strobe Rate</Channel>
   <Channel Number="42">Group 1 Pulse R</Channel>
@@ -913,23 +1029,23 @@
   <Channel Number="60">Group 1 Wash TTL Lo</Channel>
   <Channel Number="61">Group 1 Wash TTL Hi</Channel>
   <Channel Number="62">Group 1 Wash Pulse Response</Channel>
-  <Channel Number="63">Reserved</Channel>
-  <Channel Number="64">Reserved</Channel>
-  <Channel Number="65">Reserved</Channel>
-  <Channel Number="66">Reserved</Channel>
-  <Channel Number="67">Reserved</Channel>
-  <Channel Number="68">Reserved</Channel>
-  <Channel Number="69">Reserved</Channel>
-  <Channel Number="70">Reserved</Channel>
-  <Channel Number="71">Reserved</Channel>
-  <Channel Number="72">Reserved</Channel>
-  <Channel Number="73">Reserved</Channel>
-  <Channel Number="74">Reserved</Channel>
-  <Channel Number="75">Reserved</Channel>
-  <Channel Number="76">Reserved</Channel>
-  <Channel Number="77">Reserved</Channel>
-  <Channel Number="78">Reserved</Channel>
-  <Channel Number="79">Reserved</Channel>
+  <Channel Number="63">Reserved 64</Channel>
+  <Channel Number="64">Reserved 65</Channel>
+  <Channel Number="65">Reserved 66</Channel>
+  <Channel Number="66">Reserved 67</Channel>
+  <Channel Number="67">Reserved 68</Channel>
+  <Channel Number="68">Reserved 69</Channel>
+  <Channel Number="69">Reserved 70</Channel>
+  <Channel Number="70">Reserved 71</Channel>
+  <Channel Number="71">Reserved 72</Channel>
+  <Channel Number="72">Reserved 73</Channel>
+  <Channel Number="73">Reserved 74</Channel>
+  <Channel Number="74">Reserved 75</Channel>
+  <Channel Number="75">Reserved 76</Channel>
+  <Channel Number="76">Reserved 77</Channel>
+  <Channel Number="77">Reserved 78</Channel>
+  <Channel Number="78">Reserved 79</Channel>
+  <Channel Number="79">Reserved 80</Channel>
   <Channel Number="80">Group 2 Master Intensity</Channel>
   <Channel Number="81">Group 2 Strobe Rate</Channel>
   <Channel Number="82">Group 2 Pulse R</Channel>
@@ -953,23 +1069,23 @@
   <Channel Number="100">Group 2 Wash TTL Lo</Channel>
   <Channel Number="101">Group 2 Wash TTL Hi</Channel>
   <Channel Number="102">Group 2 Wash Pulse Response</Channel>
-  <Channel Number="103">Reserved</Channel>
-  <Channel Number="104">Reserved</Channel>
-  <Channel Number="105">Reserved</Channel>
-  <Channel Number="106">Reserved</Channel>
-  <Channel Number="107">Reserved</Channel>
-  <Channel Number="108">Reserved</Channel>
-  <Channel Number="109">Reserved</Channel>
-  <Channel Number="110">Reserved</Channel>
-  <Channel Number="111">Reserved</Channel>
-  <Channel Number="112">Reserved</Channel>
-  <Channel Number="113">Reserved</Channel>
-  <Channel Number="114">Reserved</Channel>
-  <Channel Number="115">Reserved</Channel>
-  <Channel Number="116">Reserved</Channel>
-  <Channel Number="117">Reserved</Channel>
-  <Channel Number="118">Reserved</Channel>
-  <Channel Number="119">Reserved</Channel>
+  <Channel Number="103">Reserved 104</Channel>
+  <Channel Number="104">Reserved 105</Channel>
+  <Channel Number="105">Reserved 106</Channel>
+  <Channel Number="106">Reserved 107</Channel>
+  <Channel Number="107">Reserved 108</Channel>
+  <Channel Number="108">Reserved 109</Channel>
+  <Channel Number="109">Reserved 110</Channel>
+  <Channel Number="110">Reserved 111</Channel>
+  <Channel Number="111">Reserved 112</Channel>
+  <Channel Number="112">Reserved 113</Channel>
+  <Channel Number="113">Reserved 114</Channel>
+  <Channel Number="114">Reserved 115</Channel>
+  <Channel Number="115">Reserved 116</Channel>
+  <Channel Number="116">Reserved 117</Channel>
+  <Channel Number="117">Reserved 118</Channel>
+  <Channel Number="118">Reserved 119</Channel>
+  <Channel Number="119">Reserved 120</Channel>
   <Channel Number="120">Group 3 Master Intensity</Channel>
   <Channel Number="121">Group 3 Strobe Rate</Channel>
   <Channel Number="122">Group 3 Pulse R</Channel>
@@ -993,23 +1109,23 @@
   <Channel Number="140">Group 3 Wash TTL Lo</Channel>
   <Channel Number="141">Group 3 Wash TTL Hi</Channel>
   <Channel Number="142">Group 3 Wash Pulse Response</Channel>
-  <Channel Number="143">Reserved</Channel>
-  <Channel Number="144">Reserved</Channel>
-  <Channel Number="145">Reserved</Channel>
-  <Channel Number="146">Reserved</Channel>
-  <Channel Number="147">Reserved</Channel>
-  <Channel Number="148">Reserved</Channel>
-  <Channel Number="149">Reserved</Channel>
-  <Channel Number="150">Reserved</Channel>
-  <Channel Number="151">Reserved</Channel>
-  <Channel Number="152">Reserved</Channel>
-  <Channel Number="153">Reserved</Channel>
-  <Channel Number="154">Reserved</Channel>
-  <Channel Number="155">Reserved</Channel>
-  <Channel Number="156">Reserved</Channel>
-  <Channel Number="157">Reserved</Channel>
-  <Channel Number="158">Reserved</Channel>
-  <Channel Number="159">Reserved</Channel>
+  <Channel Number="143">Reserved 144</Channel>
+  <Channel Number="144">Reserved 145</Channel>
+  <Channel Number="145">Reserved 146</Channel>
+  <Channel Number="146">Reserved 147</Channel>
+  <Channel Number="147">Reserved 148</Channel>
+  <Channel Number="148">Reserved 149</Channel>
+  <Channel Number="149">Reserved 150</Channel>
+  <Channel Number="150">Reserved 151</Channel>
+  <Channel Number="151">Reserved 152</Channel>
+  <Channel Number="152">Reserved 153</Channel>
+  <Channel Number="153">Reserved 154</Channel>
+  <Channel Number="154">Reserved 155</Channel>
+  <Channel Number="155">Reserved 156</Channel>
+  <Channel Number="156">Reserved 157</Channel>
+  <Channel Number="157">Reserved 158</Channel>
+  <Channel Number="158">Reserved 159</Channel>
+  <Channel Number="159">Reserved 160</Channel>
   <Channel Number="160">Group 4 Master Intensity</Channel>
   <Channel Number="161">Group 4 Strobe Rate</Channel>
   <Channel Number="162">Group 4 Pulse R</Channel>
@@ -1033,23 +1149,23 @@
   <Channel Number="180">Group 4 Wash TTL Lo</Channel>
   <Channel Number="181">Group 4 Wash TTL Hi</Channel>
   <Channel Number="182">Group 4 Wash Pulse Response</Channel>
-  <Channel Number="183">Reserved</Channel>
-  <Channel Number="184">Reserved</Channel>
-  <Channel Number="185">Reserved</Channel>
-  <Channel Number="186">Reserved</Channel>
-  <Channel Number="187">Reserved</Channel>
-  <Channel Number="188">Reserved</Channel>
-  <Channel Number="189">Reserved</Channel>
-  <Channel Number="190">Reserved</Channel>
-  <Channel Number="191">Reserved</Channel>
-  <Channel Number="192">Reserved</Channel>
-  <Channel Number="193">Reserved</Channel>
-  <Channel Number="194">Reserved</Channel>
-  <Channel Number="195">Reserved</Channel>
-  <Channel Number="196">Reserved</Channel>
-  <Channel Number="197">Reserved</Channel>
-  <Channel Number="198">Reserved</Channel>
-  <Channel Number="199">Reserved</Channel>
+  <Channel Number="183">Reserved 184</Channel>
+  <Channel Number="184">Reserved 185</Channel>
+  <Channel Number="185">Reserved 186</Channel>
+  <Channel Number="186">Reserved 187</Channel>
+  <Channel Number="187">Reserved 188</Channel>
+  <Channel Number="188">Reserved 189</Channel>
+  <Channel Number="189">Reserved 190</Channel>
+  <Channel Number="190">Reserved 191</Channel>
+  <Channel Number="191">Reserved 192</Channel>
+  <Channel Number="192">Reserved 193</Channel>
+  <Channel Number="193">Reserved 194</Channel>
+  <Channel Number="194">Reserved 195</Channel>
+  <Channel Number="195">Reserved 196</Channel>
+  <Channel Number="196">Reserved 197</Channel>
+  <Channel Number="197">Reserved 198</Channel>
+  <Channel Number="198">Reserved 199</Channel>
+  <Channel Number="199">Reserved 200</Channel>
   <Channel Number="200">Group 5 Master Intensity</Channel>
   <Channel Number="201">Group 5 Strobe Rate</Channel>
   <Channel Number="202">Group 5 Pulse R</Channel>
@@ -1073,23 +1189,23 @@
   <Channel Number="220">Group 5 Wash TTL Lo</Channel>
   <Channel Number="221">Group 5 Wash TTL Hi</Channel>
   <Channel Number="222">Group 5 Wash Pulse Response</Channel>
-  <Channel Number="223">Reserved</Channel>
-  <Channel Number="224">Reserved</Channel>
-  <Channel Number="225">Reserved</Channel>
-  <Channel Number="226">Reserved</Channel>
-  <Channel Number="227">Reserved</Channel>
-  <Channel Number="228">Reserved</Channel>
-  <Channel Number="229">Reserved</Channel>
-  <Channel Number="230">Reserved</Channel>
-  <Channel Number="231">Reserved</Channel>
-  <Channel Number="232">Reserved</Channel>
-  <Channel Number="233">Reserved</Channel>
-  <Channel Number="234">Reserved</Channel>
-  <Channel Number="235">Reserved</Channel>
-  <Channel Number="236">Reserved</Channel>
-  <Channel Number="237">Reserved</Channel>
-  <Channel Number="238">Reserved</Channel>
-  <Channel Number="239">Reserved</Channel>
+  <Channel Number="223">Reserved 224</Channel>
+  <Channel Number="224">Reserved 225</Channel>
+  <Channel Number="225">Reserved 226</Channel>
+  <Channel Number="226">Reserved 227</Channel>
+  <Channel Number="227">Reserved 228</Channel>
+  <Channel Number="228">Reserved 229</Channel>
+  <Channel Number="229">Reserved 230</Channel>
+  <Channel Number="230">Reserved 231</Channel>
+  <Channel Number="231">Reserved 232</Channel>
+  <Channel Number="232">Reserved 233</Channel>
+  <Channel Number="233">Reserved 234</Channel>
+  <Channel Number="234">Reserved 235</Channel>
+  <Channel Number="235">Reserved 236</Channel>
+  <Channel Number="236">Reserved 237</Channel>
+  <Channel Number="237">Reserved 238</Channel>
+  <Channel Number="238">Reserved 239</Channel>
+  <Channel Number="239">Reserved 240</Channel>
   <Channel Number="240">Group 6 Master Intensity</Channel>
   <Channel Number="241">Group 6 Strobe Rate</Channel>
   <Channel Number="242">Group 6 Pulse R</Channel>
@@ -1113,23 +1229,23 @@
   <Channel Number="260">Group 6 Wash TTL Lo</Channel>
   <Channel Number="261">Group 6 Wash TTL Hi</Channel>
   <Channel Number="262">Group 6 Wash Pulse Response</Channel>
-  <Channel Number="263">Reserved</Channel>
-  <Channel Number="264">Reserved</Channel>
-  <Channel Number="265">Reserved</Channel>
-  <Channel Number="266">Reserved</Channel>
-  <Channel Number="267">Reserved</Channel>
-  <Channel Number="268">Reserved</Channel>
-  <Channel Number="269">Reserved</Channel>
-  <Channel Number="270">Reserved</Channel>
-  <Channel Number="271">Reserved</Channel>
-  <Channel Number="272">Reserved</Channel>
-  <Channel Number="273">Reserved</Channel>
-  <Channel Number="274">Reserved</Channel>
-  <Channel Number="275">Reserved</Channel>
-  <Channel Number="276">Reserved</Channel>
-  <Channel Number="277">Reserved</Channel>
-  <Channel Number="278">Reserved</Channel>
-  <Channel Number="279">Reserved</Channel>
+  <Channel Number="263">Reserved 264</Channel>
+  <Channel Number="264">Reserved 265</Channel>
+  <Channel Number="265">Reserved 266</Channel>
+  <Channel Number="266">Reserved 267</Channel>
+  <Channel Number="267">Reserved 268</Channel>
+  <Channel Number="268">Reserved 269</Channel>
+  <Channel Number="269">Reserved 270</Channel>
+  <Channel Number="270">Reserved 271</Channel>
+  <Channel Number="271">Reserved 272</Channel>
+  <Channel Number="272">Reserved 273</Channel>
+  <Channel Number="273">Reserved 274</Channel>
+  <Channel Number="274">Reserved 275</Channel>
+  <Channel Number="275">Reserved 276</Channel>
+  <Channel Number="276">Reserved 277</Channel>
+  <Channel Number="277">Reserved 278</Channel>
+  <Channel Number="278">Reserved 279</Channel>
+  <Channel Number="279">Reserved 280</Channel>
   <Head><Channel>2</Channel><Channel>3</Channel><Channel>4</Channel></Head>
   <Head><Channel>10</Channel><Channel>11</Channel><Channel>12</Channel></Head>
   <Head><Channel>13</Channel><Channel>14</Channel><Channel>15</Channel></Head>
