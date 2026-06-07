@@ -188,19 +188,33 @@ def channel_block(group: str) -> str:
 """
 
 
-# A single "Reserved" definition is referenced for every reserved slot
-# across every group. Distinct named references would clutter QLC+ for
-# no LD-facing benefit.
-RESERVED = """
+# Reserved channels need DISTINCT names. QLC+ silently collapses
+# consecutive Mode entries that share a channel-definition name into a
+# single Simple Desk slider, so 17 consecutive identical "Reserved"
+# entries display as just one (and the rest of the block's addresses
+# get shifted up, breaking Group 1's offset). Per-universe-address
+# naming ("Reserved 24" through "Reserved 280") avoids the collapse
+# while keeping the definitions self-describing about which address
+# they sit at.
+def reserved_definitions() -> str:
+    """One <Channel> definition per reserved universe address."""
+    out = ["""
  <!-- ============================================================
-      RESERVED PADDING (shared definition, used for every offset
-      24-40 across every group block).
-      ============================================================ -->
- <Channel Name="Reserved">
-  <Group Byte="0">Nothing</Group>
-  <Capability Min="0" Max="255">Reserved for future expansion</Capability>
- </Channel>
-"""
+      RESERVED PADDING (one definition per universe address; QLC+
+      collapses consecutive same-named Mode entries so they all
+      need to be distinct).
+      ============================================================ -->"""]
+    for group_idx in range(len(GROUPS)):
+        base = group_idx * BLOCK_SIZE
+        for k in range(RESERVED_PER_BLOCK):
+            address = base + len(ACTIVE_CHANNEL_NAMES) + k + 1   # 1-indexed
+            out.append(
+                f' <Channel Name="Reserved {address}">'
+                f'<Group Byte="0">Nothing</Group>'
+                f'<Capability Min="0" Max="255">Reserved for future expansion</Capability>'
+                f'</Channel>'
+            )
+    return "\n".join(out) + "\n"
 
 
 # Per-group channel ordering: 23 active names + 17 reserved entries.
@@ -245,8 +259,10 @@ def mode_entries() -> str:
                 f'  <Channel Number="{base + offset}">{group} {name}</Channel>'
             )
         for k in range(RESERVED_PER_BLOCK):
+            number  = base + len(ACTIVE_CHANNEL_NAMES) + k
+            address = number + 1   # 1-indexed universe address
             out.append(
-                f'  <Channel Number="{base + len(ACTIVE_CHANNEL_NAMES) + k}">Reserved</Channel>'
+                f'  <Channel Number="{number}">Reserved {address}</Channel>'
             )
     return "\n".join(out)
 
@@ -337,7 +353,7 @@ def main():
     parts = [HEADER]
     for group in GROUPS:
         parts.append(channel_block(group))
-    parts.append(RESERVED)
+    parts.append(reserved_definitions())
     parts.append("""
  <!-- ============================================================
       MODE: Universe (280ch). Patch this fixture ONCE at universe
