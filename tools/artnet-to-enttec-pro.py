@@ -49,7 +49,16 @@ ENTTEC_START = 0x7E
 ENTTEC_END = 0xE7
 ENTTEC_LABEL_OUTPUT = 0x06
 ENTTEC_DMX_START_CODE = 0x00
-ENTTEC_BAUD = 921_600
+ENTTEC_BAUD = 460_800   # Plus2 accommodation; see firmware comment in
+                        # src/dal/drivers/dmx_usb_cdc_adapter.h. The
+                        # Plus2's single-core ESP32-PICO-V3-02 cannot
+                        # service UART RX fast enough at 921 600 while
+                        # also driving ESP-NOW; dropping to 460 800
+                        # doubles the FIFO lifetime past any IRQ-off
+                        # window and still gives 50 % headroom over
+                        # 44 fps DMX. S3 (native USB-CDC) ignores
+                        # baud, so the change is invisible there.
+                        # Both sides MUST agree.
 DMX_UNIVERSE_BYTES = 512
 
 # Channel role labels for the diagnostics view, matching Epic 7 B7
