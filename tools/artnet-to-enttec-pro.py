@@ -170,23 +170,56 @@ def find_candidate_ports() -> list[str]:
     return [device for device, _desc in find_candidate_ports_with_info()]
 
 
+_TILDAGON_DESC_HINTS = ("tildagon", "electromagnetic field")
+
+
+def _port_looks_like_tildagon(port) -> bool:
+    """True if the OS-reported description suggests this port is a
+    Tildagon. The Tildagon enumerates as 'Electromagnetic Field
+    TiLDAGON' on macOS; the substring check is case-insensitive and
+    covers both the manufacturer ('Electromagnetic Field') and the
+    product ('TiLDAGON') strings.
+    """
+    desc = _describe_port(port).lower()
+    return any(hint in desc for hint in _TILDAGON_DESC_HINTS)
+
+
 def find_candidate_ports_with_info() -> list[tuple[str, str]]:
-    """List likely NocturNation device serial ports with a human
+    """List likely NocturNation StickC serial ports with a human
     description of each, used by the interactive picker.
 
-    On macOS, USB-CDC devices appear as /dev/cu.usbmodemNNNN. On Linux,
-    /dev/ttyACMn. On Windows, USB-CDC devices show as COMn with a
-    description containing 'USB Serial' or the device's product string -
-    we just return all COM ports and let the user pick if there's more
-    than one.
+    Tildagon serial ports are deliberately excluded - the Tildagon
+    cannot run the DMX Bridge role (the badge OS owns the USB-CDC
+    endpoint and the firmware has no DMX Bridge mode). Only the
+    StickC (S3 native USB-CDC; Plus2 FTDI/CH340 USB-UART) is a valid
+    target.
+
+    Device-path matching by platform:
+      - macOS S3 (native USB-CDC): /dev/cu.usbmodemNNNN
+      - macOS Plus2 (FTDI / CP210x / CH340): /dev/cu.usbserial-XXXX,
+        /dev/cu.SLAB_USBtoUART, /dev/cu.wchusbserialXXXX
+      - Linux: /dev/ttyACMn (CDC) or /dev/ttyUSBn (UART bridge)
+      - Windows: COMn (any; descriptions disambiguate)
     """
     candidates = []
     for port in serial.tools.list_ports.comports():
         device = port.device
-        if "usbmodem" in device or "ttyACM" in device:
-            candidates.append((device, _describe_port(port)))
-        elif device.upper().startswith("COM"):   # Windows
-            candidates.append((device, _describe_port(port)))
+        is_candidate = (
+            "usbmodem"      in device
+            or "usbserial"  in device
+            or "SLAB_"      in device          # macOS CP210x
+            or "wchusb"     in device          # macOS CH340 (some drivers)
+            or "ttyACM"     in device          # Linux CDC
+            or "ttyUSB"     in device          # Linux USB-UART bridge
+            or device.upper().startswith("COM")  # Windows
+        )
+        if not is_candidate:
+            continue
+        if _port_looks_like_tildagon(port):
+            # Skip Tildagons - they appear on the same /dev/cu.usbmodem
+            # path range as the S3 but can't run DMX Bridge mode.
+            continue
+        candidates.append((device, _describe_port(port)))
     return candidates
 
 
@@ -232,8 +265,10 @@ def interactive_pick_port() -> Optional[str]:
     """
     candidates = find_candidate_ports_with_info()
     if not candidates:
-        print("No serial ports detected. Plug in your StickC or "
-              "Tildagon and try again, or pass --port explicitly.",
+        print("No StickC serial port detected. Plug in your StickC "
+              "(Plus2 or S3) running DMX Bridge mode and try again, "
+              "or pass --port explicitly. Tildagon devices are "
+              "excluded - the DMX Bridge role is StickC-only.",
               file=sys.stderr)
         return None
     if len(candidates) == 1:
@@ -530,15 +565,17 @@ def run_loop(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Bridge QLC+ Art-Net output to a NocturNation StickC or Tildagon "
-            "running in DMX Bridge mode."
+            "Bridge QLC+ Art-Net output to a NocturNation StickC "
+            "(Plus2 or S3) running in DMX Bridge mode."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--port", default=None,
-        help="Serial port to write to (auto-detected if omitted; "
-             "/dev/cu.usbmodem* on macOS, /dev/ttyACM* on Linux, COMn on Windows).",
+        help="StickC serial port to write to (auto-detected if omitted). "
+             "macOS: /dev/cu.usbmodem* (S3) or /dev/cu.usbserial-* (Plus2). "
+             "Linux: /dev/ttyACM* or /dev/ttyUSB*. Windows: COMn. "
+             "Tildagon ports are filtered out (DMX Bridge is StickC-only).",
     )
     parser.add_argument(
         "--baud", type=int, default=ENTTEC_BAUD,
@@ -655,6 +692,33 @@ def main() -> int:
                 except Exception:
                     pass
             return 1
+
+    # Hard guard against pointing the shim at a Tildagon. The badge's
+    # USB-CDC endpoint is owned by the OS REPL, not by a DMX Bridge
+    # mode (the Tildagon firmware has no such mode). Writing Enttec
+    # frames into the REPL would just spam the console and confuse the
+    # operator into thinking the radio is silent. Tildagons are
+    # filtered from auto-detection; this guard handles the case where
+    # the operator passes --port explicitly.
+    if chosen_port is not None:
+        for port_info in serial.tools.list_ports.comports():
+            if port_info.device == chosen_port and _port_looks_like_tildagon(port_info):
+                print(
+                    f"Refusing to connect: {chosen_port} appears to be a "
+                    f"Tildagon ({_describe_port(port_info)}). The DMX "
+                    f"Bridge role is StickC-only - the Tildagon "
+                    f"firmware has no DMX Bridge mode. Plug in a "
+                    f"StickC and try again.",
+                    file=sys.stderr,
+                )
+                for s in sockets:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                return 1
+            if port_info.device == chosen_port:
+                break
 
     # Resolve --encode auto: Tildagons need python-comment envelope
     # because their USB-CDC IS the MicroPython REPL channel; everything

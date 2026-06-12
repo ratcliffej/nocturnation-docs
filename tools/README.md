@@ -3,7 +3,12 @@
 ## `artnet-to-enttec-pro.py`
 
 The shim that bridges QLC+ (or any Art-Net-capable lighting console) to a
-NocturNation StickC or Tildagon running in DMX Bridge mode.
+NocturNation StickC (Plus2 or S3) running in DMX Bridge mode.
+
+The Tildagon cannot run the DMX Bridge role — the badge OS owns the USB-CDC
+endpoint and the Tildagon firmware has no DMX Bridge mode. The shim filters
+Tildagon ports out of the auto-detect list and refuses to connect if
+`--port` is pointed at one explicitly.
 
 ```
 QLC+  ->  Art-Net UDP  ->  this shim  ->  Enttec Pro USB-CDC  ->  device
