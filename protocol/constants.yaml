@@ -1,0 +1,49 @@
+# NocturNation ESP-NOW protocol constants - single source of truth.
+#
+# Edits here propagate via Docs/tools/gen_protocol_constants.py to:
+#   - nocturnation-tildagon: nocturnation/protocol/_generated.py
+#   - nocturnation-stickc:   include/transport/espnow/protocol_constants_generated.h
+#
+# Each firmware repo has a CI check that re-runs the generator against
+# this YAML and fails on any drift.
+#
+# DO NOT change any values without coordinating the protocol manual
+# bump. This file mirrors the values in the manual; it is anti-
+# divergence plumbing, not a place to redesign the wire format.
+
+# 2-byte magic prefix ('NN') that discriminates NocturNation traffic
+# from other ESP-NOW users sharing the channel.
+magic:
+  byte_0: 0x4E    # 'N'
+  byte_1: 0x4E    # 'N'
+
+# Bumped from 0x01 for the magic-prefix wire change (spec v0.29 / v2).
+protocol_version: 0x02
+
+# 2 magic + 1 version + 5 metadata (source_id, sequence, hop_count,
+# message_type, payload_len) = 8 bytes.
+header_size: 8
+
+# Per spec v0.29 section 4.3 + Epic 6C Phase D additions.
+# Reserved IDs MUST NOT be reused:
+#   0x01 - was BEAT_DETECTED (no consumer)
+#   0x02 - was MODE_CHANGE
+#   0x04 - was CLOCK_SYNC (folded into HEARTBEAT.tick)
+#   0x05 - was TIME_SYNC (folded into HEARTBEAT.days_since_2026 + centiseconds_today)
+message_types:
+  HEARTBEAT:         0x00
+  LIGHT_PULSE:       0x03
+  LIGHT_WASH:        0x06
+  LIGHT_WASH_END:    0x07
+  LIGHT_WASH_PULSE:  0x08
+  EXTENSION:         0xFF
+
+# Payload bytes per message type (excluding the 8-byte header).
+# Inbound frames whose payload_len does not match MUST be dropped
+# silently per protocol manual section 3.1.
+payload_lengths:
+  HEARTBEAT:         9
+  LIGHT_PULSE:       9
+  LIGHT_WASH:        16
+  LIGHT_WASH_END:    3
+  LIGHT_WASH_PULSE:  9
