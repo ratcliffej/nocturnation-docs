@@ -143,21 +143,15 @@
   <Capability Min="0"   Max="255">100 ms units (default fade-out)</Capability>
  </Channel>
 
- <Channel Name="Wash TTL Lo">
-  <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="255">u16 low byte (seconds; pair with TTL Hi)</Capability>
- </Channel>
-
- <Channel Name="Wash TTL Hi">
-  <Group Byte="1">Effect</Group>
-  <Capability Min="0"   Max="255">u16 high byte (0 + Lo = infinite)</Capability>
- </Channel>
-
- <Channel Name="Wash Pulse Response">
-  <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="127">Suppress PULSE during wash</Capability>
-  <Capability Min="128" Max="255">Allow PULSE overlay on wash</Capability>
- </Channel>
+ <!-- Channels 21-23 were Wash TTL Lo / Hi and Wash Pulse Response.
+      Dropped from the LD surface: the DMX bridge always emits
+      LIGHT_WASH frames with ttl_seconds=0 (the 30-minute lost-
+      WASH_END failsafe takes care of stuck washes) and
+      pulse_response=1 (so sparkle on wash works by default). The
+      wire protocol still carries both fields for non-DMX Directors. -->
+ <Channel Name="Reserved 21"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
+ <Channel Name="Reserved 22"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
+ <Channel Name="Reserved 23"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
 
  <!-- ============================================================
       RESERVED PADDING
@@ -209,9 +203,9 @@
   <Channel Number="17">Wash Intensity</Channel>
   <Channel Number="18">Wash Attack</Channel>
   <Channel Number="19">Wash Release</Channel>
-  <Channel Number="20">Wash TTL Lo</Channel>
-  <Channel Number="21">Wash TTL Hi</Channel>
-  <Channel Number="22">Wash Pulse Response</Channel>
+  <Channel Number="20">Reserved 21</Channel>
+  <Channel Number="21">Reserved 22</Channel>
+  <Channel Number="22">Reserved 23</Channel>
   <Channel Number="23">Reserved 24</Channel>
   <Channel Number="24">Reserved 25</Channel>
   <Channel Number="25">Reserved 26</Channel>

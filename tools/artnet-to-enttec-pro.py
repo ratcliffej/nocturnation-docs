@@ -89,9 +89,14 @@ CHANNEL_ROLES = [
     "Wash Intensity",
     "Wash Attack",
     "Wash Release",
-    "Wash TTL Lo",
-    "Wash TTL Hi",
-    "Wash Pulse Resp",
+    # Channels 21-23 were Wash TTL Lo / Hi and Wash Pulse Response.
+    # Dropped from the LD surface: the DMX bridge always emits
+    # LIGHT_WASH frames with ttl_seconds=0 (30-min lost-WASH_END
+    # failsafe handles stuck washes) and pulse_response=1 (so
+    # sparkle on wash works by default). Wire protocol unchanged.
+    "Reserved 21",
+    "Reserved 22",
+    "Reserved 23",
 ]
 
 
