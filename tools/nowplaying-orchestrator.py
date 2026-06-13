@@ -49,9 +49,20 @@ def build_nowplaying_backend(args):
         backend = MacOSBackend(binary=args.nowplaying_binary)
         backend.ensure_available()
         return backend
+    if system == "Windows":
+        from nocturnation_orchestrator.nowplaying.windows import WindowsBackend
+        backend = WindowsBackend()
+        backend.ensure_available()
+        return backend
+    if system == "Linux":
+        from nocturnation_orchestrator.nowplaying.linux import LinuxBackend
+        backend = LinuxBackend()
+        backend.ensure_available()
+        return backend
     sys.exit(
-        "now-playing backend for %s is not implemented yet (B6). "
-        "Use macOS for now, or wire up a manual backend." % system
+        "now-playing backend for %s is not supported; the orchestrator runs "
+        "on macOS (nowplaying-cli), Windows (winsdk / SMTC), and Linux "
+        "(pydbus / MPRIS)." % system
     )
 
 
