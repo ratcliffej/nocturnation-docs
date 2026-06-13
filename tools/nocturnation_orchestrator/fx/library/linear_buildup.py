@@ -31,7 +31,23 @@ from ..registry import fx_registry
 class LinearBuildup(Fx):
     id = 21
     name = "Linear Buildup"
+    cue_name = "linear_buildup"
     category = "buildup"
+    description = (
+        "Ramps Master + Pulse Probability from start to target over "
+        "buildup_s seconds. Fires one pulse per beat. Auto-finishes "
+        "after the buildup window so the next cue (typically the drop) "
+        "takes over cleanly."
+    )
+
+    PARAMS = [
+        ("r",                   "u8",      "Pulse Red. White default if all zero."),
+        ("g",                   "u8",      "Pulse Green."),
+        ("b",                   "u8",      "Pulse Blue."),
+        ("target_probability",  "percent", "Probability at end of buildup. Default 100%."),
+        ("start_master",        "u8",      "Master at start of buildup. Default 64."),
+        (None,                  None,      "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

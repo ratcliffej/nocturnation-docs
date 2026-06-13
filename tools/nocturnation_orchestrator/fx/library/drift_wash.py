@@ -39,7 +39,23 @@ from ..registry import fx_registry
 class DriftWash(Fx):
     id = 2
     name = "Drift Wash"
+    cue_name = "drift_wash"
     category = "ambient"
+    description = (
+        "Two-colour wash that cycles A <-> B over the cycle time. The "
+        "Lume fades between anchor A and anchor B; cycle controls the "
+        "round-trip duration."
+    )
+
+    PARAMS = [
+        ("a_r",    "u8",    "Anchor A Red (0..255)."),
+        ("a_g",    "u8",    "Anchor A Green (0..255)."),
+        (None,     None,    "reserved"),
+        ("b_r",    "u8",    "Anchor B Red (0..255)."),
+        ("b_g",    "u8",    "Anchor B Green (0..255)."),
+        ("cycle",  "100ms", "Drift cycle time in 100 ms units (1..255 = "
+                            "100 ms..25.5 s). Default 80 (~8 s) when zero."),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

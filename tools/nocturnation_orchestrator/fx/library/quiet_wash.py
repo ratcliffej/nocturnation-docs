@@ -38,7 +38,21 @@ from ..registry import fx_registry
 class QuietWash(Fx):
     id = 1
     name = "Quiet Wash"
+    cue_name = "quiet_wash"
     category = "ambient"
+    description = (
+        "Sustained single-colour wash. Holds Wash A; Wash B is "
+        "zeroed so there is no drift cycle. The default ambient bed."
+    )
+
+    PARAMS = [
+        ("r",         "u8",      "Wash Red (0..255)."),
+        ("g",         "u8",      "Wash Green (0..255)."),
+        ("b",         "u8",      "Wash Blue (0..255)."),
+        ("intensity", "u8",      "Wash intensity (0..255). Default 200 when zero."),
+        ("master",    "u8",      "Master scalar (0..255). Default 255 when zero."),
+        (None,        None,      "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

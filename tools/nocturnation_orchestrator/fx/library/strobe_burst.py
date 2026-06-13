@@ -22,7 +22,22 @@ from ..registry import fx_registry
 class StrobeBurst(Fx):
     id = 32
     name = "Strobe Burst"
+    cue_name = "strobe_burst"
     category = "drop"
+    description = (
+        "Max strobe rate for a short window, then auto-finish. A drop "
+        "accent. Leaves wash channels alone so an underlying wash from "
+        "a previous FX's release tail can still bleed through."
+    )
+
+    PARAMS = [
+        ("duration",     "100ms", "Burst length in 100 ms units. Default 5 (500 ms)."),
+        ("strobe_rate",  "u8",    "Strobe rate (0..255 -> 0..4 Hz). Default 255."),
+        (None,           None,    "reserved"),
+        (None,           None,    "reserved"),
+        (None,           None,    "reserved"),
+        (None,           None,    "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

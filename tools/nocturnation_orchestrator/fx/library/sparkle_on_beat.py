@@ -41,7 +41,22 @@ from ..registry import fx_registry
 class SparkleOnBeat(Fx):
     id = 11
     name = "Sparkle On Beat"
+    cue_name = "sparkle_on_beat"
     category = "beat"
+    description = (
+        "Fires one pulse per beat at the supplied BPM. Broadcast (all "
+        "groups). Sits naturally on top of a previous ambient FX's "
+        "release tail."
+    )
+
+    PARAMS = [
+        ("r",           "u8",      "Pulse Red. White default if R/G/B all zero."),
+        ("g",           "u8",      "Pulse Green."),
+        ("b",           "u8",      "Pulse Blue."),
+        ("probability", "percent", "Chance per beat (0..100%). Default 100%."),
+        (None,          None,      "reserved"),
+        (None,          None,      "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

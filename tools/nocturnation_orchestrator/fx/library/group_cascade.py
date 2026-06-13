@@ -36,7 +36,22 @@ from ..registry import fx_registry
 class GroupCascade(Fx):
     id = 13
     name = "Group Cascade"
+    cue_name = "group_cascade"
     category = "beat"
+    description = (
+        "Rotates a pulse around groups 1..N, one beat per group. "
+        "Broadcast (block 0) is left untouched so an ambient wash on the "
+        "broadcast block survives underneath."
+    )
+
+    PARAMS = [
+        ("r",           "u8",      "Pulse Red. White default if all zero."),
+        ("g",           "u8",      "Pulse Green."),
+        ("b",           "u8",      "Pulse Blue."),
+        ("probability", "percent", "Chance per beat (0..100%). Default 100%."),
+        ("num_groups",  "count",   "Groups to cascade across (1..9). Default 4."),
+        (None,          None,      "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

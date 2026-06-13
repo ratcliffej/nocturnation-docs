@@ -27,7 +27,22 @@ from ..registry import fx_registry
 class PulsePerBar(Fx):
     id = 12
     name = "Pulse Per Bar"
+    cue_name = "pulse_per_bar"
     category = "beat"
+    description = (
+        "Fires one pulse every N beats (default 4 = one per bar in 4/4). "
+        "Useful for anchor pulses on top of a wash without the constant "
+        "sparkle texture."
+    )
+
+    PARAMS = [
+        ("r",             "u8",      "Pulse Red. White default if all zero."),
+        ("g",             "u8",      "Pulse Green."),
+        ("b",             "u8",      "Pulse Blue."),
+        ("probability",   "percent", "Chance per bar (0..100%). Default 100%."),
+        ("beats_per_bar", "count",   "Beats between pulses (1..16). Default 4."),
+        (None,            None,      "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms

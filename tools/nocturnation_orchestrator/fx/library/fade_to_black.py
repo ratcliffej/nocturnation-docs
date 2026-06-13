@@ -26,7 +26,23 @@ from ..registry import fx_registry
 class FadeToBlack(Fx):
     id = 41
     name = "Fade To Black"
+    cue_name = "fade_to_black"
     category = "transition"
+    description = (
+        "Ramps Master from start value to 0 over buildup_s seconds. "
+        "Leaves RGB channels alone so the final state is just 'lights "
+        "off, colours preserved'. For instant blackout use the `stop` "
+        "cue instead."
+    )
+
+    PARAMS = [
+        ("start_master", "u8", "Master at start of fade. Default 255."),
+        (None,           None, "reserved"),
+        (None,           None, "reserved"),
+        (None,           None, "reserved"),
+        (None,           None, "reserved"),
+        (None,           None, "reserved"),
+    ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms
