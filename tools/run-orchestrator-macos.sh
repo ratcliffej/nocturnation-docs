@@ -22,8 +22,15 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# Detect a stale venv (Python upgrade can leave a dangling
+# bin/python symlink). Rebuild if the Python is gone.
+if [ -d "$VENV" ] && [ ! -x "$VENV/bin/python" ]; then
+    echo "Existing tools/.venv is stale (its Python is gone); rebuilding."
+    rm -rf "$VENV"
+fi
+
 if [ ! -d "$VENV" ]; then
-    echo "First run: creating local venv at tools/.venv (one-off, ~10 seconds)."
+    echo "Creating local venv at tools/.venv (one-off, ~10 seconds)."
     python3 -m venv "$VENV"
     "$VENV/bin/pip" install --quiet --upgrade pip
     "$VENV/bin/pip" install --quiet -r "$HERE/requirements.txt"
