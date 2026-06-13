@@ -36,6 +36,30 @@ class TestTimeParsing:
         with pytest.raises(CueParseError):
             parse_cues("0:30:30:30 stop")
 
+    def test_tenths_of_a_second(self):
+        # MM:SS.x  -> ms
+        f = parse_cues("00:30.5 stop")
+        assert f.cues[0].time_ms == 30_500
+
+    def test_centiseconds(self):
+        # Match LRC grain so LD can paste timestamps in directly.
+        f = parse_cues("00:30.50 stop")
+        assert f.cues[0].time_ms == 30_500
+        f2 = parse_cues("00:30.05 stop")
+        assert f2.cues[0].time_ms == 30_050
+
+    def test_milliseconds(self):
+        f = parse_cues("00:30.123 stop")
+        assert f.cues[0].time_ms == 30_123
+
+    def test_fractional_with_hours(self):
+        f = parse_cues("1:02:30.5 stop")
+        assert f.cues[0].time_ms == (1 * 3600 + 2 * 60 + 30) * 1000 + 500
+
+    def test_fractional_rejects_more_than_3_digits(self):
+        with pytest.raises(CueParseError):
+            parse_cues("00:30.1234 stop")
+
 
 # ---------------------------------------------------------------------------
 # Lexical: comments, whitespace, blanks

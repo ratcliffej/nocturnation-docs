@@ -22,21 +22,21 @@ sections / lyrics, or trail one off the end of a cue.
 @default_fx quiet_wash
 
 # --- Intro ---
-00:00  quiet_wash       20  40 80
+00:00     quiet_wash       20  40 80
 # "When you try your best..."
-00:30  sparkle_on_beat  80  200 200 100
-00:35  sparkle_on_beat  255 0   255 100
+00:13.40  sparkle_on_beat  80  200 200 100   # centisecond grain
+00:35.5   sparkle_on_beat  255 0   255 100   # tenths
 
 # --- Build ---
-01:20  linear_buildup   255 0   0   100 64  --buildup 8
+01:20     linear_buildup   255 0   0   100 64  --buildup 8
 
 # --- Drop ---
-01:28  strobe_burst     5   255
-01:30  sparkle_on_beat  255 255 255 100
+01:28     strobe_burst     5   255
+01:30.250 sparkle_on_beat  255 255 255 100   # millisecond grain
 
 # --- Outro ---
-02:55  fade_to_black                          --buildup 4
-03:00  stop
+02:55     fade_to_black                       --buildup 4
+03:00     stop
 ```
 
 ### Directives (`@`)
@@ -50,9 +50,16 @@ sections / lyrics, or trail one off the end of a cue.
 
 ### Cue line
 
-`MM:SS` (or `H:MM:SS`) followed by the FX `cue_name`, then up to six
-positional params, then optional `--bpm N` / `--buildup N` overrides.
-Trailing reserved params can be omitted entirely.
+`MM:SS` (or `H:MM:SS`) optionally with up to three fractional-second
+digits (`MM:SS.x`, `MM:SS.xx`, `MM:SS.xxx`), followed by the FX
+`cue_name`, then up to six positional params, then optional
+`--bpm N` / `--buildup N` overrides. Trailing reserved params can be
+omitted entirely.
+
+At 120 BPM each beat is 500 ms, so a one-second granularity drifts
+the lighting two beats off the music. Use fractional seconds for
+beat-aligned cues; centisecond grain matches LRC timestamps so a
+skeleton from `gen_cues_skeleton.py` can be edited in place.
 
 `stop` is the cancel sentinel - equivalent to `runner.start(fx_id=0)`.
 

@@ -103,21 +103,36 @@ class CueFile:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_TIME_RE = re.compile(r"^(?:(\d+):)?(\d+):(\d{2})$")
+_TIME_RE = re.compile(r"^(?:(\d+):)?(\d+):(\d{2})(?:\.(\d{1,3}))?$")
 _INT_RE = re.compile(r"^-?\d+$")
 
 
 def _parse_time(token: str, line_no: int) -> int:
-    """Parse MM:SS / M:SS / H:MM:SS to milliseconds."""
+    """Parse MM:SS / M:SS / H:MM:SS, optionally with .x / .xx / .xxx
+    fractional seconds, to milliseconds.
+
+    Fractional precision: 1-3 digits after the dot, interpreted as
+    left-aligned milliseconds (".5" -> 500 ms, ".05" -> 50 ms,
+    ".005" -> 5 ms). Matches LRC centisecond grain so LD can paste
+    lyric timestamps straight in.
+    """
     m = _TIME_RE.match(token)
     if not m:
-        raise CueParseError("invalid time %r (expected MM:SS or H:MM:SS)" % token, line_no)
+        raise CueParseError(
+            "invalid time %r (expected MM:SS, H:MM:SS, or MM:SS.xxx)"
+            % token,
+            line_no,
+        )
     h = int(m.group(1) or 0)
     minutes = int(m.group(2))
     secs = int(m.group(3))
+    frac = m.group(4) or ""
     if secs >= 60:
         raise CueParseError("seconds field >= 60 in %r" % token, line_no)
-    return ((h * 60 + minutes) * 60 + secs) * 1000
+    total_ms = ((h * 60 + minutes) * 60 + secs) * 1000
+    if frac:
+        total_ms += int(frac.ljust(3, "0"))
+    return total_ms
 
 
 def _parse_int(token: str, line_no: int, what: str = "integer") -> int:
