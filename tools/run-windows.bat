@@ -19,8 +19,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Detect a stale venv (Python upgrade can leave the venv pointing
+REM at a python.exe that no longer exists). Rebuild if missing.
+if exist "%VENV%" if not exist "%VENV%\Scripts\python.exe" (
+    echo Existing tools\.venv is stale ^(its Python is gone^); rebuilding.
+    rmdir /s /q "%VENV%"
+)
+
 if not exist "%VENV%" (
-    echo First run: creating local venv at tools\.venv ^(one-off, ~10 seconds^).
+    echo Creating local venv at tools\.venv ^(one-off, ~10 seconds^).
     python -m venv "%VENV%"
     "%VENV%\Scripts\pip.exe" install --quiet --upgrade pip
     "%VENV%\Scripts\pip.exe" install --quiet -r "%HERE%requirements.txt"
