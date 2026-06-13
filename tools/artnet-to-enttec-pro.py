@@ -32,9 +32,28 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+# Shared library (Epic 10 B0). Both this shim and the music orchestrator
+# import the framing, port-picker, and USB-write code from here so they
+# stay in lockstep on Plus2 quirks, Tildagon exclusion, and baud rate.
+# Behaviour-preserving refactor: every symbol the shim used to declare
+# inline is now imported.
+from nocturnation_dmx import (
+    DMX_UNIVERSE_BYTES,
+    ENTTEC_BAUD,
+    UsbWriter,
+    describe_port,
+    device_kind_from_port,
+    find_candidate_ports,
+    find_candidate_ports_with_info,
+    interactive_pick_port,
+    open_serial,
+    port_looks_like_tildagon,
+    wrap_enttec_pro,
+)
+
 
 # ============================================================================
-# Constants
+# Constants (shim-local)
 # ============================================================================
 
 VERSION = "0.1.0"
@@ -43,23 +62,6 @@ VERSION = "0.1.0"
 ARTNET_HEADER = b"Art-Net\x00"
 ARTNET_OP_OUTPUT = 0x5000
 ARTNET_DEFAULT_PORT = 6454
-
-# Enttec DMX USB Pro framing
-ENTTEC_START = 0x7E
-ENTTEC_END = 0xE7
-ENTTEC_LABEL_OUTPUT = 0x06
-ENTTEC_DMX_START_CODE = 0x00
-ENTTEC_BAUD = 460_800   # Plus2 accommodation; see firmware comment in
-                        # src/dal/drivers/dmx_usb_cdc_adapter.h. The
-                        # Plus2's single-core ESP32-PICO-V3-02 cannot
-                        # service UART RX fast enough at 921 600 while
-                        # also driving ESP-NOW; dropping to 460 800
-                        # doubles the FIFO lifetime past any IRQ-off
-                        # window and still gives 50 % headroom over
-                        # 44 fps DMX. S3 (native USB-CDC) ignores
-                        # baud, so the change is invisible there.
-                        # Both sides MUST agree.
-DMX_UNIVERSE_BYTES = 512
 
 # Channel role labels for the diagnostics view, matching Epic 7 B7
 # layout (23 active channels per block, grouped by lighting concept).
@@ -139,183 +141,13 @@ def decode_artnet_output(data: bytes) -> Optional[tuple[int, bytes]]:
 
 
 # ============================================================================
-# Enttec Pro framing
+# Enttec Pro framing + Serial port handling
 # ============================================================================
-
-def wrap_enttec_pro(payload: bytes) -> bytes:
-    """Wrap a DMX payload in Enttec DMX USB Pro Output Only framing.
-
-    Pads payload to 512 bytes if shorter; truncates if longer (Art-Net can
-    send 2-512 channels per packet). The length field in the Enttec frame
-    is the payload size INCLUDING the DMX start code byte (513 total).
-
-    Layout:
-      0     0x7E                    start byte
-      1     0x06                    label = Output Only Send DMX Packet
-      2..3  513 (little-endian)     length = start code + 512 channel bytes
-      4     0x00                    DMX start code (standard data, no RDM)
-      5..516 channel values 1..512
-      517   0xE7                    end byte
-    """
-    if len(payload) < DMX_UNIVERSE_BYTES:
-        payload = payload + b"\x00" * (DMX_UNIVERSE_BYTES - len(payload))
-    elif len(payload) > DMX_UNIVERSE_BYTES:
-        payload = payload[:DMX_UNIVERSE_BYTES]
-    length = DMX_UNIVERSE_BYTES + 1   # 1 byte start code + 512 channels
-    return bytes((
-        ENTTEC_START,
-        ENTTEC_LABEL_OUTPUT,
-        length & 0xFF,
-        (length >> 8) & 0xFF,
-        ENTTEC_DMX_START_CODE,
-    )) + payload + bytes((ENTTEC_END,))
-
-
-# ============================================================================
-# Serial port handling
-# ============================================================================
-
-def find_candidate_ports() -> list[str]:
-    """List likely NocturNation device serial ports on the current OS.
-
-    Wrapper around find_candidate_ports_with_info() that returns just
-    the device paths - kept for callers that don't need the descriptions.
-    """
-    return [device for device, _desc in find_candidate_ports_with_info()]
-
-
-_TILDAGON_DESC_HINTS = ("tildagon", "electromagnetic field")
-
-
-def _port_looks_like_tildagon(port) -> bool:
-    """True if the OS-reported description suggests this port is a
-    Tildagon. The Tildagon enumerates as 'Electromagnetic Field
-    TiLDAGON' on macOS; the substring check is case-insensitive and
-    covers both the manufacturer ('Electromagnetic Field') and the
-    product ('TiLDAGON') strings.
-    """
-    desc = _describe_port(port).lower()
-    return any(hint in desc for hint in _TILDAGON_DESC_HINTS)
-
-
-def find_candidate_ports_with_info() -> list[tuple[str, str]]:
-    """List likely NocturNation StickC serial ports with a human
-    description of each, used by the interactive picker.
-
-    Tildagon serial ports are deliberately excluded - the Tildagon
-    cannot run the DMX Bridge role (the badge OS owns the USB-CDC
-    endpoint and the firmware has no DMX Bridge mode). Only the
-    StickC (S3 native USB-CDC; Plus2 FTDI/CH340 USB-UART) is a valid
-    target.
-
-    Device-path matching by platform:
-      - macOS S3 (native USB-CDC): /dev/cu.usbmodemNNNN
-      - macOS Plus2 (FTDI / CP210x / CH340): /dev/cu.usbserial-XXXX,
-        /dev/cu.SLAB_USBtoUART, /dev/cu.wchusbserialXXXX
-      - Linux: /dev/ttyACMn (CDC) or /dev/ttyUSBn (UART bridge)
-      - Windows: COMn (any; descriptions disambiguate)
-    """
-    candidates = []
-    for port in serial.tools.list_ports.comports():
-        device = port.device
-        is_candidate = (
-            "usbmodem"      in device
-            or "usbserial"  in device
-            or "SLAB_"      in device          # macOS CP210x
-            or "wchusb"     in device          # macOS CH340 (some drivers)
-            or "ttyACM"     in device          # Linux CDC
-            or "ttyUSB"     in device          # Linux USB-UART bridge
-            or device.upper().startswith("COM")  # Windows
-        )
-        if not is_candidate:
-            continue
-        if _port_looks_like_tildagon(port):
-            # Skip Tildagons - they appear on the same /dev/cu.usbmodem
-            # path range as the S3 but can't run DMX Bridge mode.
-            continue
-        candidates.append((device, _describe_port(port)))
-    return candidates
-
-
-def _device_kind_from_port(port_path: str) -> str:
-    """Identify whether a serial port is a Tildagon or something else,
-    used by --encode auto. Matches on the USB device's manufacturer +
-    product strings (Tildagon shows up as 'Electromagnetic Field
-    TiLDAGON' on macOS).
-    """
-    for port in serial.tools.list_ports.comports():
-        if port.device == port_path:
-            desc = _describe_port(port).lower()
-            if "tildagon" in desc:
-                return "tildagon"
-            break
-    return "other"
-
-
-def _describe_port(port) -> str:
-    """Best-effort human label for a serial.tools.list_ports.ListPortInfo.
-
-    Combines the manufacturer / product strings the OS exposes for the
-    USB device behind the serial port, so the picker can show
-    "M5StickC Plus2" or "Espressif S3" rather than just opaque
-    /dev/cu.usbmodemNNNN paths.
-    """
-    bits = []
-    if getattr(port, "manufacturer", None):
-        bits.append(str(port.manufacturer))
-    if getattr(port, "product", None):
-        bits.append(str(port.product))
-    if not bits and getattr(port, "description", None):
-        bits.append(str(port.description))
-    return " ".join(bits) if bits else "(unknown device)"
-
-
-def interactive_pick_port() -> Optional[str]:
-    """Show the available serial ports and let the operator pick one.
-
-    Returns the chosen device path, or None if the user cancels or
-    there are no candidates. Skips the prompt entirely when there's
-    only one candidate (no choice to make).
-    """
-    candidates = find_candidate_ports_with_info()
-    if not candidates:
-        print("No StickC serial port detected. Plug in your StickC "
-              "(Plus2 or S3) running DMX Bridge mode and try again, "
-              "or pass --port explicitly. Tildagon devices are "
-              "excluded - the DMX Bridge role is StickC-only.",
-              file=sys.stderr)
-        return None
-    if len(candidates) == 1:
-        device, desc = candidates[0]
-        print(f"Auto-selecting only available port: {device}  ({desc})")
-        return device
-    print("Multiple serial ports detected. Pick one:")
-    for idx, (device, desc) in enumerate(candidates, start=1):
-        print(f"  [{idx}] {device:30}  {desc}")
-    while True:
-        try:
-            choice = input(
-                f"Enter 1-{len(candidates)} (or q to quit): "
-            ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return None
-        if choice in ("q", "quit", "exit"):
-            return None
-        try:
-            n = int(choice)
-            if 1 <= n <= len(candidates):
-                return candidates[n - 1][0]
-        except ValueError:
-            pass
-        print("  not a valid choice; try again.")
-
-
-def open_serial(port: str, baud: int) -> Optional[serial.Serial]:
-    """Try to open a serial port; return None on failure (silent)."""
-    try:
-        return serial.Serial(port, baud, timeout=0, write_timeout=0.1)
-    except (serial.SerialException, OSError):
-        return None
+# Both extracted to nocturnation_dmx (Epic 10 B0). The shim imports
+# wrap_enttec_pro, find_candidate_ports*, interactive_pick_port,
+# device_kind_from_port, port_looks_like_tildagon, open_serial, and
+# UsbWriter from the library - one source of truth shared with the
+# music orchestrator.
 
 
 # ============================================================================
@@ -716,10 +548,10 @@ def main() -> int:
     # the operator passes --port explicitly.
     if chosen_port is not None:
         for port_info in serial.tools.list_ports.comports():
-            if port_info.device == chosen_port and _port_looks_like_tildagon(port_info):
+            if port_info.device == chosen_port and port_looks_like_tildagon(port_info):
                 print(
                     f"Refusing to connect: {chosen_port} appears to be a "
-                    f"Tildagon ({_describe_port(port_info)}). The DMX "
+                    f"Tildagon ({describe_port(port_info)}). The DMX "
                     f"Bridge role is StickC-only - the Tildagon "
                     f"firmware has no DMX Bridge mode. Plug in a "
                     f"StickC and try again.",
@@ -740,7 +572,7 @@ def main() -> int:
     chosen_encoding = args.encode
     if chosen_encoding == "auto":
         if chosen_port:
-            kind = _device_kind_from_port(chosen_port)
+            kind = device_kind_from_port(chosen_port)
             chosen_encoding = "python" if kind == "tildagon" else "binary"
         else:
             chosen_encoding = "binary"
