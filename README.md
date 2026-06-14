@@ -16,6 +16,8 @@ The documents here are the canonical entry points for operators and implementers
 | [Flow diagrams](manuals/flow-diagrams.md) | Both | Mermaid renderings: topology, boot, modes, analyser, dispatch, receive, routing, configuration, channel discovery. |
 | [Developer guide](developing-shows.md) | Contributors writing `Show` plug-ins | The `Show` base class, analyser hooks, `render_fx` API, widget composition, persistence, testing. |
 | [QLC+ beginner's guide](qlc-plus-beginners-guide.md) | Operators driving NocturNation from a DMX console | From-zero walkthrough: install QLC+, learn the four panels, define the core DMX concepts, plug a StickC in, programme a Scene, sequence a Chaser, link a cue stack to a track. |
+| [Music orchestrator guide](orchestrator-guide.md) | Operators running a programmed show synchronised to music | From-zero walkthrough: install nowplaying-cli, run the orchestrator, author a `.cues` file, file-naming convention, lyric anchors, debug mode. Pairs with the FX library reference. |
+| [FX library](fx-library.md) | Operators authoring cue files | Generated reference of every FX the orchestrator can run: parameters, units, defaults. Regenerated from the FX classes by `tools/scripts/gen_fx_library.py`. |
 | [Architecture specification](architecture.md) | Designers and curious readers | The full system design. The manuals above are the publishable distillation of this. |
 | [DAL design](dal-design.md) | Firmware contributors | Device-abstraction-layer design notes. |
 | [HAL design](hal-design.md) | Firmware contributors | Hardware-abstraction-layer design notes. |

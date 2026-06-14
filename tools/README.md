@@ -143,3 +143,117 @@ python3 artnet-to-enttec-pro.py
 BSD-3-Clause. References the Art-Net packet decode pattern from
 [mich181189/Tildagon-ArtNet](https://github.com/mich181189/Tildagon-ArtNet)
 (same license).
+
+---
+
+## `nowplaying-orchestrator.py`
+
+The Epic 10 music orchestrator. Watches the host's OS now-playing
+state, matches the current track to a `.cues` file in `Docs/songs/`,
+and dispatches DMX universe state to the same StickC the shim talks
+to. Operator-facing walk-through is in
+[`../orchestrator-guide.md`](../orchestrator-guide.md); the notes here
+cover running and configuring it.
+
+```
+audio app  ->  nowplaying-cli  ->  this script  ->  Enttec Pro USB-CDC  ->  StickC
+                                                ->  Art-Net UDP 6454    ->  shim  ->  StickC
+```
+
+### Quick start
+
+**macOS:**
+
+```sh
+brew install nowplaying-cli
+./run-orchestrator-macos.sh
+```
+
+**Windows:**
+
+```bat
+run-orchestrator-windows.bat
+```
+
+The wrapper installs `pyserial` (and on Windows, `winsdk`) into the
+shared `tools/.venv` on first run.
+
+**Linux:**
+
+```sh
+sudo apt install python3-gi gir1.2-glib-2.0
+pip install pydbus pyserial
+python3 nowplaying-orchestrator.py
+```
+
+The Linux wrapper is deliberately not shipped because `pydbus` needs
+the system GObject runtime, which is outside pip's scope.
+
+### Common flags
+
+```sh
+./run-orchestrator-macos.sh --debug
+./run-orchestrator-macos.sh --output artnet
+./run-orchestrator-macos.sh --songs-dir /path/to/songs --default-bpm 128
+```
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--output {auto,usb,artnet}` | `auto` | Output mode. `auto` tries USB first, falls back to Art-Net if the port is busy. |
+| `--songs-dir DIR` | `Docs/songs/` | Where to look up per-track `.cues` files. |
+| `--usb-port PATH` | first StickC match | Override serial port. Same Tildagon-exclusion logic as the shim. |
+| `--usb-baud N` | 460800 | Override USB baud (must match firmware). |
+| `--artnet-host H` | `127.0.0.1` | Art-Net target host (for `--output artnet`). |
+| `--artnet-port N` | `6454` | Art-Net target port. |
+| `--default-bpm N` | 120 | Fallback BPM when neither file nor cue overrides. |
+| `--debug` | off | One log line per cue / lyric / poll, with live position. |
+
+### What it expects
+
+- macOS: `nowplaying-cli` on PATH. The wrapper warns if missing; install with `brew install nowplaying-cli`.
+- Windows: `winsdk` Python package (auto-installed by the wrapper).
+- Linux: `pydbus` and the GObject runtime (`python3-gi` on Debian-flavoured distros).
+
+Audio apps must register with the OS's media-key system. macOS:
+Apple Music, Spotify, Chrome/Safari tabs with Media Session, VLC,
+etc. Quick check: `nowplaying-cli get-raw` should return a
+populated dict while a track plays.
+
+### Authoring helpers
+
+`scripts/gen_cues_skeleton.py "<artist>" "<title>"` fetches synced
+lyrics from [lrclib.net](https://lrclib.net) and emits a starter
+`.cues` file with each lyric line pre-stamped as a comment anchor.
+
+`scripts/gen_fx_library.py` regenerates `Docs/fx-library.md` from
+the registered FX classes; run after adding or modifying an FX.
+
+### Architecture
+
+`nocturnation_orchestrator/` is a Python package with three layers:
+
+- `nowplaying/` - one OS backend per platform, all behind the same
+  `NowPlayingBackend` interface. `macos.py` calls `nowplaying-cli`
+  via subprocess; `windows.py` wraps `winsdk` (SMTC); `linux.py`
+  wraps `pydbus` (MPRIS).
+- `fx/` - FX engine. `Fx` base class, `FxRegistry`, `FxRunner`. The
+  `library/` sub-package holds concrete FX classes; each registers
+  itself with the canonical `fx_registry` at import time.
+- `output/` - dispatchers. `UsbDispatcher` (via the shared
+  `nocturnation_dmx.UsbWriter`) and `ArtnetDispatcher` (ArtDmx
+  packets to UDP). `create_dispatcher('auto'|'usb'|'artnet')` picks
+  one.
+
+`cues.py` parses `.cues` files into `Cue` and `Lyric` lists.
+`scheduler.py` walks them against the song position. `matcher.py`
+maps `(artist, title)` to a `.cues` path via slug. `main.py` ties
+it all into the ~50 Hz tick loop.
+
+### Coexistence with the shim
+
+The orchestrator and the shim are both DMX producers pointing at the
+same StickC. In `auto` mode, the orchestrator tries USB first; if the
+shim already holds the port, it falls back to emitting Art-Net to
+`127.0.0.1:6454`, which the shim then forwards. So you can leave the
+shim running and start / stop the orchestrator freely - the LD can
+hand control between QLC+ and the orchestrator on the fly.
