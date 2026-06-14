@@ -333,6 +333,13 @@ class CueScheduler:
         cue_position_ms = position_ms - cue.time_ms
         if cue_position_ms < 0:
             cue_position_ms = 0
+        # Every scheduled cue is an explicit author intent - "apply
+        # this FX with these params at this time". If a sequence of
+        # cues uses the same FX with different params (very common:
+        # progressive wash brightness changes through a song), the
+        # runner's same-fx_id idempotency would silently drop all
+        # but the first. replace_running=True bypasses that so each
+        # cue actually restarts the FX with its own params.
         self.runner.start(
             cue.fx_id,
             bpm=effective_bpm,
@@ -340,6 +347,7 @@ class CueScheduler:
             params=cue.params,
             position_ms=cue_position_ms,
             now_ms=now_ms,
+            replace_running=True,
         )
         self.on_cue_fire(cue, position_ms)
 

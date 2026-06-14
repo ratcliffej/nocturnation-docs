@@ -54,9 +54,13 @@ def _format_cue_for_log(cue):
         "stop" if cue.fx_id == 0 else "fx_%d" % cue.fx_id
     )
     bits = [name]
-    # Only show non-default param slots: trim trailing zeros so a cue
-    # with one positional param doesn't print 5 trailing zeros.
-    params = list(cue.params)
+    # Show the user-supplied (pre-conversion) values, not the u8 wire
+    # form the FX consumes. So a cue file with `probability 30` logs
+    # as "30" here, not "76" (the round(30 * 255 / 100) result).
+    # Fall back to the u8 form for old code paths that don't populate
+    # params_raw (defensive - shouldn't happen for parsed cues).
+    raw = cue.params_raw or cue.params
+    params = list(raw)
     while params and params[-1] == 0:
         params.pop()
     if params:

@@ -79,6 +79,10 @@ class Cue:
         fx_id (int): registry id (kind="fx" only); 0 = `stop` cue.
         params (tuple[int, ...]): u8 params for FX.start(); length
             matches the FX's PARAMS declaration. Reserved slots are 0.
+        params_raw (tuple[int, ...]): human-supplied values BEFORE
+            unit conversion (e.g. probability 30 stays as 30 here,
+            even though params[i] becomes 76 after percent->u8). Used
+            for debug log lines so the LD sees what they wrote.
         bpm (int): for kind="fx" - per-cue BPM override (0 = inherit).
             For kind="bpm" - the new file-level default BPM to apply.
         buildup_s (int): per-cue buildup window (kind="fx" only).
@@ -88,6 +92,7 @@ class Cue:
     kind: str = "fx"
     fx_id: int = 0
     params: tuple = ()
+    params_raw: tuple = ()
     bpm: int = 0
     buildup_s: int = 0
     line_no: int = 0
@@ -142,8 +147,13 @@ _INT_RE = re.compile(r"^-?\d+$")
 # `# MM:SS[.xxx] text` (or `# H:MM:SS[.xxx] text`). Used for lyric-anchor
 # extraction; lines that match become Lyric entries instead of being
 # discarded as comments.
+#
+# Whitespace after `#` is REQUIRED. `#00:45 drift_wash ...` (no space)
+# does NOT match - the LD's natural way to comment out a cue
+# temporarily is to prepend `#` with no space, and we should leave
+# that alone instead of treating the cue body as lyric text.
 _LYRIC_COMMENT_RE = re.compile(
-    r"^#\s*((?:\d+:)?\d+:\d{2}(?:\.\d{1,3})?)\s+(.+?)\s*$"
+    r"^#\s+((?:\d+:)?\d+:\d{2}(?:\.\d{1,3})?)\s+(.+?)\s*$"
 )
 
 
@@ -221,16 +231,21 @@ def _resolve_fx_by_name(name: str, line_no: int, registry) -> int:
     raise CueParseError("unknown FX %r" % name, line_no)
 
 
-def _build_params_tuple(fx_cls, positional: list, line_no: int) -> tuple:
-    """Map a list of positional cue-file values to the FX's params tuple.
+def _build_params_tuple(fx_cls, positional: list, line_no: int):
+    """Map a list of positional cue-file values to (params_u8, params_raw).
 
-    The tuple is sized to the FX's PARAMS declaration (no fixed 6-slot
-    cap - layered FX like WashWithSparkle need more). Reserved slots
-    in PARAMS are skipped during positional assignment (they stay 0
-    in the output). The caller's positional list must not exceed the
+    params_u8   is the converted form the FX consumes via start().
+    params_raw  is the user-supplied values (pre-conversion) so the
+                debug log can show what they wrote (probability 30,
+                not 76; pulse decay 5, not slider 128).
+
+    Both tuples are sized to len(fx_cls.PARAMS); reserved slots stay
+    0 in both. The caller's positional list must not exceed the
     count of non-reserved slots.
     """
-    out = [0] * len(fx_cls.PARAMS)
+    n = len(fx_cls.PARAMS)
+    out = [0] * n
+    raw = [0] * n
     named_slots = [
         (i, unit) for i, (name, unit, _desc) in enumerate(fx_cls.PARAMS)
         if name is not None
@@ -243,11 +258,12 @@ def _build_params_tuple(fx_cls, positional: list, line_no: int) -> tuple:
         )
     for value_token, (slot, unit) in zip(positional, named_slots):
         value = _parse_int(value_token, line_no, "param value")
+        raw[slot] = value
         try:
             out[slot] = convert_to_u8(value, unit)
         except ValueError as exc:
             raise CueParseError(str(exc), line_no) from None
-    return tuple(out)
+    return tuple(out), tuple(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +308,9 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
         fx_id = _resolve_fx_by_name(name, line_no, registry)
         fx_cls = registry.get(fx_id)
         positional = tokens[2:]
-        params = _build_params_tuple(fx_cls, positional, line_no)
+        params_u8, _params_raw = _build_params_tuple(fx_cls, positional, line_no)
         file.default_fx_id = fx_id
-        file.default_fx_params = params
+        file.default_fx_params = params_u8
     elif directive == "@artist":
         file.artist = " ".join(tokens[1:])
     elif directive == "@title":
@@ -361,9 +377,10 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
             positional.append(tok)
             i += 1
 
-    params = _build_params_tuple(fx_cls, positional, line_no)
+    params_u8, params_raw = _build_params_tuple(fx_cls, positional, line_no)
     return Cue(
-        time_ms=time_ms, kind="fx", fx_id=fx_id, params=params,
+        time_ms=time_ms, kind="fx", fx_id=fx_id,
+        params=params_u8, params_raw=params_raw,
         bpm=bpm_override, buildup_s=buildup_override, line_no=line_no,
     )
 

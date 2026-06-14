@@ -382,6 +382,7 @@ class FakeRunner:
         self.calls.append({
             "fx_id": fx_id, "bpm": bpm, "buildup_s": buildup_s,
             "params": params, "position_ms": position_ms, "now_ms": now_ms,
+            "replace_running": replace_running,
         })
 
     def cancel(self, now_ms):
@@ -447,6 +448,30 @@ class TestCueScheduler:
         sched.advance(12_000, now_ms=100)
         fired = [c["fx_id"] for c in runner.calls[starts_before:]]
         assert fired == [11]
+
+    def test_scheduler_force_restarts_on_every_cue(self):
+        # A sequence of cues with the same fx_id but different params
+        # must each restart the FX. Otherwise the runner's same-fx_id
+        # idempotency rule silently drops all but the first - a
+        # particularly nasty source of "transition didn't take over"
+        # bugs in authored cue files.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            00:00 sparkle_on_beat 255 0 0 100
+            00:15 sparkle_on_beat 0 0 255 100
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(15_000, now_ms=15_000)
+        sparkles = [c for c in runner.calls if c["fx_id"] == 11]
+        assert len(sparkles) == 2
+        # Both fires pass replace_running=True so the runner doesn't
+        # short-circuit on same fx_id.
+        assert all(c["replace_running"] for c in sparkles)
+        # The second sparkle carries the new (blue) RGB.
+        assert sparkles[-1]["params"][:3] == (0, 0, 255)
 
     def test_stop_cue_admits_blackout(self):
         runner = FakeRunner()

@@ -473,6 +473,19 @@ class TestLyricExtraction:
         assert len(f.lyrics) == 1
         assert f.lyrics[0].text == "Anchor"
 
+    def test_no_space_after_hash_is_plain_comment(self):
+        # `#00:45 cue_text` (no space between # and the timestamp)
+        # is how the LD naturally comments out a cue line. It MUST
+        # stay a plain comment, not be surfaced as a lyric.
+        text = (
+            "#00:45 drift_wash 200 200 200 10 10 100 10\n"
+            "# 00:50 Real lyric text\n"
+        )
+        f = parse_cues(text)
+        # Only the space-prefixed one is a lyric.
+        assert len(f.lyrics) == 1
+        assert f.lyrics[0].text == "Real lyric text"
+
     def test_lyrics_sorted_by_time(self):
         text = (
             "# 01:00  Second\n"
