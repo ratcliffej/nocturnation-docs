@@ -38,6 +38,16 @@ class PositionTracker:
     On each poll, calls `update_from_poll(np, now_ms)` with the
     NowPlaying snapshot. Between polls, `current_position(now_ms)`
     extrapolates by wall clock if the track is playing.
+
+    Stale-cache handling: macOS MediaRemote caches elapsedTime at the
+    last play / pause / seek; some music apps never push fresh values
+    after that, so polling returns the same number indefinitely. To
+    avoid resetting the wall-clock anchor on every poll (which would
+    pin the position to whatever cached value the OS keeps returning),
+    we only re-anchor when the OS-reported position has actually
+    changed, when the play state flips, or when the track changes.
+    Otherwise the wall-clock interpolation just keeps advancing from
+    the previous anchor.
     """
 
     __slots__ = (
@@ -46,6 +56,8 @@ class PositionTracker:
         "_is_playing",
         "_artist",
         "_title",
+        "_last_os_position_ms",
+        "_has_anchor",
     )
 
     def __init__(self):
@@ -54,11 +66,31 @@ class PositionTracker:
         self._is_playing = False
         self._artist = ""
         self._title = ""
+        self._last_os_position_ms = -1
+        self._has_anchor = False
 
     def update_from_poll(self, np, now_ms):
-        """Absorb a new NowPlaying snapshot."""
-        self._anchor_position_ms = np.position_ms
-        self._anchor_wall_ms = now_ms
+        """Absorb a new NowPlaying snapshot.
+
+        Re-anchors only on genuine events (track change, play / pause,
+        OS-reported position actually moved). When the OS returns the
+        same position as last poll while still claiming to play, we
+        treat that as a stale cache and let wall-clock interpolation
+        from the previous anchor continue.
+        """
+        track_changed = (
+            np.artist != self._artist or np.title != self._title
+        )
+        state_changed = (np.is_playing != self._is_playing)
+        position_changed = (np.position_ms != self._last_os_position_ms)
+
+        if (track_changed or state_changed or position_changed
+                or not self._has_anchor):
+            self._anchor_position_ms = np.position_ms
+            self._anchor_wall_ms = now_ms
+            self._has_anchor = True
+
+        self._last_os_position_ms = np.position_ms
         self._is_playing = np.is_playing
         self._artist = np.artist
         self._title = np.title
@@ -68,6 +100,8 @@ class PositionTracker:
         self._is_playing = False
         self._artist = ""
         self._title = ""
+        self._last_os_position_ms = -1
+        self._has_anchor = False
 
     def current_position(self, now_ms):
         if not self._is_playing:

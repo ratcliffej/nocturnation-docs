@@ -6,19 +6,45 @@ one per line.
 
 Polled invocation::
 
-    nowplaying-cli get title artist elapsedTime duration playbackRate
+    nowplaying-cli get title artist elapsedTime duration playbackRate \\
+                       infoUpdateTime
 
 Output is one value per line, blank line for missing fields. We
 interpret playbackRate > 0 as "playing" (paused tracks report 0).
+
+The elapsedTime returned by MediaRemote is the cached value at the
+last state change (play / pause / seek); it does NOT tick forward
+while a track plays. To get the live position we also read
+`infoUpdateTime` (NSDate seconds since 2001-01-01) and extrapolate:
+
+    live_position_ms = elapsedTime_ms
+                       + (now_unix - (infoUpdateTime + NSDATE_OFFSET))
+                         * 1000 * playbackRate
+
+Without this, a playing track's position would stay frozen at
+whatever it was when the user pressed play, and the cue scheduler
+would never advance past time zero.
 """
 
 import shutil
 import subprocess
+import time
 
 from .base import NowPlaying, NowPlayingBackend, NowPlayingError
 
 
-_FIELDS = ("title", "artist", "elapsedTime", "duration", "playbackRate")
+_FIELDS = (
+    "title", "artist", "elapsedTime", "duration", "playbackRate",
+    "infoUpdateTime",
+)
+
+# NSDate reference date (2001-01-01 00:00:00 UTC) as a Unix timestamp.
+_NSDATE_TO_UNIX_OFFSET = 978_307_200
+
+# Sanity cap: ignore extrapolation gaps larger than this. Protects
+# against a stale infoUpdateTime from a previous Music.app session
+# pushing the position into orbit.
+_MAX_EXTRAPOLATION_S = 7200  # 2 hours
 
 
 class MacOSBackend(NowPlayingBackend):
@@ -65,6 +91,10 @@ class MacOSBackend(NowPlayingBackend):
         return _parse_output(stdout)
 
 
+def _now_unix():
+    return time.time()
+
+
 def _default_runner(args, timeout):
     completed = subprocess.run(
         args,
@@ -73,22 +103,31 @@ def _default_runner(args, timeout):
     return completed.stdout, completed.returncode
 
 
-def _parse_output(stdout):
+def _parse_output(stdout, *, now_unix=None):
     """Parse nowplaying-cli's line-per-field output.
 
     Empty / 'null' values denote "no source"; returning None lets the
     main loop go ambient.
+
+    Args:
+        stdout (str): raw nowplaying-cli stdout.
+        now_unix (callable | None): provider of the current Unix
+            timestamp; defaults to time.time. Injected by tests so
+            the infoUpdateTime extrapolation is deterministic.
     """
+    if now_unix is None:
+        now_unix = _now_unix
     lines = stdout.splitlines()
     # Pad to expected field count so we don't IndexError on truncated
     # output from older nowplaying-cli builds.
     while len(lines) < len(_FIELDS):
         lines.append("")
-    title    = lines[0].strip()
-    artist   = lines[1].strip()
-    elapsed  = lines[2].strip()
-    duration = lines[3].strip()
-    rate     = lines[4].strip()
+    title       = lines[0].strip()
+    artist      = lines[1].strip()
+    elapsed     = lines[2].strip()
+    duration    = lines[3].strip()
+    rate        = lines[4].strip()
+    info_update = lines[5].strip()
 
     # No source: nowplaying-cli prints 'null' for every field.
     if not title and not artist:
@@ -98,13 +137,24 @@ def _parse_output(stdout):
 
     position_ms = _seconds_to_ms(elapsed)
     duration_ms = _seconds_to_ms(duration)
-    is_playing = _float_or_zero(rate) > 0.0
+    playback_rate = _float_or_zero(rate)
+    is_playing = playback_rate > 0.0
+
+    # Extrapolate the live position from the OS sample. MediaRemote
+    # only refreshes elapsedTime on state changes, so without this
+    # the position stays frozen across an entire track.
+    info_update_nsdate = _float_or_zero(info_update)
+    if is_playing and info_update_nsdate > 0:
+        unix_info_update = info_update_nsdate + _NSDATE_TO_UNIX_OFFSET
+        delta_s = now_unix() - unix_info_update
+        if 0 < delta_s <= _MAX_EXTRAPOLATION_S:
+            position_ms += int(delta_s * 1000 * playback_rate)
 
     return NowPlaying(
         is_playing=is_playing,
         artist=artist,
         title=title,
-        position_ms=position_ms,
+        position_ms=max(0, position_ms),
         duration_ms=duration_ms,
     )
 

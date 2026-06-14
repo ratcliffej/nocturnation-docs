@@ -22,7 +22,7 @@ from nocturnation_orchestrator.main import run
 from nocturnation_orchestrator.matcher import find_cue_path, slugify
 from nocturnation_orchestrator.nowplaying import NowPlaying
 from nocturnation_orchestrator.nowplaying.macos import (
-    MacOSBackend, _parse_output,
+    MacOSBackend, _NSDATE_TO_UNIX_OFFSET, _parse_output,
 )
 from nocturnation_orchestrator.output.artnet import (
     ArtnetDispatcher, build_artdmx_packet,
@@ -85,6 +85,66 @@ class TestMacOSBackendInjection:
         # The runner was called with the expected get-fields list.
         assert captured_args[0][1] == "get"
         assert "elapsedTime" in captured_args[0]
+        assert "infoUpdateTime" in captured_args[0]
+
+
+class TestMacOSLivePositionExtrapolation:
+    """elapsedTime alone is the cached value at the last state change;
+    the LIVE position is elapsedTime + (now - infoUpdateTime) *
+    playbackRate. Without this our scheduler never advances past 0."""
+
+    def test_extrapolates_forward_while_playing(self):
+        # Pretend MediaRemote sampled elapsedTime=10s twenty seconds ago.
+        # With playbackRate=1, the live position should be ~30s.
+        now = 1_000_000_000.0
+        sampled_at_unix = now - 20.0
+        info_update_nsdate = sampled_at_unix - _NSDATE_TO_UNIX_OFFSET
+        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
+        np = _parse_output(stdout, now_unix=lambda: now)
+        assert np.position_ms == 30_000
+
+    def test_no_extrapolation_when_paused(self):
+        # playbackRate=0 -> is_playing=False, cached value used as-is.
+        now = 1_000_000_000.0
+        info_update_nsdate = (now - 20.0) - _NSDATE_TO_UNIX_OFFSET
+        stdout = "Title\nArtist\n10.0\n295.0\n0.0\n%f\n" % info_update_nsdate
+        np = _parse_output(stdout, now_unix=lambda: now)
+        assert np.position_ms == 10_000
+        assert not np.is_playing
+
+    def test_no_extrapolation_when_info_update_missing(self):
+        # Older nowplaying-cli builds may not expose infoUpdateTime.
+        # Fall back to the raw elapsedTime; main loop interpolates by
+        # wall-clock between polls.
+        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n\n"
+        np = _parse_output(stdout, now_unix=lambda: 1_000_000_000.0)
+        assert np.position_ms == 10_000
+
+    def test_scales_by_playback_rate(self):
+        # 2x speed: 5s real-time -> 10s of track elapsed.
+        now = 1_000_000_000.0
+        info_update_nsdate = (now - 5.0) - _NSDATE_TO_UNIX_OFFSET
+        stdout = "Title\nArtist\n10.0\n295.0\n2.0\n%f\n" % info_update_nsdate
+        np = _parse_output(stdout, now_unix=lambda: now)
+        assert np.position_ms == 20_000
+
+    def test_ignores_extrapolation_when_gap_absurd(self):
+        # If infoUpdateTime is hours old (stale session leftover),
+        # don't extrapolate; trust the cached value.
+        now = 1_000_000_000.0
+        info_update_nsdate = (now - 10_000.0) - _NSDATE_TO_UNIX_OFFSET
+        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
+        np = _parse_output(stdout, now_unix=lambda: now)
+        assert np.position_ms == 10_000
+
+    def test_ignores_negative_extrapolation(self):
+        # If infoUpdateTime is in the future (clock skew), don't
+        # rewind the position.
+        now = 1_000_000_000.0
+        info_update_nsdate = (now + 5.0) - _NSDATE_TO_UNIX_OFFSET
+        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
+        np = _parse_output(stdout, now_unix=lambda: now)
+        assert np.position_ms == 10_000
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +264,78 @@ class TestPositionTracker:
         t.update_from_poll(np, now_ms=0)
         t.clear()
         assert not t.is_playing
+
+    def test_stale_cache_does_not_reset_anchor(self):
+        # MediaRemote sometimes returns the SAME elapsedTime on every
+        # poll even while playing (it only refreshes the cached value
+        # on state changes). The tracker must NOT re-anchor on a
+        # no-change position, or wall-clock advancement gets pinned to
+        # zero forever.
+        t = PositionTracker()
+        np = NowPlaying(True, "A", "B", position_ms=0, duration_ms=120_000)
+        t.update_from_poll(np, now_ms=0)
+        # 1 s later, OS still reports position=0. Tracker should keep
+        # extrapolating from the original anchor instead of
+        # resetting.
+        t.update_from_poll(np, now_ms=1_000)
+        assert t.current_position(now_ms=1_000) == 1_000
+        # Another second.
+        t.update_from_poll(np, now_ms=2_000)
+        assert t.current_position(now_ms=2_000) == 2_000
+
+    def test_genuine_position_change_reanchors(self):
+        # When the OS reports a fresh position, absorb it (handles
+        # seeks and well-behaved music apps).
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=0),
+            now_ms=0,
+        )
+        # 3 s later: OS catches up to ~3 s. Re-anchor.
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=3_000, duration_ms=0),
+            now_ms=3_000,
+        )
+        assert t.current_position(now_ms=3_500) == 3_500
+        # User scrubs forward to 30 s.
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=30_000, duration_ms=0),
+            now_ms=5_000,
+        )
+        assert t.current_position(now_ms=5_500) == 30_500
+
+    def test_play_pause_reanchors(self):
+        # Pausing should freeze the position at whatever the OS reports
+        # at that moment, not at wall-clock projection of the previous
+        # anchor.
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=0),
+            now_ms=0,
+        )
+        # 10 s of wall clock, OS still says 0 (stale): we'd predict 10.
+        # User then pauses; OS reports position=10000 (it finally
+        # updated). Tracker should absorb the pause state and the
+        # position.
+        t.update_from_poll(
+            NowPlaying(False, "A", "B", position_ms=10_000, duration_ms=0),
+            now_ms=10_000,
+        )
+        assert not t.is_playing
+        assert t.current_position(now_ms=20_000) == 10_000
+
+    def test_track_change_reanchors(self):
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "Song 1", position_ms=60_000, duration_ms=0),
+            now_ms=0,
+        )
+        # New track starts at position 0.
+        t.update_from_poll(
+            NowPlaying(True, "A", "Song 2", position_ms=0, duration_ms=0),
+            now_ms=1_000,
+        )
+        assert t.current_position(now_ms=1_500) == 500
 
 
 # ---------------------------------------------------------------------------
