@@ -1,25 +1,10 @@
 """DriftWash - two-colour wash that cycles A <-> B over the cycle time.
 
-params:
-    [0] A.R   (0..255)
-    [1] A.G   (0..255)
-    [2] A.B   (0..255)
-    [3] B.R   (0..255)
-    [4] B.G   (0..255)
-    [5] cycle_time_100ms (0..255; on-wire 100ms units; default 80 = ~8 s)
-
-B.B is derived from B.R+B.G being non-zero - we leave one component
-free per palette and pick the third channel value such that the user
-can simply set the two main colour components and pick up a sensible
-default. For now: B.B = 0 unless both B.R and B.G are 0, in which
-case the wash collapses to a hold of A (cycle has no effect at that
-point).
-
 Channels written every tick:
     1  Master      <- 255
     11..13 Wash A RGB
     14..16 Wash B RGB
-    17 Wash Cycle  <- params[5] or 80
+    17 Wash Cycle  <- params[6] or 80
     18 Wash Int    <- 220
     19 Wash Attack <- 30
     20 Wash Rel    <- 30
@@ -44,15 +29,18 @@ class DriftWash(Fx):
     description = (
         "Two-colour wash that cycles A <-> B over the cycle time. The "
         "Lume fades between anchor A and anchor B; cycle controls the "
-        "round-trip duration."
+        "round-trip duration. Full RGB control on both anchors so any "
+        "two-colour drift is expressible (sunset orange -> deep purple, "
+        "ice blue -> magenta, etc.)."
     )
 
     PARAMS = [
         ("a_r",    "u8",    "Anchor A Red (0..255)."),
         ("a_g",    "u8",    "Anchor A Green (0..255)."),
-        (None,     None,    "reserved"),
+        ("a_b",    "u8",    "Anchor A Blue (0..255)."),
         ("b_r",    "u8",    "Anchor B Red (0..255)."),
         ("b_g",    "u8",    "Anchor B Green (0..255)."),
+        ("b_b",    "u8",    "Anchor B Blue (0..255)."),
         ("cycle",  "100ms", "Drift cycle time in 100 ms units (1..255 = "
                             "100 ms..25.5 s). Default 80 (~8 s) when zero."),
     ]
@@ -62,12 +50,11 @@ class DriftWash(Fx):
         self._cancelled_ms = None
         self._ar = params[0]
         self._ag = params[1]
-        self._ab = 0  # caller can't specify A.B without burning a param;
-                      # held to 0 for the v1 surface.
+        self._ab = params[2]
         self._br = params[3]
         self._bg = params[4]
-        self._bb = 0
-        self._cycle = params[5] if params[5] != 0 else 80
+        self._bb = params[5]
+        self._cycle = params[6] if params[6] != 0 else 80
 
     def tick(self, now_ms, universe):
         set_ch(universe, CH_MASTER,     255)

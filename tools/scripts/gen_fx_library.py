@@ -96,6 +96,11 @@ skeleton from `gen_cues_skeleton.py` can be edited in place.
 
 `stop` is the cancel sentinel - equivalent to `runner.start(fx_id=0)`.
 
+`bpm N` is a meta cue (not an FX): it mutates the file-level
+default BPM mid-track for tempo changes. Same-time tie-break sorts
+`bpm` cues before `fx` cues at the same timestamp, so a fresh FX
+on the same line picks up the new tempo.
+
 ### Param units
 
 | Unit      | Cue-file range | On the wire (u8)              |

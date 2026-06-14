@@ -67,18 +67,27 @@ class CueParseError(Exception):
 class Cue:
     """One scheduled cue.
 
+    Most cues are FX admissions (kind="fx"). The "bpm" kind is a
+    meta cue that mutates the file-level default BPM mid-track and
+    fires no FX; it's used for tracks with tempo changes. The two
+    kinds share the same dataclass to keep the timeline a single
+    sorted sequence.
+
     Attributes:
         time_ms (int): absolute time into the track, in milliseconds.
-        fx_id (int): registry id; 0 = `stop` (cancel current FX).
-        params (tuple[int, ...]): six u8s, ready for FX.start()'s
-            positional consumption. Reserved slots are 0.
-        bpm (int): per-cue BPM override; 0 = inherit file/default.
-        buildup_s (int): per-cue buildup window; 0 = none.
+        kind (str): "fx" (default) or "bpm".
+        fx_id (int): registry id (kind="fx" only); 0 = `stop` cue.
+        params (tuple[int, ...]): u8 params for FX.start(); length
+            matches the FX's PARAMS declaration. Reserved slots are 0.
+        bpm (int): for kind="fx" - per-cue BPM override (0 = inherit).
+            For kind="bpm" - the new file-level default BPM to apply.
+        buildup_s (int): per-cue buildup window (kind="fx" only).
         line_no (int): source line for diagnostics.
     """
     time_ms: int
-    fx_id: int
-    params: tuple = (0, 0, 0, 0, 0, 0)
+    kind: str = "fx"
+    fx_id: int = 0
+    params: tuple = ()
     bpm: int = 0
     buildup_s: int = 0
     line_no: int = 0
@@ -213,13 +222,15 @@ def _resolve_fx_by_name(name: str, line_no: int, registry) -> int:
 
 
 def _build_params_tuple(fx_cls, positional: list, line_no: int) -> tuple:
-    """Map a list of positional cue-file values to the FX's six-u8 tuple.
+    """Map a list of positional cue-file values to the FX's params tuple.
 
-    Reserved slots in PARAMS are skipped during positional assignment
-    (they stay 0 in the output). The caller's positional list must not
-    exceed the count of non-reserved slots.
+    The tuple is sized to the FX's PARAMS declaration (no fixed 6-slot
+    cap - layered FX like WashWithSparkle need more). Reserved slots
+    in PARAMS are skipped during positional assignment (they stay 0
+    in the output). The caller's positional list must not exceed the
+    count of non-reserved slots.
     """
-    out = [0, 0, 0, 0, 0, 0]
+    out = [0] * len(fx_cls.PARAMS)
     named_slots = [
         (i, unit) for i, (name, unit, _desc) in enumerate(fx_cls.PARAMS)
         if name is not None
@@ -302,7 +313,21 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
     if name == "stop":
         if rest:
             raise CueParseError("`stop` takes no arguments", line_no)
-        return Cue(time_ms=time_ms, fx_id=0, line_no=line_no)
+        return Cue(time_ms=time_ms, kind="fx", fx_id=0, line_no=line_no)
+
+    # `bpm N` is a meta cue: changes the file-level default BPM
+    # mid-track. Fires no FX itself. FX cues at or after this time
+    # pick up the new value; FX cues already running do not (they
+    # captured BPM at start).
+    if name == "bpm":
+        if len(rest) != 1:
+            raise CueParseError(
+                "`bpm` cue takes one argument (the new BPM)", line_no,
+            )
+        new_bpm = _parse_int(rest[0], line_no, "BPM")
+        return Cue(
+            time_ms=time_ms, kind="bpm", bpm=new_bpm, line_no=line_no,
+        )
 
     fx_id = _resolve_fx_by_name(name, line_no, registry)
     fx_cls = registry.get(fx_id)
@@ -333,7 +358,7 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
 
     params = _build_params_tuple(fx_cls, positional, line_no)
     return Cue(
-        time_ms=time_ms, fx_id=fx_id, params=params,
+        time_ms=time_ms, kind="fx", fx_id=fx_id, params=params,
         bpm=bpm_override, buildup_s=buildup_override, line_no=line_no,
     )
 
@@ -371,7 +396,12 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
         for l in file.lyrics:
             l.time_ms = max(0, l.time_ms + file.offset_ms)
 
-    file.cues.sort(key=lambda c: c.time_ms)
+    # Sort by (time, kind-priority) so meta cues fire BEFORE FX cues
+    # at the same instant. Lets `bpm 120` followed on the same line
+    # by `sparkle_on_beat ...` produce a sparkle that uses 120 BPM,
+    # regardless of file order.
+    _KIND_ORDER = {"bpm": 0, "fx": 1}
+    file.cues.sort(key=lambda c: (c.time_ms, _KIND_ORDER.get(c.kind, 9)))
     file.lyrics.sort(key=lambda l: l.time_ms)
     return file
 

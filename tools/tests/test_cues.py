@@ -224,11 +224,64 @@ class TestStop:
     def test_stop_emits_fx_id_zero(self):
         f = parse_cues("03:00 stop")
         assert f.cues[0].fx_id == 0
-        assert f.cues[0].params == (0, 0, 0, 0, 0, 0)
+        assert f.cues[0].kind == "fx"
 
     def test_stop_takes_no_arguments(self):
         with pytest.raises(CueParseError):
             parse_cues("03:00 stop 5")
+
+
+class TestBpmCue:
+    """Mid-track BPM change cue. Mutates the file-level default for
+    FX cues that start at or after this point; already-running FXes
+    keep the BPM they captured."""
+
+    def test_parses_as_bpm_kind(self):
+        f = parse_cues("00:30 bpm 138")
+        c = f.cues[0]
+        assert c.kind == "bpm"
+        assert c.bpm == 138
+
+    def test_requires_one_argument(self):
+        with pytest.raises(CueParseError):
+            parse_cues("00:30 bpm")
+        with pytest.raises(CueParseError):
+            parse_cues("00:30 bpm 120 138")
+
+    def test_rejects_non_integer(self):
+        with pytest.raises(CueParseError):
+            parse_cues("00:30 bpm fast")
+
+    def test_sorts_before_fx_at_same_time(self):
+        # File-order has the FX before the bpm cue; sort must put
+        # the bpm cue first so the FX picks up the new BPM.
+        text = """
+            00:15 sparkle_on_beat 255 0 0 100
+            00:15 bpm 138
+        """
+        f = parse_cues(text)
+        assert f.cues[0].kind == "bpm"
+        assert f.cues[1].kind == "fx"
+
+    def test_sorts_by_time_first(self):
+        # A later bpm cue must NOT jump ahead of an earlier FX cue.
+        text = """
+            00:30 bpm 120
+            00:15 sparkle_on_beat 100 100 100 50
+        """
+        f = parse_cues(text)
+        assert f.cues[0].time_ms == 15_000
+        assert f.cues[1].time_ms == 30_000
+
+    def test_bpm_cue_picks_up_offset(self):
+        # @offset applies to bpm cues just like FX cues.
+        text = """
+            @offset 1.5
+            00:30 bpm 138
+        """
+        f = parse_cues(text)
+        assert f.cues[0].time_ms == 31_500
+        assert f.cues[0].kind == "bpm"
 
 
 # ---------------------------------------------------------------------------
@@ -255,12 +308,12 @@ class TestCueParsing:
         assert f.cues[0].params[3] == 128
 
     def test_positional_skips_reserved_slot(self):
-        # DriftWash: a_r, a_g, [reserved], b_r, b_g, cycle
-        # User writes 5 values for the 5 non-reserved slots; the
-        # reserved slot stays 0 in the output tuple.
-        f = parse_cues("00:00 drift_wash 200 0 255 100 50")
+        # SparkleOnBeat: r, g, b, probability, [reserved], [reserved]
+        # User writes 4 values for the 4 non-reserved slots; reserved
+        # slots stay 0 in the output tuple.
+        f = parse_cues("00:00 sparkle_on_beat 80 200 200 100")
         c = f.cues[0]
-        assert c.params == (200, 0, 0, 255, 100, 50)
+        assert c.params == (80, 200, 200, 255, 0, 0)
 
     def test_too_many_positional_params(self):
         # SparkleOnBeat has 4 non-reserved slots; supplying 5 errors.

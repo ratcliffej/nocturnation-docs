@@ -111,7 +111,16 @@ def run(
         if debug:
             log("[%s] lyric: %s" % (_fmt_pos(position_ms), lyric.text))
 
-    scheduler = CueScheduler(runner, on_cue_fire=on_cue_fire, on_lyric=on_lyric)
+    def on_bpm_change(cue, position_ms):
+        if debug:
+            log("[%s] bpm:   %d" % (_fmt_pos(position_ms), cue.bpm))
+
+    scheduler = CueScheduler(
+        runner,
+        on_cue_fire=on_cue_fire,
+        on_lyric=on_lyric,
+        on_bpm_change=on_bpm_change,
+    )
     universe = bytearray(universe_size)
 
     last_poll_wall_ms = 0

@@ -33,6 +33,7 @@ from nocturnation_orchestrator.fx.library.drift_wash import DriftWash
 from nocturnation_orchestrator.fx.library.sparkle_on_beat import SparkleOnBeat
 from nocturnation_orchestrator.fx.library.pulse_per_bar import PulsePerBar
 from nocturnation_orchestrator.fx.library.group_cascade import GroupCascade
+from nocturnation_orchestrator.fx.library.wash_with_sparkle import WashWithSparkle
 from nocturnation_orchestrator.fx.library.linear_buildup import LinearBuildup
 from nocturnation_orchestrator.fx.library.strobe_burst import StrobeBurst
 from nocturnation_orchestrator.fx.library.fade_to_black import FadeToBlack
@@ -87,14 +88,15 @@ class TestChannelConstants:
 # ---------------------------------------------------------------------------
 
 EXPECTED_IDS = {
-    1:  ("Quiet Wash",      "ambient"),
-    2:  ("Drift Wash",      "ambient"),
-    11: ("Sparkle On Beat", "beat"),
-    12: ("Pulse Per Bar",   "beat"),
-    13: ("Group Cascade",   "beat"),
-    21: ("Linear Buildup",  "buildup"),
-    32: ("Strobe Burst",    "drop"),
-    41: ("Fade To Black",   "transition"),
+    1:  ("Quiet Wash",        "ambient"),
+    2:  ("Drift Wash",        "ambient"),
+    11: ("Sparkle On Beat",   "beat"),
+    12: ("Pulse Per Bar",     "beat"),
+    13: ("Group Cascade",     "beat"),
+    14: ("Wash With Sparkle", "beat"),
+    21: ("Linear Buildup",    "buildup"),
+    32: ("Strobe Burst",      "drop"),
+    41: ("Fade To Black",     "transition"),
 }
 
 
@@ -150,18 +152,21 @@ class TestQuietWash:
 # ---------------------------------------------------------------------------
 
 class TestDriftWash:
-    def test_writes_both_anchors_and_cycle(self):
-        fx = _make(DriftWash, params=(255, 0, 0, 0, 0, 50))
+    def test_writes_full_rgb_on_both_anchors_and_cycle(self):
+        # a_r, a_g, a_b, b_r, b_g, b_b, cycle
+        fx = _make(DriftWash, params=(255, 100, 0, 0, 50, 200, 50))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_A_R) == 255
-        assert _ch(u, CH_WASH_A_G) == 0
+        assert _ch(u, CH_WASH_A_G) == 100
+        assert _ch(u, CH_WASH_A_B) == 0
         assert _ch(u, CH_WASH_B_R) == 0
-        assert _ch(u, CH_WASH_B_G) == 0
+        assert _ch(u, CH_WASH_B_G) == 50
+        assert _ch(u, CH_WASH_B_B) == 200
         assert _ch(u, CH_WASH_CYCLE) == 50
 
     def test_default_cycle_when_zero(self):
-        fx = _make(DriftWash, params=(255, 0, 0, 0, 0, 0))
+        fx = _make(DriftWash, params=(255, 0, 0, 0, 0, 0, 0))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_CYCLE) == 80
@@ -237,6 +242,70 @@ class TestPulsePerBar:
         u3 = _u()
         fx.tick(now_ms=2010, universe=u3)             # bar 1 starts
         assert _ch(u3, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+# ---------------------------------------------------------------------------
+# WashWithSparkle
+# ---------------------------------------------------------------------------
+
+class TestWashWithSparkle:
+    def test_writes_both_wash_and_sparkle_channels(self):
+        # a_r, a_g, a_b, b_r, b_g, b_b, cycle, s_r, s_g, s_b, prob_u8.
+        # Tests bypass the cue parser, so prob is passed as raw u8
+        # (255 = 100% chance); the cue parser handles the percent ->
+        # u8 conversion elsewhere.
+        fx = _make(
+            WashWithSparkle, bpm=120,
+            params=(255, 0, 255, 0, 0, 255, 10, 255, 255, 255, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        # Wash channels
+        assert _ch(u, CH_WASH_A_R) == 255
+        assert _ch(u, CH_WASH_A_B) == 255
+        assert _ch(u, CH_WASH_B_B) == 255
+        assert _ch(u, CH_WASH_CYCLE) == 10
+        # Pulse channels (sparkle) - on-beat trigger HIGH on first tick.
+        assert _ch(u, CH_PULSE_R) == 255
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        assert _ch(u, CH_PULSE_PROB) == 255
+
+    def test_sparkle_re_arms_on_next_tick(self):
+        fx = _make(
+            WashWithSparkle, bpm=120,
+            params=(100, 100, 100, 50, 50, 50, 80, 255, 0, 0, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        u = _u()
+        fx.tick(now_ms=20, universe=u)
+        # Same beat -> trigger drops low.
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Wash channels still set.
+        assert _ch(u, CH_WASH_A_R) == 100
+
+    def test_sparkle_fires_again_on_next_beat(self):
+        fx = _make(
+            WashWithSparkle, bpm=120,
+            params=(0, 0, 0, 0, 0, 0, 80, 100, 200, 50, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)        # beat 0
+        fx.tick(now_ms=300, universe=u)       # mid-beat
+        u = _u()
+        fx.tick(now_ms=520, universe=u)       # beat 1 (60_000/120=500)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_white_sparkle_default_when_rgb_zero(self):
+        fx = _make(
+            WashWithSparkle, bpm=120,
+            params=(100, 0, 0, 0, 0, 100, 80, 0, 0, 0, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_R) == 255
+        assert _ch(u, CH_PULSE_G) == 255
+        assert _ch(u, CH_PULSE_B) == 255
 
 
 # ---------------------------------------------------------------------------

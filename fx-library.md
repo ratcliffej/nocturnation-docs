@@ -64,6 +64,11 @@ skeleton from `gen_cues_skeleton.py` can be edited in place.
 
 `stop` is the cancel sentinel - equivalent to `runner.start(fx_id=0)`.
 
+`bpm N` is a meta cue (not an FX): it mutates the file-level
+default BPM mid-track for tempo changes. Same-time tie-break sorts
+`bpm` cues before `fx` cues at the same timestamp, so a fresh FX
+on the same line picks up the new tempo.
+
 ### Param units
 
 | Unit      | Cue-file range | On the wire (u8)              |
@@ -100,16 +105,17 @@ Sustained single-colour wash. Holds Wash A; Wash B is zeroed so there is no drif
 
 `drift_wash` - ambient
 
-Two-colour wash that cycles A <-> B over the cycle time. The Lume fades between anchor A and anchor B; cycle controls the round-trip duration.
+Two-colour wash that cycles A <-> B over the cycle time. The Lume fades between anchor A and anchor B; cycle controls the round-trip duration. Full RGB control on both anchors so any two-colour drift is expressible (sunset orange -> deep purple, ice blue -> magenta, etc.).
 
-| Slot | Name       | Unit  | Description                                                                              |
-|------|------------|-------|------------------------------------------------------------------------------------------|
-| 0    | a_r        | u8    | Anchor A Red (0..255).                                                                   |
-| 1    | a_g        | u8    | Anchor A Green (0..255).                                                                 |
-| 2    | _reserved_ | -     | reserved                                                                                 |
-| 3    | b_r        | u8    | Anchor B Red (0..255).                                                                   |
-| 4    | b_g        | u8    | Anchor B Green (0..255).                                                                 |
-| 5    | cycle      | 100ms | Drift cycle time in 100 ms units (1..255 = 100 ms..25.5 s). Default 80 (~8 s) when zero. |
+| Slot | Name  | Unit  | Description                                                                              |
+|------|-------|-------|------------------------------------------------------------------------------------------|
+| 0    | a_r   | u8    | Anchor A Red (0..255).                                                                   |
+| 1    | a_g   | u8    | Anchor A Green (0..255).                                                                 |
+| 2    | a_b   | u8    | Anchor A Blue (0..255).                                                                  |
+| 3    | b_r   | u8    | Anchor B Red (0..255).                                                                   |
+| 4    | b_g   | u8    | Anchor B Green (0..255).                                                                 |
+| 5    | b_b   | u8    | Anchor B Blue (0..255).                                                                  |
+| 6    | cycle | 100ms | Drift cycle time in 100 ms units (1..255 = 100 ms..25.5 s). Default 80 (~8 s) when zero. |
 
 ## Beat
 
@@ -157,6 +163,26 @@ Rotates a pulse around groups 1..N, one beat per group. Broadcast (block 0) is l
 | 3    | probability | percent | Chance per beat (0..100%). Default 100%.    |
 | 4    | num_groups  | count   | Groups to cascade across (1..9). Default 4. |
 | 5    | _reserved_  | -       | reserved                                    |
+
+### Wash With Sparkle (id 14)
+
+`wash_with_sparkle` - beat
+
+Layered drift wash + sparkle-on-beat in a single FX. The wash cycles between anchors A and B over the cycle time; the sparkle fires a pulse on each beat at the supplied BPM. Single cue for the most-common ambient-bed + beat-texture composition.
+
+| Slot | Name        | Unit    | Description                                         |
+|------|-------------|---------|-----------------------------------------------------|
+| 0    | a_r         | u8      | Wash anchor A Red.                                  |
+| 1    | a_g         | u8      | Wash anchor A Green.                                |
+| 2    | a_b         | u8      | Wash anchor A Blue.                                 |
+| 3    | b_r         | u8      | Wash anchor B Red.                                  |
+| 4    | b_g         | u8      | Wash anchor B Green.                                |
+| 5    | b_b         | u8      | Wash anchor B Blue.                                 |
+| 6    | cycle       | 100ms   | Wash cycle time. Default 80 (~8 s) when zero.       |
+| 7    | s_r         | u8      | Sparkle Red. White default if all sparkle RGB zero. |
+| 8    | s_g         | u8      | Sparkle Green.                                      |
+| 9    | s_b         | u8      | Sparkle Blue.                                       |
+| 10   | probability | percent | Sparkle chance per beat (0..100%). Default 100%.    |
 
 ## Buildup
 

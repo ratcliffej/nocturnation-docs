@@ -582,6 +582,84 @@ class TestCueSchedulerLyrics:
         # anchor - that's normal monotonic behaviour, not a seek.
         assert observed == ["At the very start"]
 
+    def test_bpm_cue_mutates_file_default_and_callback_fires(self):
+        runner = FakeRunner()
+        bpm_changes = []
+        sched = CueScheduler(
+            runner,
+            on_bpm_change=lambda cue, pos: bpm_changes.append((cue.bpm, pos)),
+        )
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:00 bpm 140
+            00:10 sparkle_on_beat 255 0 0 100
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # At 0 ms: the bpm cue fires. file.default_bpm becomes 140.
+        sched.advance(0, now_ms=10)
+        assert f.default_bpm == 140
+        assert bpm_changes == [(140, 0)]
+        # At 10 s: the sparkle cue picks up the new default.
+        sched.advance(10_000, now_ms=20)
+        fired = [c for c in runner.calls if c["fx_id"] == 11]
+        assert fired and fired[-1]["bpm"] == 140
+
+    def test_bpm_then_fx_at_same_time(self):
+        # User authors a tempo change paired with a fresh FX at the
+        # same beat. The FX must see the new BPM.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:15 sparkle_on_beat 100 100 100 100
+            00:15 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        sched.advance(15_000, now_ms=100)
+        sparkle = [c for c in runner.calls if c["fx_id"] == 11][-1]
+        assert sparkle["bpm"] == 140
+
+    def test_backward_seek_restores_original_bpm(self):
+        # File starts at 100 BPM, ramps to 140 at 00:30.  Seeking
+        # back to 00:10 must restore the bpm to 100 - otherwise the
+        # leftover 140 lingers.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:30 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # Play past the bpm change.
+        sched.advance(35_000, now_ms=10)
+        assert f.default_bpm == 140
+        # Scrub back to 10 s.
+        sched.advance(10_000, now_ms=1000)
+        assert f.default_bpm == 100
+
+    def test_backward_seek_reapplies_intermediate_bpm(self):
+        # Two bpm changes on the same timeline; seek back to a point
+        # AFTER the first but BEFORE the second should leave the
+        # default at the first value.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:10 bpm 120
+            00:30 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # Play through both.
+        sched.advance(40_000, now_ms=10)
+        assert f.default_bpm == 140
+        # Scrub back to 20 s (between the two cues).
+        sched.advance(20_000, now_ms=1000)
+        assert f.default_bpm == 120
+
     def test_backward_seek_replays_landing_lyric(self):
         runner = FakeRunner()
         observed = []
@@ -803,7 +881,7 @@ class TestMainLoopSmoke:
         (tmp_path / "coldplay-fix-you.cues").write_text(
             "@bpm 138\n"
             "@default_fx quiet_wash 100 0 0\n"
-            "00:05 drift_wash 50 100 200 220 80\n"
+            "00:05 drift_wash 50 100 0 200 220 0 80\n"
         )
         backend = FakeBackend([
             NowPlaying(True, "Coldplay", "Fix You",
@@ -833,6 +911,8 @@ class TestMainLoopSmoke:
         assert last[0] == 255            # ch 1 master (drift_wash sets to 255)
         assert last[10] == 50            # ch 11 Wash A R
         assert last[11] == 100           # ch 12 Wash A G
+        assert last[12] == 0             # ch 13 Wash A B
         assert last[13] == 200           # ch 14 Wash B R
         assert last[14] == 220           # ch 15 Wash B G
+        assert last[15] == 0             # ch 16 Wash B B
         assert last[16] == 80            # ch 17 cycle

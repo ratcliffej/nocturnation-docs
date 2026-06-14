@@ -59,14 +59,17 @@ def validate_params_attr(cls):
     doc generator and tests.
 
     Returns nothing; raises ValueError on a malformed declaration.
+
+    No cap on slot count: a layered FX (e.g. wash + sparkle) needs
+    more than the original 6 inherited from the abandoned Model A
+    wire frame. Each FX declares whatever shape it wants.
     """
     params = getattr(cls, "PARAMS", None)
     if params is None:
         raise ValueError("%s missing PARAMS class attribute" % cls.__name__)
-    if len(params) != 6:
+    if len(params) < 1:
         raise ValueError(
-            "%s.PARAMS must have exactly 6 entries (one per params[0..5]); "
-            "got %d" % (cls.__name__, len(params))
+            "%s.PARAMS must have at least one entry; got 0" % cls.__name__
         )
     for i, entry in enumerate(params):
         if not isinstance(entry, tuple) or len(entry) != 3:

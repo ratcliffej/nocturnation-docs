@@ -144,18 +144,26 @@ class CueScheduler:
         "_cursor",
         "_lyric_cursor",
         "_last_position_ms",
+        "_original_default_bpm",
         "on_cue_fire",
         "on_lyric",
+        "on_bpm_change",
     )
 
-    def __init__(self, runner, *, on_cue_fire=None, on_lyric=None):
+    def __init__(self, runner, *,
+                 on_cue_fire=None, on_lyric=None, on_bpm_change=None):
         self.runner = runner
         self.cue_file = None
         self._cursor = 0
         self._lyric_cursor = 0
         self._last_position_ms = -1
+        # The @bpm value at file-load time, used to restore the
+        # default after a backward seek so we don't carry leftover
+        # state from a mid-track `bpm` cue.
+        self._original_default_bpm = 0
         self.on_cue_fire = on_cue_fire or _noop
         self.on_lyric = on_lyric or _noop
+        self.on_bpm_change = on_bpm_change or _noop
 
     def set_cue_file(self, cue_file, now_ms):
         """Switch to a new cue file. Cancels any running FX and
@@ -164,6 +172,7 @@ class CueScheduler:
         self._cursor = 0
         self._lyric_cursor = 0
         self._last_position_ms = -1
+        self._original_default_bpm = cue_file.default_bpm if cue_file else 0
         self.runner.cancel(now_ms=now_ms)
         if cue_file is None:
             return
@@ -208,24 +217,47 @@ class CueScheduler:
         )
 
         # --- Cues -----------------------------------------------------
+        # Two kinds of cue interleave on the same timeline:
+        #
+        # - "fx" cues admit an FX into the runner. The seek-collapse
+        #   rule applies: when a forward / backward seek jumps over
+        #   multiple FX cues at once, we fire only the most recent
+        #   at-or-before the new position (no flicker through every
+        #   intervening admission).
+        #
+        # - "bpm" cues mutate cue_file.default_bpm. They DO NOT
+        #   collapse on seek - we apply every one we cross so the
+        #   final default_bpm matches whatever the most-recent bpm
+        #   cue at-or-before the position says.
+        #
+        # On backward seek we also restore _original_default_bpm
+        # before re-walking, otherwise a leftover mid-track bpm
+        # would persist past the rewind.
         if self.cue_file.cues:
             if seek_back:
                 self._cursor = 0
+                self.cue_file.default_bpm = self._original_default_bpm
             if seek_back or seek_forward:
-                # Fire only the most recent cue at-or-before the new position.
-                target = None
+                target_fx = None
                 while (self._cursor < len(self.cue_file.cues)
                        and self.cue_file.cues[self._cursor].time_ms <= position_ms):
-                    target = self.cue_file.cues[self._cursor]
+                    cue = self.cue_file.cues[self._cursor]
                     self._cursor += 1
-                if target is not None:
-                    self._fire_cue(target, position_ms, now_ms)
+                    if cue.kind == "bpm":
+                        self._apply_bpm(cue, position_ms)
+                    else:
+                        target_fx = cue
+                if target_fx is not None:
+                    self._fire_cue(target_fx, position_ms, now_ms)
             else:
                 while (self._cursor < len(self.cue_file.cues)
                        and self.cue_file.cues[self._cursor].time_ms <= position_ms):
                     cue = self.cue_file.cues[self._cursor]
                     self._cursor += 1
-                    self._fire_cue(cue, position_ms, now_ms)
+                    if cue.kind == "bpm":
+                        self._apply_bpm(cue, position_ms)
+                    else:
+                        self._fire_cue(cue, position_ms, now_ms)
 
         # --- Lyrics ---------------------------------------------------
         # Same seek-collapse behaviour as cues; a scrubber drag does
@@ -266,3 +298,11 @@ class CueScheduler:
             now_ms=now_ms,
         )
         self.on_cue_fire(cue, position_ms)
+
+    def _apply_bpm(self, cue, position_ms):
+        """Apply a meta `bpm N` cue: mutate the file-level default
+        BPM and fire the observer. Already-running FXes do not
+        re-bind to the new value (they captured BPM at start); FXes
+        admitted at or after this cue do."""
+        self.cue_file.default_bpm = cue.bpm
+        self.on_bpm_change(cue, position_ms)

@@ -147,6 +147,38 @@ timestamps exactly.
 a song cleanly. For an explicit fade-out, schedule `fade_to_black`
 before the `stop`.
 
+### Mid-track BPM changes
+
+Tracks with tempo changes use the `bpm` cue. Drop it on the
+timeline at the moment the tempo shifts; FX cues at or after that
+point pick up the new value::
+
+```text
+@bpm        90                 # file-level default
+
+00:00  quiet_wash       40 80 120
+00:30  bpm 120                  # tempo jump
+00:30  sparkle_on_beat  255 255 255 100   # picks up 120 BPM
+02:15  bpm 90                   # back to original
+02:15  sparkle_on_beat  255 0 0 100        # 90 BPM again
+```
+
+Same-time tie-break: `bpm` always fires before `fx` at the same
+timestamp, so the FX picks up the new tempo regardless of file
+order. Already-running FXes do NOT re-bind to the new value (they
+captured BPM at admission) - re-fire the FX with a fresh cue at the
+tempo change if you want it to switch.
+
+Backward seeks restore the pre-change BPM correctly: the scheduler
+re-walks the timeline from the start so the default ends up at
+whatever the most-recent `bpm` cue at-or-before the scrubbed
+position says.
+
+The `--debug` log shows BPM changes as a separate event class::
+
+    [00:30.000] bpm:   120
+    [00:30.000] cue:   sparkle_on_beat  255 255 255 255
+
 ## Fixing sync drift between releases
 
 The same song can appear with different leading silence depending on
@@ -213,10 +245,11 @@ the time of writing:
 | ID | Cue name | Category | What it does |
 |---|---|---|---|
 | 1 | `quiet_wash` | ambient | Sustained single-colour wash. The default ambient bed. |
-| 2 | `drift_wash` | ambient | Two-colour wash that cycles A ↔ B over the cycle time. |
+| 2 | `drift_wash` | ambient | Two-colour wash that cycles A ↔ B over the cycle time (full RGB on both anchors). |
 | 11 | `sparkle_on_beat` | beat | Fires one pulse per beat at the supplied BPM. |
 | 12 | `pulse_per_bar` | beat | Fires one pulse every N beats (default 4 = one per bar). |
 | 13 | `group_cascade` | beat | Rotates a pulse around groups 1..N, one beat per group. |
+| 14 | `wash_with_sparkle` | beat | Layered drift wash + sparkle-on-beat in a single cue. |
 | 21 | `linear_buildup` | buildup | Ramps Master and Pulse Probability over `buildup_s` seconds. |
 | 32 | `strobe_burst` | drop | Max strobe rate for a short window, then auto-finish. |
 | 41 | `fade_to_black` | transition | Ramps Master from start value to 0 over `buildup_s` seconds. |

@@ -17,11 +17,12 @@ Categories carved out by id range (registry convention only):
 """
 
 # Order doesn't matter; each module self-registers at import time.
-from . import quiet_wash         # noqa: F401  id=1
-from . import drift_wash         # noqa: F401  id=2
-from . import sparkle_on_beat    # noqa: F401  id=11
-from . import pulse_per_bar      # noqa: F401  id=12
-from . import group_cascade      # noqa: F401  id=13
-from . import linear_buildup     # noqa: F401  id=21
-from . import strobe_burst       # noqa: F401  id=32
-from . import fade_to_black      # noqa: F401  id=41
+from . import quiet_wash          # noqa: F401  id=1
+from . import drift_wash          # noqa: F401  id=2
+from . import sparkle_on_beat     # noqa: F401  id=11
+from . import pulse_per_bar       # noqa: F401  id=12
+from . import group_cascade       # noqa: F401  id=13
+from . import wash_with_sparkle   # noqa: F401  id=14
+from . import linear_buildup      # noqa: F401  id=21
+from . import strobe_burst        # noqa: F401  id=32
+from . import fade_to_black       # noqa: F401  id=41
