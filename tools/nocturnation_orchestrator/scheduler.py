@@ -86,6 +86,10 @@ class PositionTracker:
         return (self._artist, self._title)
 
 
+def _noop(*args, **kwargs):
+    pass
+
+
 class CueScheduler:
     """Walks a CueFile against a position cursor and fires cues.
 
@@ -94,26 +98,37 @@ class CueScheduler:
         scheduler.set_cue_file(cue_file, now_ms=now)
         # each tick:
         scheduler.advance(position_ms, now_ms=now)
+
+    Observer callbacks (both default to no-op):
+        on_cue_fire(cue, position_ms)   - every cue admission
+        on_lyric(lyric, position_ms)    - every lyric anchor crossed
     """
 
     __slots__ = (
         "runner",
         "cue_file",
         "_cursor",
+        "_lyric_cursor",
         "_last_position_ms",
+        "on_cue_fire",
+        "on_lyric",
     )
 
-    def __init__(self, runner):
+    def __init__(self, runner, *, on_cue_fire=None, on_lyric=None):
         self.runner = runner
         self.cue_file = None
         self._cursor = 0
+        self._lyric_cursor = 0
         self._last_position_ms = -1
+        self.on_cue_fire = on_cue_fire or _noop
+        self.on_lyric = on_lyric or _noop
 
     def set_cue_file(self, cue_file, now_ms):
         """Switch to a new cue file. Cancels any running FX and
         applies the file-level default FX (if any)."""
         self.cue_file = cue_file
         self._cursor = 0
+        self._lyric_cursor = 0
         self._last_position_ms = -1
         self.runner.cancel(now_ms=now_ms)
         if cue_file is None:
@@ -133,11 +148,11 @@ class CueScheduler:
         self.set_cue_file(None, now_ms=now_ms)
 
     def advance(self, position_ms, now_ms):
-        """Fire any cues that fall at or before ``position_ms``.
+        """Fire any cues + lyrics that fall at or before ``position_ms``.
 
         Handles backward / forward seeks: see module docstring.
         """
-        if self.cue_file is None or not self.cue_file.cues:
+        if self.cue_file is None:
             self._last_position_ms = position_ms
             return
 
@@ -150,29 +165,50 @@ class CueScheduler:
             and position_ms - self._last_position_ms > SEEK_FORWARD_THRESHOLD_MS
         )
 
-        if seek_back:
-            # Re-walk from the top.
-            self._cursor = 0
-        if seek_back or seek_forward:
-            # Fire only the most recent cue at-or-before the new position.
-            target = None
-            while (self._cursor < len(self.cue_file.cues)
-                   and self.cue_file.cues[self._cursor].time_ms <= position_ms):
-                target = self.cue_file.cues[self._cursor]
-                self._cursor += 1
-            if target is not None:
-                self._fire(target, position_ms, now_ms)
-        else:
-            # Normal monotonic advance: fire every cue in window.
-            while (self._cursor < len(self.cue_file.cues)
-                   and self.cue_file.cues[self._cursor].time_ms <= position_ms):
-                cue = self.cue_file.cues[self._cursor]
-                self._cursor += 1
-                self._fire(cue, position_ms, now_ms)
+        # --- Cues -----------------------------------------------------
+        if self.cue_file.cues:
+            if seek_back:
+                self._cursor = 0
+            if seek_back or seek_forward:
+                # Fire only the most recent cue at-or-before the new position.
+                target = None
+                while (self._cursor < len(self.cue_file.cues)
+                       and self.cue_file.cues[self._cursor].time_ms <= position_ms):
+                    target = self.cue_file.cues[self._cursor]
+                    self._cursor += 1
+                if target is not None:
+                    self._fire_cue(target, position_ms, now_ms)
+            else:
+                while (self._cursor < len(self.cue_file.cues)
+                       and self.cue_file.cues[self._cursor].time_ms <= position_ms):
+                    cue = self.cue_file.cues[self._cursor]
+                    self._cursor += 1
+                    self._fire_cue(cue, position_ms, now_ms)
+
+        # --- Lyrics ---------------------------------------------------
+        # Same seek-collapse behaviour as cues; a scrubber drag does
+        # not dump every intervening line.
+        if self.cue_file.lyrics:
+            if seek_back:
+                self._lyric_cursor = 0
+            if seek_back or seek_forward:
+                target = None
+                while (self._lyric_cursor < len(self.cue_file.lyrics)
+                       and self.cue_file.lyrics[self._lyric_cursor].time_ms <= position_ms):
+                    target = self.cue_file.lyrics[self._lyric_cursor]
+                    self._lyric_cursor += 1
+                if target is not None:
+                    self.on_lyric(target, position_ms)
+            else:
+                while (self._lyric_cursor < len(self.cue_file.lyrics)
+                       and self.cue_file.lyrics[self._lyric_cursor].time_ms <= position_ms):
+                    lyric = self.cue_file.lyrics[self._lyric_cursor]
+                    self._lyric_cursor += 1
+                    self.on_lyric(lyric, position_ms)
 
         self._last_position_ms = position_ms
 
-    def _fire(self, cue, position_ms, now_ms):
+    def _fire_cue(self, cue, position_ms, now_ms):
         effective_bpm = cue.bpm or self.cue_file.default_bpm
         # position offset into the FX timeline = where we ARE relative
         # to the cue's start. Non-zero on seek / late join.
@@ -187,3 +223,4 @@ class CueScheduler:
             position_ms=cue_position_ms,
             now_ms=now_ms,
         )
+        self.on_cue_fire(cue, position_ms)

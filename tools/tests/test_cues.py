@@ -3,7 +3,7 @@
 import pytest
 
 from nocturnation_orchestrator.cues import (
-    Cue, CueFile, CueParseError, parse_cues,
+    Cue, CueFile, CueParseError, Lyric, parse_cues,
 )
 from nocturnation_orchestrator.fx import library  # noqa: F401  side-effects
 from nocturnation_orchestrator.fx.registry import fx_registry
@@ -285,6 +285,77 @@ class TestFileLevel:
             parse_cues(text)
         assert exc.value.line_no == 3
         assert "line 3" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Lyric-anchor extraction
+# ---------------------------------------------------------------------------
+
+class TestLyricExtraction:
+    def test_basic_lyric_comment(self):
+        text = "# 00:30  When you try your best\n"
+        f = parse_cues(text)
+        assert len(f.lyrics) == 1
+        assert f.lyrics[0] == Lyric(
+            time_ms=30_000, text="When you try your best", line_no=1,
+        )
+
+    def test_fractional_lyric_time(self):
+        text = "# 00:30.500  Centisecond grain\n"
+        f = parse_cues(text)
+        assert f.lyrics[0].time_ms == 30_500
+
+    def test_lyric_with_hours(self):
+        text = "# 1:02:30  Long song\n"
+        f = parse_cues(text)
+        assert f.lyrics[0].time_ms == (1 * 3600 + 2 * 60 + 30) * 1000
+
+    def test_todo_skeleton_placeholder_skipped(self):
+        # gen_cues_skeleton.py emits these; they're not real lyrics.
+        text = (
+            "# 00:30  Real lyric line\n"
+            "# 00:30  TODO: cue here\n"
+            "# 00:35  todo: lower-case still skipped\n"
+            "# 00:40  TODO\n"
+        )
+        f = parse_cues(text)
+        assert [l.text for l in f.lyrics] == ["Real lyric line"]
+
+    def test_non_timestamped_comments_ignored(self):
+        text = (
+            "# --- Intro ---\n"
+            "# (no time prefix here)\n"
+            "# 00:30  Anchor\n"
+        )
+        f = parse_cues(text)
+        assert len(f.lyrics) == 1
+        assert f.lyrics[0].text == "Anchor"
+
+    def test_lyrics_sorted_by_time(self):
+        text = (
+            "# 01:00  Second\n"
+            "# 00:30  First\n"
+        )
+        f = parse_cues(text)
+        assert [l.text for l in f.lyrics] == ["First", "Second"]
+
+    def test_lyrics_alongside_cues(self):
+        text = """
+            @bpm 138
+            # 00:13.40  When you try your best
+            00:13.50 sparkle_on_beat 80 200 200 100
+            # 00:20  but you don't succeed
+            00:20 sparkle_on_beat 255 0 255 100
+        """
+        f = parse_cues(text)
+        assert len(f.cues) == 2
+        assert len(f.lyrics) == 2
+        assert f.lyrics[0].text == "When you try your best"
+
+    def test_no_lyrics_means_empty_list_not_error(self):
+        text = "00:30 stop"
+        f = parse_cues(text)
+        assert f.lyrics == []
 
 
 # ---------------------------------------------------------------------------

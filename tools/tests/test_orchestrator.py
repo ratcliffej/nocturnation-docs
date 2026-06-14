@@ -297,6 +297,89 @@ class TestCueScheduler:
         ids = [c["fx_id"] for c in runner.calls]
         assert 0 in ids
 
+    def test_on_cue_fire_callback_invoked(self):
+        # The debug observer should be called for every cue admission.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_cue_fire=lambda cue, pos: observed.append((cue.fx_id, pos)),
+        )
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(10_000, now_ms=20)
+        ids = [fx for fx, _pos in observed]
+        # The 00:00 cue and 00:10 cue both fire; default_fx start does
+        # NOT go through on_cue_fire (it's part of set_cue_file, not a
+        # cue admission).
+        assert 1 in ids and 11 in ids
+
+
+class TestCueSchedulerLyrics:
+    def test_lyric_callback_fires_in_time_order(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append((lyric.text, pos)),
+        )
+        text = """
+            @bpm 138
+            # 00:10  First line
+            # 00:20  Second line
+            # 00:30  Third line
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(10_000, now_ms=20)
+        sched.advance(20_000, now_ms=30)
+        sched.advance(30_000, now_ms=40)
+        texts = [t for t, _pos in observed]
+        assert texts == ["First line", "Second line", "Third line"]
+
+    def test_forward_seek_collapses_lyrics(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:10  A
+            # 00:20  B
+            # 00:30  C
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        observed.clear()
+        # Big forward seek (>2 s threshold) to 25 s -> only C is fired.
+        # Wait, 25 s is between B and C, so most-recent-at-or-before is B.
+        sched.advance(25_000, now_ms=1000)
+        assert observed == ["B"]
+
+    def test_backward_seek_replays_landing_lyric(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:10  A
+            # 00:20  B
+            # 00:30  C
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(35_000, now_ms=40)
+        observed.clear()
+        # Scrub back to 12 s -> re-fire landing lyric (A).
+        sched.advance(12_000, now_ms=1000)
+        assert observed == ["A"]
+
 
 # ---------------------------------------------------------------------------
 # Main loop smoke

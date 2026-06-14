@@ -85,11 +85,28 @@ class Cue:
 
 
 @dataclass
+class Lyric:
+    """A timestamped lyric anchor lifted from a `# MM:SS text` comment.
+
+    Authoring helper output (`gen_cues_skeleton.py`) already emits
+    lyrics in this shape, so the cue parser can recover them with
+    zero changes to the file format. Lyrics are advisory: the
+    scheduler logs them in debug mode but they have no effect on
+    the running FX.
+    """
+    time_ms: int
+    text: str
+    line_no: int = 0
+
+
+@dataclass
 class CueFile:
     """Parsed cue file.
 
     cues is sorted by time_ms ascending. default_fx_* is the FX (if any)
     the orchestrator runs before the first cue and after a `stop`.
+    lyrics is sorted by time_ms too; populated from timestamped
+    `# MM:SS text` comments. Empty unless the file uses lyric anchors.
     """
     artist: str = ""
     title: str = ""
@@ -97,6 +114,7 @@ class CueFile:
     default_fx_id: int = 0
     default_fx_params: tuple = (0, 0, 0, 0, 0, 0)
     cues: list = field(default_factory=list)
+    lyrics: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +123,13 @@ class CueFile:
 
 _TIME_RE = re.compile(r"^(?:(\d+):)?(\d+):(\d{2})(?:\.(\d{1,3}))?$")
 _INT_RE = re.compile(r"^-?\d+$")
+
+# `# MM:SS[.xxx] text` (or `# H:MM:SS[.xxx] text`). Used for lyric-anchor
+# extraction; lines that match become Lyric entries instead of being
+# discarded as comments.
+_LYRIC_COMMENT_RE = re.compile(
+    r"^#\s*((?:\d+:)?\d+:\d{2}(?:\.\d{1,3})?)\s+(.+?)\s*$"
+)
 
 
 def _parse_time(token: str, line_no: int) -> int:
@@ -145,6 +170,31 @@ def _strip_comment(line: str) -> str:
     """Drop everything from the first '#' onwards."""
     i = line.find("#")
     return line if i < 0 else line[:i]
+
+
+def _maybe_parse_lyric_comment(raw_line: str, line_no: int):
+    """Return a Lyric if the raw line is a `# MM:SS text` comment, else None.
+
+    Skeleton-generator placeholders (`# MM:SS  TODO: cue here`) are
+    explicitly dropped so they don't appear in the debug lyric stream.
+    Lines that look like timestamped comments but whose time fails to
+    parse fall back to None (treated as ordinary comments by the
+    caller).
+    """
+    stripped = raw_line.strip()
+    if not stripped.startswith("#"):
+        return None
+    m = _LYRIC_COMMENT_RE.match(stripped)
+    if not m:
+        return None
+    text = m.group(2).strip()
+    if not text or text.upper().startswith("TODO"):
+        return None
+    try:
+        time_ms = _parse_time(m.group(1), line_no)
+    except CueParseError:
+        return None
+    return Lyric(time_ms=time_ms, text=text, line_no=line_no)
 
 
 def _resolve_fx_by_name(name: str, line_no: int, registry) -> int:
@@ -265,9 +315,17 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
 
 
 def parse_cues(text: str, registry=fx_registry) -> CueFile:
-    """Parse cue-file content. Returns a CueFile with cues sorted by time."""
+    """Parse cue-file content. Returns a CueFile with cues + lyrics
+    sorted by time."""
     file = CueFile()
     for raw_line_no, raw in enumerate(text.splitlines(), start=1):
+        # Timestamped lyric comments become Lyric anchors before the
+        # comment stripper drops them; ordinary comments still fall
+        # through to the empty-line skip below.
+        lyric = _maybe_parse_lyric_comment(raw, raw_line_no)
+        if lyric is not None:
+            file.lyrics.append(lyric)
+            continue
         line = _strip_comment(raw).strip()
         if not line:
             continue
@@ -277,6 +335,7 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
         else:
             file.cues.append(_parse_cue(tokens, raw_line_no, registry))
     file.cues.sort(key=lambda c: c.time_ms)
+    file.lyrics.sort(key=lambda l: l.time_ms)
     return file
 
 

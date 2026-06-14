@@ -102,6 +102,11 @@ def main(argv=None):
         "--nowplaying-binary", default="nowplaying-cli",
         help="path to nowplaying-cli binary (macOS only)",
     )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="emit one log line per cue fire / lyric anchor / now-playing poll "
+             "so you can trace what the cue file is doing in real time",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -123,6 +128,7 @@ def main(argv=None):
             dispatcher=dispatcher,
             songs_dir=args.songs_dir,
             default_bpm=args.default_bpm,
+            debug=args.debug,
         )
     except KeyboardInterrupt:
         pass

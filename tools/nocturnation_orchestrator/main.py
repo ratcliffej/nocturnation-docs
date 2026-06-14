@@ -35,6 +35,39 @@ def _now_ms():
     return int(_time.monotonic() * 1000)
 
 
+def _fmt_pos(position_ms):
+    """Render a position-ms value as H:MM:SS.xxx (no leading hours
+    when zero)."""
+    if position_ms < 0:
+        position_ms = 0
+    secs, ms = divmod(position_ms, 1000)
+    minutes, sec = divmod(secs, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return "%d:%02d:%02d.%03d" % (hours, minutes, sec, ms)
+    return "%02d:%02d.%03d" % (minutes, sec, ms)
+
+
+def _format_cue_for_log(cue):
+    cls = fx_registry.get(cue.fx_id)
+    name = cls.cue_name if cls is not None else (
+        "stop" if cue.fx_id == 0 else "fx_%d" % cue.fx_id
+    )
+    bits = [name]
+    # Only show non-default param slots: trim trailing zeros so a cue
+    # with one positional param doesn't print 5 trailing zeros.
+    params = list(cue.params)
+    while params and params[-1] == 0:
+        params.pop()
+    if params:
+        bits.append(" ".join(str(p) for p in params))
+    if cue.bpm:
+        bits.append("--bpm %d" % cue.bpm)
+    if cue.buildup_s:
+        bits.append("--buildup %d" % cue.buildup_s)
+    return "  ".join(bits)
+
+
 def run(
     nowplaying_backend,
     dispatcher,
@@ -42,6 +75,7 @@ def run(
     *,
     default_bpm=120,
     log=print,
+    debug=False,
     sleep=_time.sleep,
     now_ms=_now_ms,
     universe_size=512,
@@ -55,6 +89,9 @@ def run(
         songs_dir: path to the directory of `.cues` files.
         default_bpm: BPM used when neither file nor cue overrides.
         log: one-line status sink. Default print.
+        debug: if True, emit per-cue + per-lyric + per-poll log lines
+            so you can trace exactly what the orchestrator is picking
+            up from the .cues file. Default False (quiet mode).
         sleep, now_ms: injectable for tests.
         universe_size: size of the DMX universe bytearray (default 512).
         iteration_budget: if set, run at most N ticks then return
@@ -62,15 +99,26 @@ def run(
     """
     runner = FxRunner(fx_registry, default_bpm=default_bpm)
     tracker = PositionTracker()
-    scheduler = CueScheduler(runner)
+
+    def on_cue_fire(cue, position_ms):
+        if debug:
+            log("[%s] cue:   %s" % (_fmt_pos(position_ms),
+                                    _format_cue_for_log(cue)))
+
+    def on_lyric(lyric, position_ms):
+        if debug:
+            log("[%s] lyric: %s" % (_fmt_pos(position_ms), lyric.text))
+
+    scheduler = CueScheduler(runner, on_cue_fire=on_cue_fire, on_lyric=on_lyric)
     universe = bytearray(universe_size)
 
     last_poll_wall_ms = 0
     current_track_key = (None, None)
     iterations = 0
 
-    log("orchestrator: started (songs_dir=%s, default_bpm=%d, output=%s)"
-        % (songs_dir, default_bpm, dispatcher.name))
+    log("orchestrator: started (songs_dir=%s, default_bpm=%d, output=%s%s)"
+        % (songs_dir, default_bpm, dispatcher.name,
+           ", debug=on" if debug else ""))
 
     try:
         while True:
@@ -93,6 +141,12 @@ def run(
                 else:
                     tracker.update_from_poll(snapshot, now)
                     key = (snapshot.artist, snapshot.title)
+                    if debug:
+                        log("[%s] poll:  %s / %s (playing=%s)" % (
+                            _fmt_pos(snapshot.position_ms),
+                            snapshot.artist, snapshot.title,
+                            "yes" if snapshot.is_playing else "no",
+                        ))
                     if key != current_track_key:
                         path = find_cue_path(
                             songs_dir, snapshot.artist, snapshot.title,
@@ -110,6 +164,13 @@ def run(
                                     % (path.name, exc))
                                 scheduler.stop(now_ms=now)
                             else:
+                                if debug:
+                                    log("loaded: %d cues, %d lyric anchors, "
+                                        "default_fx_id=%d, default_bpm=%d"
+                                        % (len(cue_file.cues),
+                                           len(cue_file.lyrics),
+                                           cue_file.default_fx_id,
+                                           cue_file.default_bpm))
                                 scheduler.set_cue_file(cue_file, now_ms=now)
                         current_track_key = key
 
