@@ -71,12 +71,13 @@ on the same line picks up the new tempo.
 
 ### Param units
 
-| Unit      | Cue-file range | On the wire (u8)              |
-|-----------|----------------|-------------------------------|
-| `u8`      | 0..255         | as-is                         |
-| `percent` | 0..100         | `round(v * 255 / 100)`        |
-| `count`   | 0..255         | as-is (FX validates its max)  |
-| `100ms`   | 0..255         | 1..255 = 100 ms..25.5 s       |
+| Unit          | Cue-file range | On the wire (u8)                                 |
+|---------------|----------------|--------------------------------------------------|
+| `u8`          | 0..255         | as-is                                            |
+| `percent`     | 0..100         | `round(v * 255 / 100)`                           |
+| `count`       | 0..255         | as-is (FX validates its max)                     |
+| `100ms`       | 0..255         | 1..255 = 100 ms..25.5 s                          |
+| `pixmob_time` | 0..255         | 1/10 s; quantised to nearest of 0, 32, 96, 192, 480, 960, 2400, 3840 ms |
 
 The cue line carries human values (`probability 100` means 100%); the
 loader converts to u8 before calling the FX's `start()`.
@@ -236,6 +237,25 @@ Writes zero to every output channel for one tick, then auto-finishes. The `stop`
 
 | Slot | Name | Unit | Description |
 |------|------|------|-------------|
+
+## Accent
+
+### Pulse (id 15)
+
+`pulse` - accent
+
+Fires one pulse at the cue's time and finishes. For accenting specific moments (snare hits, vocal stabs, transitions). Attack / Sustain / Decay take 1/10 s units and quantise onto the 8-value pixmob::Time bucket lookup on the wire side; the actual rendered time will be the nearest of 0, 32, 96, 192, 480, 960, 2400, 3840 ms.
+
+| Slot | Name        | Unit        | Description                                                              |
+|------|-------------|-------------|--------------------------------------------------------------------------|
+| 0    | r           | u8          | Pulse Red. White default if R/G/B all zero.                              |
+| 1    | g           | u8          | Pulse Green.                                                             |
+| 2    | b           | u8          | Pulse Blue.                                                              |
+| 3    | attack      | pixmob_time | Attack time, 1/10 s units. Quantised to the nearest pixmob::Time bucket. |
+| 4    | sustain     | pixmob_time | Sustain time, 1/10 s units. Quantised to nearest bucket.                 |
+| 5    | decay       | pixmob_time | Decay (fall-off) time, 1/10 s units. Quantised to nearest bucket.        |
+| 6    | probability | percent     | Chance the pulse actually fires (0..100%). Default 100%.                 |
+| 7    | group       | count       | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0.     |
 
 ---
 

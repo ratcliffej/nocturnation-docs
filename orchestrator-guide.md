@@ -149,6 +149,41 @@ to (0,0,0,intensity=0). Use it to reset the fleet to dark at song
 boundaries (before a fade-in, or at the end of a song). For a
 gradual fade-out, schedule `fade_to_black` before the `stop`.
 
+### Pulse envelope (1/10 s units)
+
+The `pulse` FX takes attack / sustain / decay in 1/10 second units.
+The StickC mapper quantises each to one of 8 discrete buckets the
+Lume firmware understands - so the actual rendered time is the
+*nearest* of:
+
+| Bucket | ms    |
+|--------|-------|
+| 0      | 0     |
+| 1      | 32    |
+| 2      | 96    |
+| 3      | 192   |
+| 4      | 480   |
+| 5      | 960   |
+| 6      | 2400  |
+| 7      | 3840  |
+
+A few example cue conversions:
+
+| You write | Equivalent ms | Bucket |
+|-----------|---------------|--------|
+| `0`       | 0             | T_0_MS |
+| `1`       | 100           | T_96_MS (96 ms, closest) |
+| `2`       | 200           | T_192_MS |
+| `5`       | 500           | T_480_MS |
+| `10`      | 1000          | T_960_MS |
+| `24`      | 2400          | T_2400_MS |
+| `38`      | 3800          | T_3840_MS |
+
+So `pulse 255 100 0 0 1 5 100` is "warm orange pulse: 0 ms attack
+(snap on), ~100 ms sustain, ~500 ms decay, 100% probability". For
+a sharp accent use small numbers (`0 1 2`); for a softer flare go
+longer (`2 5 10`).
+
 ### Targeting device groups
 
 Every single-target FX takes an optional **last positional
@@ -280,6 +315,7 @@ the time of writing:
 | 12 | `pulse_per_bar` | beat | Fires one pulse every N beats (default 4 = one per bar). |
 | 13 | `group_cascade` | beat | Rotates a pulse around groups 1..N, one beat per group. |
 | 14 | `wash_with_sparkle` | beat | Layered drift wash + sparkle-on-beat in a single cue. |
+| 15 | `pulse` | accent | One-shot pulse for accenting specific moments. Attack / sustain / decay take 1/10 s units (quantised to pixmob::Time buckets). |
 | 21 | `linear_buildup` | buildup | Ramps Master and Pulse Probability over `buildup_s` seconds. |
 | 32 | `strobe_burst` | drop | Max strobe rate for a short window, then auto-finish. |
 | 41 | `fade_to_black` | transition | Ramps Master from start value to 0 over `buildup_s` seconds. |

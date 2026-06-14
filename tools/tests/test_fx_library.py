@@ -38,6 +38,7 @@ from nocturnation_orchestrator.fx.library.linear_buildup import LinearBuildup
 from nocturnation_orchestrator.fx.library.strobe_burst import StrobeBurst
 from nocturnation_orchestrator.fx.library.fade_to_black import FadeToBlack
 from nocturnation_orchestrator.fx.library.blackout import Blackout
+from nocturnation_orchestrator.fx.library.pulse import Pulse
 
 
 def _u():
@@ -95,6 +96,7 @@ EXPECTED_IDS = {
     12:  ("Pulse Per Bar",     "beat"),
     13:  ("Group Cascade",     "beat"),
     14:  ("Wash With Sparkle", "beat"),
+    15:  ("Pulse",             "accent"),
     21:  ("Linear Buildup",    "buildup"),
     32:  ("Strobe Burst",      "drop"),
     41:  ("Fade To Black",     "transition"),
@@ -511,3 +513,74 @@ class TestBlackout:
         from nocturnation_orchestrator.cues import parse_cues
         f = parse_cues("03:00 stop")
         assert f.cues[0].fx_id == Blackout.id
+
+
+# ---------------------------------------------------------------------------
+# Pulse (one-shot)
+# ---------------------------------------------------------------------------
+
+class TestPulse:
+    def test_tick0_primes_low_then_tick1_fires_high(self):
+        # Two-tick fire sequence so the StickC mapper always sees a
+        # clean rising edge even if the previous FX left trig HIGH.
+        fx = _make(
+            Pulse,
+            # r, g, b, attack, sustain, decay, probability, group
+            #                                       (1/10 s units)
+            params=(255, 100, 0, 0, 1, 5, 255, 0),
+        )
+        # Tick 0: trig=LOW (prime).
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        assert _ch(u, CH_PULSE_R) == 255
+        # Tick 1: trig=HIGH (rising edge -> mapper fires).
+        u = _u()
+        fx.tick(now_ms=20, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_finishes_after_two_ticks(self):
+        fx = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 0, 0))
+        assert not fx.is_finished(now_ms=0)
+        fx.tick(now_ms=0, universe=_u())
+        assert not fx.is_finished(now_ms=10)
+        fx.tick(now_ms=20, universe=_u())
+        assert fx.is_finished(now_ms=30)
+
+    def test_white_default_when_rgb_zero(self):
+        fx = _make(Pulse, params=(0, 0, 0, 0, 1, 5, 100, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_R) == 255
+        assert _ch(u, CH_PULSE_G) == 255
+        assert _ch(u, CH_PULSE_B) == 255
+
+    def test_group_routing(self):
+        fx = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 255, 4))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)   # tick 0 (LOW)
+        u = _u()
+        fx.tick(now_ms=20, universe=u)  # tick 1 (HIGH)
+        # Group 4 trigger fires; broadcast block untouched.
+        from nocturnation_orchestrator.fx.channels import block_channel
+        assert _ch(u, block_channel(4, CH_PULSE_TRIG)) == TRIGGER_HI
+        assert _ch(u, CH_PULSE_TRIG) == 0
+
+    def test_pixmob_time_quantisation_in_cue(self):
+        # 1/10 s units in the cue file get mapped to pixmob::Time
+        # buckets via the slider value. 5 (= 500 ms) is closest to
+        # T_480_MS (bucket 4 -> slider 128); 1 (= 100 ms) lands in
+        # T_96_MS (bucket 2 -> slider 64).
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("00:30 pulse 255 0 0 1 0 5 100 0")
+        c = f.cues[0]
+        assert c.fx_id == Pulse.id
+        # params: (r, g, b, attack, sustain, decay, prob_u8, group)
+        # attack=1 -> 100 ms -> T_96_MS bucket -> slider 64
+        # sustain=0 -> 0 ms -> T_0_MS -> slider 0
+        # decay=5 -> 500 ms -> T_480_MS bucket -> slider 128
+        # prob=100% -> 255
+        assert c.params[3] == 64
+        assert c.params[4] == 0
+        assert c.params[5] == 128
+        assert c.params[6] == 255

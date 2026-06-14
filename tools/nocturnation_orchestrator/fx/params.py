@@ -18,7 +18,32 @@ Units:
     100ms    0..255, on-wire 100 ms units (1..255 = 100 ms..25.5 s).
 """
 
-VALID_UNITS = ("u8", "percent", "count", "100ms")
+VALID_UNITS = ("u8", "percent", "count", "100ms", "pixmob_time")
+
+
+# Pixmob::Time bucket centres in ms - matches the enum in
+# StickC/include/pixmob_protocol.h. The mapper quantises a 0..255
+# slider into one of these 8 buckets (32 slider positions each).
+# The orchestrator's `pixmob_time` unit accepts a 1/10 s value from
+# the user (so e.g. 5 means 500 ms) and emits the slider value that
+# lands in whichever bucket is closest to the requested time.
+_PIXMOB_TIME_BUCKET_MS = (0, 32, 96, 192, 480, 960, 2400, 3840)
+
+
+def _pixmob_time_to_slider(value_100ms):
+    """Map a 1/10 s value to the slider position whose bucket holds
+    the closest pixmob::Time. Returns the lower edge of that bucket
+    (any value in 32-position window works; lower edge is the most
+    forgiving choice if the mapper bucketing ever changes resolution)."""
+    target_ms = value_100ms * 100
+    best_idx = 0
+    best_diff = abs(target_ms - _PIXMOB_TIME_BUCKET_MS[0])
+    for i in range(1, len(_PIXMOB_TIME_BUCKET_MS)):
+        diff = abs(target_ms - _PIXMOB_TIME_BUCKET_MS[i])
+        if diff < best_diff:
+            best_diff = diff
+            best_idx = i
+    return best_idx * 32
 
 
 def convert_to_u8(value, unit):
@@ -51,6 +76,15 @@ def convert_to_u8(value, unit):
                 "100ms value out of range (0..255): %d" % value
             )
         return value
+    if unit == "pixmob_time":
+        # 1/10 s input quantised to the nearest pixmob::Time bucket.
+        # Accept any positive value; very large numbers just saturate
+        # at T_3840_MS (the highest bucket).
+        if value < 0 or value > 255:
+            raise ValueError(
+                "pixmob_time value out of range (0..255): %d" % value
+            )
+        return _pixmob_time_to_slider(value)
     raise ValueError("unknown unit: %r" % (unit,))
 
 

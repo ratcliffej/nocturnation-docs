@@ -103,12 +103,13 @@ on the same line picks up the new tempo.
 
 ### Param units
 
-| Unit      | Cue-file range | On the wire (u8)              |
-|-----------|----------------|-------------------------------|
-| `u8`      | 0..255         | as-is                         |
-| `percent` | 0..100         | `round(v * 255 / 100)`        |
-| `count`   | 0..255         | as-is (FX validates its max)  |
-| `100ms`   | 0..255         | 1..255 = 100 ms..25.5 s       |
+| Unit          | Cue-file range | On the wire (u8)                                 |
+|---------------|----------------|--------------------------------------------------|
+| `u8`          | 0..255         | as-is                                            |
+| `percent`     | 0..100         | `round(v * 255 / 100)`                           |
+| `count`       | 0..255         | as-is (FX validates its max)                     |
+| `100ms`       | 0..255         | 1..255 = 100 ms..25.5 s                          |
+| `pixmob_time` | 0..255         | 1/10 s; quantised to nearest of 0, 32, 96, 192, 480, 960, 2400, 3840 ms |
 
 The cue line carries human values (`probability 100` means 100%); the
 loader converts to u8 before calling the FX's `start()`.
