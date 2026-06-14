@@ -107,6 +107,11 @@ class CueFile:
     the orchestrator runs before the first cue and after a `stop`.
     lyrics is sorted by time_ms too; populated from timestamped
     `# MM:SS text` comments. Empty unless the file uses lyric anchors.
+    offset_ms is the per-file shift applied to every cue and lyric
+    time at parse time (positive delays everything, negative pulls
+    forward). Used to compensate for album-mastering silence padding
+    when the same song is shipped with different intros across
+    releases.
     """
     artist: str = ""
     title: str = ""
@@ -115,6 +120,7 @@ class CueFile:
     default_fx_params: tuple = (0, 0, 0, 0, 0, 0)
     cues: list = field(default_factory=list)
     lyrics: list = field(default_factory=list)
+    offset_ms: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +244,14 @@ def _build_params_tuple(fx_cls, positional: list, line_no: int) -> tuple:
 # ---------------------------------------------------------------------------
 
 _KNOWN_FLAGS = ("--bpm", "--buildup")
-_KNOWN_DIRECTIVES = ("@bpm", "@default_fx", "@artist", "@title")
+_KNOWN_DIRECTIVES = ("@bpm", "@default_fx", "@artist", "@title", "@offset")
+_FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _parse_float(token: str, line_no: int, what: str) -> float:
+    if not _FLOAT_RE.match(token):
+        raise CueParseError("expected %s, got %r" % (what, token), line_no)
+    return float(token)
 
 
 def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> None:
@@ -252,6 +265,17 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
         if len(tokens) != 2:
             raise CueParseError("@bpm takes one argument", line_no)
         file.default_bpm = _parse_int(tokens[1], line_no, "BPM")
+    elif directive == "@offset":
+        # Whole-file time shift in seconds. Accepts fractional and
+        # negative values; converted to ms and applied at parse time
+        # to every cue and lyric. Positive offsets DELAY (use when the
+        # album has silence padding before the audible content);
+        # negative offsets ADVANCE (rare - audio was authored against
+        # a longer intro than the playing copy).
+        if len(tokens) != 2:
+            raise CueParseError("@offset takes one argument", line_no)
+        seconds = _parse_float(tokens[1], line_no, "offset (seconds)")
+        file.offset_ms = int(round(seconds * 1000))
     elif directive == "@default_fx":
         name = tokens[1]
         fx_id = _resolve_fx_by_name(name, line_no, registry)
@@ -316,7 +340,7 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
 
 def parse_cues(text: str, registry=fx_registry) -> CueFile:
     """Parse cue-file content. Returns a CueFile with cues + lyrics
-    sorted by time."""
+    sorted by time, with any @offset already applied."""
     file = CueFile()
     for raw_line_no, raw in enumerate(text.splitlines(), start=1):
         # Timestamped lyric comments become Lyric anchors before the
@@ -334,6 +358,19 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
             _parse_directive(tokens, raw_line_no, file, registry)
         else:
             file.cues.append(_parse_cue(tokens, raw_line_no, registry))
+
+    # Apply the file-level offset to every cue and lyric. Doing it
+    # post-parse means @offset can sit ANYWHERE in the file (header
+    # or footer); cues authored relative to the audio's "0:00" stay
+    # readable. The shifted values clamp at 0 so an over-large
+    # negative offset doesn't fire cues at negative time (which the
+    # scheduler treats as "before the song started").
+    if file.offset_ms:
+        for c in file.cues:
+            c.time_ms = max(0, c.time_ms + file.offset_ms)
+        for l in file.lyrics:
+            l.time_ms = max(0, l.time_ms + file.offset_ms)
+
     file.cues.sort(key=lambda c: c.time_ms)
     file.lyrics.sort(key=lambda l: l.time_ms)
     return file

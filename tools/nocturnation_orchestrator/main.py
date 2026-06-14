@@ -185,12 +185,17 @@ def run(
                                 scheduler.stop(now_ms=now)
                             else:
                                 if debug:
+                                    offset_note = (
+                                        " offset=%+.2fs" % (cue_file.offset_ms / 1000.0)
+                                        if cue_file.offset_ms else ""
+                                    )
                                     log("loaded: %d cues, %d lyric anchors, "
-                                        "default_fx_id=%d, default_bpm=%d"
+                                        "default_fx_id=%d, default_bpm=%d%s"
                                         % (len(cue_file.cues),
                                            len(cue_file.lyrics),
                                            cue_file.default_fx_id,
-                                           cue_file.default_bpm))
+                                           cue_file.default_bpm,
+                                           offset_note))
                                 scheduler.set_cue_file(cue_file, now_ms=now)
                         current_track_key = key
 

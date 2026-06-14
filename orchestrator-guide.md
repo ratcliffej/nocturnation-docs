@@ -147,6 +147,63 @@ timestamps exactly.
 a song cleanly. For an explicit fade-out, schedule `fade_to_black`
 before the `stop`.
 
+## Fixing sync drift between releases
+
+The same song can appear with different leading silence depending on
+which release you're listening to. A single may have no padding,
+the album version may have 1.5 seconds of room-tone before the
+audible content, a streaming-platform encode might add another half
+second on top. The OS reports `elapsedTime` from the *file* start,
+not from the audible content, so a `.cues` file authored against one
+release plays late or early on another.
+
+The `@offset` directive corrects this with a single number. It
+shifts every cue and lyric anchor in the file by the given amount,
+in seconds (fractional, signed)::
+
+```text
+# coldplay-fix-you.cues authored against the single (no padding).
+# The album release has ~1.2 s of leading silence; offset
+# compensates so every cue still lands on the audible beat.
+@artist     Coldplay
+@title      Fix You
+@bpm        138
+@offset     1.2                # delay everything by 1.2 s
+
+00:13.40  sparkle_on_beat  80 200 200 100
+00:35.5   sparkle_on_beat  255 0 255 100
+```
+
+Positive values delay (the usual case for album padding). Negative
+values pull cues forward (rare; useful if you ever authored against
+a longer intro than the release you're playing). Centisecond grain
+is enough for any musical purpose - one tick of `@offset 0.05` (50
+ms) is roughly the JND for tempo alignment.
+
+**Calibrating** at the bench:
+
+1. Start the orchestrator with `--debug` against the actual release
+   you'll play at the show.
+2. Watch the `cue:` and `lyric:` lines as you listen. If they're
+   firing N seconds before / after the audible event, set
+   `@offset` to that amount (sign matches whether you need to
+   delay or advance).
+3. Re-run. Cues should now land on the beat.
+
+The debug log shows the offset alongside the cue-file load so you
+can verify it parsed correctly::
+
+```text
+matcher: coldplay-fix-you [genre=Alternative] -> coldplay-fix-you.cues
+loaded: 8 cues, 27 lyric anchors, default_fx_id=1, default_bpm=138 offset=+1.20s
+```
+
+If you ever need a per-release set of files (you're doing a show
+that mixes single and album versions of the same track), use the
+slug naming to disambiguate: `coldplay-fix-you-single.cues` vs
+`coldplay-fix-you-album.cues`. The matcher slugifies whatever
+artist/title the source actually reports.
+
 ## Available FX
 
 The current library is generated from the FX classes themselves; the

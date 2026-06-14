@@ -138,6 +138,84 @@ class TestDirectives:
             parse_cues("@bpm")
 
 
+class TestOffsetDirective:
+    """@offset shifts every cue + lyric by a fixed amount, at parse
+    time. Used to compensate for album-mastering silence padding so a
+    .cues file authored against one release stays in sync when the
+    same song is played from a different release."""
+
+    def test_positive_offset_delays_cues(self):
+        text = """
+            @offset 1.5
+            00:30 sparkle_on_beat 100 100 100 100
+            00:45 sparkle_on_beat 255 0 0 100
+        """
+        f = parse_cues(text)
+        assert f.offset_ms == 1500
+        assert f.cues[0].time_ms == 31_500
+        assert f.cues[1].time_ms == 46_500
+
+    def test_negative_offset_advances_cues(self):
+        text = """
+            @offset -2
+            00:30 sparkle_on_beat 100 100 100 100
+        """
+        f = parse_cues(text)
+        assert f.offset_ms == -2000
+        assert f.cues[0].time_ms == 28_000
+
+    def test_offset_applies_to_lyrics_too(self):
+        text = """
+            @offset 1.2
+            # 00:30  When you try your best
+            00:30 sparkle_on_beat 100 100 100 100
+        """
+        f = parse_cues(text)
+        assert f.lyrics[0].time_ms == 31_200
+        assert f.cues[0].time_ms == 31_200
+
+    def test_offset_clamps_at_zero(self):
+        # Over-large negative offset must not push cues to negative
+        # times; the scheduler treats negatives as "before song
+        # started" and they'd fire spuriously on the first advance.
+        text = """
+            @offset -60
+            00:05 sparkle_on_beat 100 100 100 100
+        """
+        f = parse_cues(text)
+        assert f.cues[0].time_ms == 0
+
+    def test_offset_can_sit_anywhere_in_file(self):
+        # Directive precedence is by parse value at end-of-parse, not
+        # position-in-file, so a trailing @offset works the same as a
+        # leading one.
+        leading = parse_cues("@offset 1.0\n00:30 stop\n")
+        trailing = parse_cues("00:30 stop\n@offset 1.0\n")
+        assert leading.cues[0].time_ms == trailing.cues[0].time_ms
+
+    def test_fractional_offset_centisecond_grain(self):
+        text = """
+            @offset 0.25
+            00:30 stop
+        """
+        f = parse_cues(text)
+        assert f.offset_ms == 250
+        assert f.cues[0].time_ms == 30_250
+
+    def test_no_offset_means_zero(self):
+        f = parse_cues("00:30 stop\n")
+        assert f.offset_ms == 0
+
+    def test_offset_needs_argument(self):
+        with pytest.raises(CueParseError):
+            parse_cues("@offset")
+
+    def test_offset_rejects_non_numeric(self):
+        with pytest.raises(CueParseError) as exc:
+            parse_cues("@offset two-seconds")
+        assert "expected" in str(exc.value).lower()
+
+
 # ---------------------------------------------------------------------------
 # stop sentinel
 # ---------------------------------------------------------------------------

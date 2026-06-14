@@ -79,6 +79,7 @@ sections / lyrics, or trail one off the end of a cue.
 | `@default_fx N` | FX run before the first cue and after `stop` (id or name). |
 | `@artist X`     | Free-text artist label (used by the matcher).            |
 | `@title X`      | Free-text title label (used by the matcher).             |
+| `@offset S.SS`  | Shift every cue + lyric by S.SS seconds (signed). Used to compensate for album-mastering silence padding. |
 
 ### Cue line
 
