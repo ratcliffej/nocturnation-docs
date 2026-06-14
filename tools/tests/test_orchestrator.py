@@ -578,9 +578,11 @@ class CaptureDispatcher:
 
 
 class TestMainLoopSmoke:
-    def test_loop_runs_default_fx_when_no_source(self, tmp_path):
-        # No songs dir - the matcher returns None and the scheduler
-        # stays stopped. The runner still ticks - just empty universe.
+    def test_loop_skips_send_when_no_fx(self, tmp_path):
+        # No songs dir, no source - the matcher returns None and the
+        # scheduler stays stopped. The runner has no FX so we MUST
+        # NOT dispatch the universe; sending an all-zero universe at
+        # startup poisons the StickC mapper's wash seed.
         backend = FakeBackend([None])
         disp = CaptureDispatcher()
         clock = [0]
@@ -599,9 +601,8 @@ class TestMainLoopSmoke:
             iteration_budget=5,
         )
         assert disp.closed
-        assert len(disp.sends) == 5
-        # Universe never touched (no FX running, ambient bytearray=0).
-        assert all(b == 0 for b in disp.sends[-1])
+        # No FX was ever admitted - so no dispatch.
+        assert disp.sends == []
 
     def test_loop_loads_cue_file_and_dispatches_universe(self, tmp_path):
         # Default FX establishes the bed; a later cue switches to a

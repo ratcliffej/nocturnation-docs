@@ -335,6 +335,43 @@ class TestFxRunnerTick:
 # Runner: stats
 # ---------------------------------------------------------------------------
 
+class TestFxRunnerIsActive:
+    def test_inactive_when_nothing_running(self):
+        reg = FxRegistry()
+        runner = FxRunner(reg)
+        assert not runner.is_active
+
+    def test_active_when_current_set(self):
+        reg = FxRegistry()
+        reg.register(make_recording_class(11))
+        runner = FxRunner(reg)
+        runner.start(11, now_ms=0)
+        assert runner.is_active
+
+    def test_active_when_only_cancelling_tail(self):
+        # During a release fade, current is None but cancelling still
+        # has things to write. We must still dispatch the universe.
+        reg = FxRegistry()
+        reg.register(make_recording_class(11))
+        runner = FxRunner(reg)
+        runner.start(11, now_ms=0)
+        runner.current_fx.finish_at_ms = 1_000   # long release window
+        runner.start(0, now_ms=10)  # cancel
+        assert runner.current_fx is None
+        assert runner.cancelling_fx is not None
+        assert runner.is_active
+
+    def test_inactive_after_cancel_finishes(self):
+        reg = FxRegistry()
+        reg.register(make_recording_class(11))
+        runner = FxRunner(reg)
+        runner.start(11, now_ms=0)
+        runner.start(0, now_ms=10)
+        # No release tail configured -> cancel completes on next tick.
+        runner.tick(now_ms=20, universe=bytearray(512))
+        assert not runner.is_active
+
+
 class TestFxRunnerStats:
     def test_counters(self):
         reg = FxRegistry()

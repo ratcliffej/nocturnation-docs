@@ -62,6 +62,15 @@ class FxRunner:
         self._runs_started = 0
         self._runs_cancelled = 0
 
+    @property
+    def is_active(self):
+        """True when an FX is currently writing the universe (either
+        the foreground FX or a cancelling release tail). The
+        orchestrator main loop gates DMX dispatch on this so a
+        long-running orchestrator looks like an idle DMX console when
+        nothing is loaded, matching QLC+'s ACTIVE / IDLE behaviour."""
+        return self.current_fx is not None or self.cancelling_fx is not None
+
     # ------------------------------------------------------------------
     # Admission
 

@@ -189,11 +189,21 @@ def run(
             # 3) Tick the FX engine.
             runner.tick(now, universe)
 
-            # 4) Dispatch.
-            try:
-                dispatcher.send(universe)
-            except Exception as exc:  # pragma: no cover
-                log("output: send failed: %s" % exc)
+            # 4) Dispatch - but only when an FX has actually written
+            # values into the universe. If we dispatch an all-zero
+            # universe at startup (no FX yet), the StickC mapper
+            # seeds itself with wash anchors of (0, 0, 0) on the FIRST
+            # frame, then debounces away the REAL wash that arrives
+            # ~20 ms later (its 50 ms wash-emit gap floor), and the
+            # Lume sits frozen on a black wash. Gating send on
+            # runner.is_active mirrors QLC+'s ACTIVE / IDLE pattern -
+            # the StickC sees IDLE until an FX fires, then the FIRST
+            # DMX frame already carries the FX's values.
+            if runner.is_active:
+                try:
+                    dispatcher.send(universe)
+                except Exception as exc:  # pragma: no cover
+                    log("output: send failed: %s" % exc)
 
             # 5) Iteration budget (tests).
             iterations += 1
