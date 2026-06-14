@@ -56,12 +56,22 @@ async def _default_async_snapshot():
     timeline = session.get_timeline_properties()
     playback = session.get_playback_info()
 
+    # `genres` is a Windows.Foundation.Collections.IVectorView<string>;
+    # iterate and join (single-genre tracks are the common case so we
+    # take whatever's there as-is).
+    try:
+        genres = list(props.genres) if props.genres is not None else []
+    except Exception:
+        genres = []
+    genre = ", ".join(g for g in genres if g)
+
     return {
         "title":            props.title or "",
         "artist":           props.artist or "",
         "position_ms":      int(timeline.position.total_seconds() * 1000),
         "duration_ms":      int(timeline.end_time.total_seconds() * 1000),
         "playback_status":  int(playback.playback_status),
+        "genre":            genre,
     }
 
 
@@ -83,6 +93,7 @@ def _snapshot_from_smtc_data(data):
         title=title,
         position_ms=max(0, int(data.get("position_ms", 0))),
         duration_ms=max(0, int(data.get("duration_ms", 0))),
+        genre=(data.get("genre") or "").strip(),
     )
 
 

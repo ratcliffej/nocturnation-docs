@@ -19,12 +19,17 @@ class NowPlaying:
         title (str): track title. Free text.
         position_ms (int): cursor position into the track, in ms.
         duration_ms (int): total track length, in ms. 0 if unknown.
+        genre (str): genre label (e.g. "Alternative"). Empty when the
+            source / library doesn't expose one. Drives the matcher's
+            `_default_<genre-slug>.cues` fallback when a per-track file
+            doesn't exist.
     """
     is_playing: bool
     artist: str
     title: str
     position_ms: int
     duration_ms: int
+    genre: str = ""
 
 
 class NowPlayingBackend:

@@ -45,6 +45,7 @@ _KEY_ARTIST        = "kMRMediaRemoteNowPlayingInfoArtist"
 _KEY_ELAPSED_TIME  = "kMRMediaRemoteNowPlayingInfoElapsedTime"
 _KEY_DURATION      = "kMRMediaRemoteNowPlayingInfoDuration"
 _KEY_PLAYBACK_RATE = "kMRMediaRemoteNowPlayingInfoPlaybackRate"
+_KEY_GENRE         = "kMRMediaRemoteNowPlayingInfoGenre"
 
 
 class MacOSBackend(NowPlayingBackend):
@@ -124,6 +125,7 @@ def _parse_raw_output(stdout):
     duration_ms   = _seconds_to_ms(data.get(_KEY_DURATION))
     playback_rate = _float_or_zero(data.get(_KEY_PLAYBACK_RATE))
     is_playing    = playback_rate > 0.0
+    genre         = _str_or_empty(data.get(_KEY_GENRE))
 
     return NowPlaying(
         is_playing=is_playing,
@@ -131,6 +133,7 @@ def _parse_raw_output(stdout):
         title=title,
         position_ms=max(0, position_ms),
         duration_ms=duration_ms,
+        genre=genre,
     )
 
 

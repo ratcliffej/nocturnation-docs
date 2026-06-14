@@ -59,6 +59,10 @@ def _snapshot_from_mpris(player_data):
     if isinstance(artists, str):
         artists = [artists]
     artist = ", ".join(a for a in artists if a).strip()
+    genres = metadata.get("xesam:genre") or []
+    if isinstance(genres, str):
+        genres = [genres]
+    genre = ", ".join(g for g in genres if g).strip()
     if not title and not artist:
         return None
     return NowPlaying(
@@ -67,6 +71,7 @@ def _snapshot_from_mpris(player_data):
         title=title,
         position_ms=_us_to_ms(player_data.get("position_us", 0)),
         duration_ms=_us_to_ms(metadata.get("mpris:length", 0)),
+        genre=genre,
     )
 
 

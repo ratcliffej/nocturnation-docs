@@ -85,6 +85,7 @@ class TestMacOSParseRawOutput:
           "kMRMediaRemoteNowPlayingInfoTitle" : "A Sky Full of Stars",
           "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
           "kMRMediaRemoteNowPlayingInfoAlbum" : "Ghost Stories",
+          "kMRMediaRemoteNowPlayingInfoGenre" : "Alternative",
           "kMRMediaRemoteNowPlayingInfoElapsedTime" : 52.966817133,
           "kMRMediaRemoteNowPlayingInfoDuration" : 268,
           "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0,
@@ -97,7 +98,24 @@ class TestMacOSParseRawOutput:
         assert np.artist == "Coldplay"
         assert np.position_ms == 52_967
         assert np.duration_ms == 268_000
+        assert np.genre == "Alternative"
         assert not np.is_playing
+
+    def test_missing_genre_is_empty_string(self):
+        # Older tracks / streaming sources may omit the genre key.
+        # We should default to "" so the matcher's genre fallback
+        # tier silently skips.
+        raw = """
+        {
+          "kMRMediaRemoteNowPlayingInfoTitle" : "T",
+          "kMRMediaRemoteNowPlayingInfoArtist" : "A",
+          "kMRMediaRemoteNowPlayingInfoElapsedTime" : 0,
+          "kMRMediaRemoteNowPlayingInfoDuration" : 100,
+          "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1
+        }
+        """
+        np = _parse_raw_output(raw)
+        assert np.genre == ""
 
 
 class TestMacOSBackendInjection:
@@ -210,6 +228,45 @@ class TestFindCuePath:
         (tmp_path / "sigur-ros-hoppipolla.cues").write_text("@bpm 120\n")
         p = find_cue_path(tmp_path, "Sigur Rós", "Hoppípolla")
         assert p is not None and p.name == "sigur-ros-hoppipolla.cues"
+
+    def test_per_genre_fallback(self, tmp_path):
+        (tmp_path / "_default_metal.cues").write_text("@bpm 140\n")
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        # Unknown track + Metal genre -> the genre file wins over the
+        # global default.
+        p = find_cue_path(tmp_path, "Some Band", "Some Track", genre="Metal")
+        assert p.name == "_default_metal.cues"
+
+    def test_per_track_beats_per_genre(self, tmp_path):
+        # A per-track file always wins over per-genre, even if both
+        # exist - explicit programming overrides genre inference.
+        (tmp_path / "some-band-some-track.cues").write_text("@bpm 120\n")
+        (tmp_path / "_default_metal.cues").write_text("@bpm 140\n")
+        p = find_cue_path(tmp_path, "Some Band", "Some Track", genre="Metal")
+        assert p.name == "some-band-some-track.cues"
+
+    def test_genre_falls_through_to_default(self, tmp_path):
+        # Genre supplied but no per-genre file -> global default.
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        p = find_cue_path(
+            tmp_path, "Unknown", "Track", genre="Synthwave",
+        )
+        assert p.name == "_default.cues"
+
+    def test_multi_word_genre_slugified(self, tmp_path):
+        # "Alternative Rock" -> "alternative-rock" -> file name uses
+        # the hyphenated slug after the underscore prefix.
+        (tmp_path / "_default_alternative-rock.cues").write_text("@bpm 120\n")
+        p = find_cue_path(
+            tmp_path, "Some Band", "Track", genre="Alternative Rock",
+        )
+        assert p.name == "_default_alternative-rock.cues"
+
+    def test_empty_genre_skips_per_genre_tier(self, tmp_path):
+        # The orchestrator never looks for `_default_.cues`.
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        p = find_cue_path(tmp_path, "Unknown", "Track", genre="")
+        assert p.name == "_default.cues"
 
 
 # ---------------------------------------------------------------------------

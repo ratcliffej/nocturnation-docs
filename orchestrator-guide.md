@@ -74,7 +74,37 @@ trailing `-` removed::
 The debug log line shows the slug form directly, so you can copy it
 straight from the log to a new filename when programming a new song.
 
-`_default.cues` is the fallback when the slug doesn't match anything.
+`_default.cues` is the last-resort fallback when nothing else matches.
+
+### Per-genre fallback
+
+Between the per-track and global tiers, the matcher checks for a
+**genre-specific default**: `_default_<genre-slug>.cues`. The genre
+comes from the OS now-playing layer (Apple Music's library tags,
+Spotify's stream metadata, etc.) and is slugified the same way artist
+and title are.
+
+| Now playing | Genre | Lookup order |
+|---|---|---|
+| Coldplay - Fix You | Alternative | `coldplay-fix-you.cues` → `_default_alternative.cues` → `_default.cues` |
+| Unknown band - "Track" | Metal | `unknown-band-track.cues` → `_default_metal.cues` → `_default.cues` |
+| Some band - "Track" | (no genre tag) | `some-band-track.cues` → `_default.cues` |
+
+The per-track tier always wins so an explicitly programmed song
+overrides whatever genre the OS thinks it is. The per-genre tier lets
+you ship a handful of mood-by-genre defaults (`_default_metal.cues`
+with a purple wash + faster sparkle, `_default_ambient.cues` with a
+slow drift, etc.) and have new tracks pick the right mood
+automatically.
+
+Genre slugs use hyphens for multi-word genres: "Alternative Rock"
+becomes `alternative-rock`, file name `_default_alternative-rock.cues`.
+
+The `--debug` log line shows the genre in brackets so you can see
+what tier was hit::
+
+    [00:14.000] poll:  unknown-band-track [genre=Metal] (playing=yes)
+    matcher: unknown-band-track [genre=Metal] -> _default_metal.cues
 
 ## Authoring a `.cues` file
 
@@ -193,8 +223,8 @@ Example::
 
 ```text
 orchestrator: started (songs_dir=.../songs, default_bpm=120, output=usb, debug=on)
-[00:14.000] poll:  coldplay-fix-you (playing=yes)
-matcher: coldplay-fix-you -> coldplay-fix-you.cues
+[00:14.000] poll:  coldplay-fix-you [genre=Alternative] (playing=yes)
+matcher: coldplay-fix-you [genre=Alternative] -> coldplay-fix-you.cues
 loaded: 8 cues, 27 lyric anchors, default_fx_id=1, default_bpm=138
 [00:14.000] cue:   sparkle_on_beat  80 200 200 255
 [00:14.000] lyric: When you try your best

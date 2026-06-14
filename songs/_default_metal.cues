@@ -1,0 +1,16 @@
+# Sample per-genre fallback.
+#
+# Loaded when the matcher's per-track lookup fails AND the now-playing
+# backend reports a genre that slugifies to "metal" (case-insensitive,
+# accents folded). Sits between the per-track tier (always wins) and
+# `_default.cues` (last-resort).
+#
+# Edit to taste. The shipping example is a deep purple wash with a
+# faster sparkle-on-beat cadence than the global default, in keeping
+# with the genre.
+#
+# Slug rule: file is `_default_<genre-slug>.cues`. Multi-word genres
+# use hyphens: e.g. "Alternative Rock" -> `_default_alternative-rock.cues`.
+
+@bpm        140
+@default_fx quiet_wash 80 0 160

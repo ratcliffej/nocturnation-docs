@@ -77,6 +77,22 @@ class TestWindowsSnapshotConversion:
         assert np.position_ms == 0
         assert np.duration_ms == 0
 
+    def test_genre_passes_through(self):
+        np = _snapshot_from_smtc_data({
+            "title": "T", "artist": "A",
+            "position_ms": 0, "duration_ms": 0,
+            "playback_status": 4, "genre": "Metal",
+        })
+        assert np.genre == "Metal"
+
+    def test_missing_genre_is_empty(self):
+        np = _snapshot_from_smtc_data({
+            "title": "T", "artist": "A",
+            "position_ms": 0, "duration_ms": 0,
+            "playback_status": 4,
+        })
+        assert np.genre == ""
+
 
 class TestWindowsBackendInjection:
     def test_poll_runs_injected_async(self):
@@ -185,6 +201,44 @@ class TestLinuxSnapshotConversion:
             "position_us": 0,
         })
         assert np is None
+
+    def test_genre_list_joined(self):
+        np = _snapshot_from_mpris({
+            "status": "Playing",
+            "metadata": {
+                "xesam:title": "Track",
+                "xesam:artist": ["Artist"],
+                "xesam:genre": ["Alternative", "Indie"],
+                "mpris:length": 0,
+            },
+            "position_us": 0,
+        })
+        assert np.genre == "Alternative, Indie"
+
+    def test_genre_string_passed_through(self):
+        np = _snapshot_from_mpris({
+            "status": "Playing",
+            "metadata": {
+                "xesam:title": "Track",
+                "xesam:artist": ["Artist"],
+                "xesam:genre": "Metal",
+                "mpris:length": 0,
+            },
+            "position_us": 0,
+        })
+        assert np.genre == "Metal"
+
+    def test_missing_genre_is_empty(self):
+        np = _snapshot_from_mpris({
+            "status": "Playing",
+            "metadata": {
+                "xesam:title": "Track",
+                "xesam:artist": ["Artist"],
+                "mpris:length": 0,
+            },
+            "position_us": 0,
+        })
+        assert np.genre == ""
 
 
 class TestLinuxBackendInjection:

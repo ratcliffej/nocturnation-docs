@@ -44,14 +44,29 @@ def slugify(*parts):
     return "-".join(pieces)
 
 
-def find_cue_path(songs_dir, artist, title):
-    """Return the matching `.cues` path, the `_default.cues` fallback,
-    or None if neither exists.
+def find_cue_path(songs_dir, artist, title, genre=""):
+    """Return the matching `.cues` path, with three-step fallback.
+
+    Lookup order::
+
+        1. Per-track:   <slug(artist, title)>.cues
+        2. Per-genre:   _default_<slug(genre)>.cues   (only if genre is set)
+        3. Global:      _default.cues
+
+    Returns None when none of the three exist.
+
+    The per-genre tier lets the LD ship a small set of mood-by-genre
+    defaults (e.g. `_default_metal.cues` with a purple wash + faster
+    sparkle) without having to author a file for every track. The
+    per-track tier always wins so a programmed song overrides genre
+    inference.
 
     Args:
         songs_dir (str | Path): directory holding `.cues` files.
         artist (str): from now-playing backend.
         title (str): from now-playing backend.
+        genre (str): from now-playing backend; "" if the OS / library
+            doesn't expose one. Empty disables the per-genre tier.
     """
     songs_dir = Path(songs_dir)
     slug = slugify(artist, title)
@@ -59,6 +74,11 @@ def find_cue_path(songs_dir, artist, title):
         per_track = songs_dir / ("%s.cues" % slug)
         if per_track.is_file():
             return per_track
+    genre_slug = slugify(genre)
+    if genre_slug:
+        per_genre = songs_dir / ("_default_%s.cues" % genre_slug)
+        if per_genre.is_file():
+            return per_genre
     default = songs_dir / "_default.cues"
     if default.is_file():
         return default

@@ -149,6 +149,7 @@ def run(
                     # to author. Falls back to a placeholder when
                     # both fields are empty.
                     slug = slugify(snapshot.artist, snapshot.title) or "(no-track)"
+                    genre_label = snapshot.genre or "-"
                     if debug:
                         # Interpolated (live) position is what the
                         # scheduler is using; that's what the LD cares
@@ -157,21 +158,25 @@ def run(
                         # `get-raw` reads the same cached value), so
                         # printing it every poll is noise.
                         live_pos = tracker.current_position(now)
-                        log("[%s] poll:  %s (playing=%s)" % (
+                        log("[%s] poll:  %s [genre=%s] (playing=%s)" % (
                             _fmt_pos(live_pos),
                             slug,
+                            genre_label,
                             "yes" if snapshot.is_playing else "no",
                         ))
                     if key != current_track_key:
                         path = find_cue_path(
                             songs_dir, snapshot.artist, snapshot.title,
+                            genre=snapshot.genre,
                         )
                         if path is None:
-                            log("matcher: no cue file for %s; going silent"
-                                % slug)
+                            log("matcher: no cue file for %s [genre=%s]; "
+                                "going silent"
+                                % (slug, genre_label))
                             scheduler.stop(now_ms=now)
                         else:
-                            log("matcher: %s -> %s" % (slug, path.name))
+                            log("matcher: %s [genre=%s] -> %s"
+                                % (slug, genre_label, path.name))
                             try:
                                 cue_file = parse_cues_file(path)
                             except Exception as exc:
