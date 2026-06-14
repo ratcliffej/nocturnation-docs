@@ -99,6 +99,8 @@ def run(
     """
     runner = FxRunner(fx_registry, default_bpm=default_bpm)
     tracker = PositionTracker()
+    last_dispatched = None
+    was_active = False
 
     def on_cue_fire(cue, position_ms):
         if debug:
@@ -189,21 +191,46 @@ def run(
             # 3) Tick the FX engine.
             runner.tick(now, universe)
 
-            # 4) Dispatch - but only when an FX has actually written
-            # values into the universe. If we dispatch an all-zero
-            # universe at startup (no FX yet), the StickC mapper
-            # seeds itself with wash anchors of (0, 0, 0) on the FIRST
-            # frame, then debounces away the REAL wash that arrives
-            # ~20 ms later (its 50 ms wash-emit gap floor), and the
-            # Lume sits frozen on a black wash. Gating send on
-            # runner.is_active mirrors QLC+'s ACTIVE / IDLE pattern -
-            # the StickC sees IDLE until an FX fires, then the FIRST
-            # DMX frame already carries the FX's values.
+            # 4) Dispatch - with two layers of suppression so we look
+            # like a polite DMX producer rather than a firehose:
+            #
+            # (a) Skip when no FX is loaded. If we sent an all-zero
+            #     universe at startup, the StickC mapper would seed
+            #     itself with wash anchors of (0, 0, 0) and then
+            #     debounce away the REAL wash that arrives ~20 ms
+            #     later (the mapper's 50 ms wash-emit gap floor),
+            #     leaving the Lume frozen on a black wash. Gating on
+            #     runner.is_active makes the StickC see IDLE until an
+            #     FX actually fires.
+            #
+            # (b) Skip when the universe is byte-identical to the
+            #     last send. A static wash (the common case) then
+            #     dispatches exactly ONCE; the StickC LCD naturally
+            #     alternates ACTIVE / IDLE the way QLC+ does, USB
+            #     bandwidth drops ~50x, and the single-core Plus2
+            #     spends less time in UART / parser / mapper paths.
+            #     The Lume sees no behavioural difference - the
+            #     StickC's change-detection layer was already
+            #     emitting one LIGHT_WASH and then going quiet, so
+            #     suppressing repeats upstream is purely additive.
+            #
+            # On the inactive -> active transition we drop the cache
+            # so the FIRST frame of the new FX always lands on the
+            # wire even if its bytes happen to equal the last frame
+            # sent before going quiet.
             if runner.is_active:
-                try:
-                    dispatcher.send(universe)
-                except Exception as exc:  # pragma: no cover
-                    log("output: send failed: %s" % exc)
+                if not was_active:
+                    last_dispatched = None
+                    was_active = True
+                universe_bytes = bytes(universe)
+                if universe_bytes != last_dispatched:
+                    try:
+                        dispatcher.send(universe)
+                        last_dispatched = universe_bytes
+                    except Exception as exc:  # pragma: no cover
+                        log("output: send failed: %s" % exc)
+            else:
+                was_active = False
 
             # 5) Iteration budget (tests).
             iterations += 1

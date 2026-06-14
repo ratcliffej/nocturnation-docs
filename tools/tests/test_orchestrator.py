@@ -604,6 +604,107 @@ class TestMainLoopSmoke:
         # No FX was ever admitted - so no dispatch.
         assert disp.sends == []
 
+    def test_static_wash_dispatches_only_once(self, tmp_path):
+        # A static default_fx (QuietWash with constant params) should
+        # produce exactly ONE USB dispatch across many ticks. Without
+        # this suppression a long-running orchestrator floods USB at
+        # 50 Hz with byte-identical frames.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 100 100\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=200,
+        )
+        # Exactly one dispatch despite 200 ticks. The dispatched
+        # universe carries the QuietWash wash anchors.
+        assert len(disp.sends) == 1
+        sent = disp.sends[0]
+        assert sent[0] == 255    # ch 1 master
+        assert sent[10] == 100   # ch 11 wash A R
+        assert sent[11] == 100   # ch 12 wash A G
+        assert sent[12] == 100   # ch 13 wash A B
+
+    def test_changing_universe_dispatches_each_change(self, tmp_path):
+        # SparkleOnBeat toggles the pulse-trigger channel between
+        # 255 (on-beat tick) and 0 (re-arm tick), so the universe
+        # changes twice per beat. Each change must produce one
+        # dispatch even though most ticks are still suppressed.
+        (tmp_path / "_default.cues").write_text(
+            "@bpm 120\n"
+            "@default_fx sparkle_on_beat 255 0 0 100\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=100,  # ~2 s of wall-clock at 20 ms ticks
+        )
+        # At 120 BPM = 2 beats/s, over 2 seconds that's 4 beats
+        # = roughly 8 dispatches (rising + falling per beat) plus the
+        # initial dispatch. Should be far fewer than the 100 ticks
+        # but more than 1.
+        n = len(disp.sends)
+        assert 4 <= n <= 20, "expected ~8 dispatches, got %d" % n
+
+    def test_inactive_to_active_clears_dispatch_cache(self, tmp_path):
+        # If the orchestrator stops sending (no FX) and later
+        # re-activates with the same universe bytes, the first frame
+        # after re-activation must still be dispatched so the StickC
+        # doesn't sit on stale state from before the quiet period.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 100 100\n"
+        )
+        backend = FakeBackend([
+            # First track loads default_fx, sends one wash frame.
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+            # No source - runner goes idle, scheduler stops, no FX.
+            None,
+            None,
+            # Same track again - default_fx reloads, fresh send.
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        # Force enough ticks per poll-cycle that all 4 polls fire.
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 500)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=30,
+        )
+        # Two distinct active periods -> at least two dispatches,
+        # even though both carry byte-identical wash universes.
+        assert len(disp.sends) >= 2
+        assert disp.sends[0] == disp.sends[-1]   # same bytes both times
+
     def test_loop_loads_cue_file_and_dispatches_universe(self, tmp_path):
         # Default FX establishes the bed; a later cue switches to a
         # different FX so we can prove the scheduler actually fires
