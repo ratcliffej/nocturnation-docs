@@ -15,6 +15,7 @@ params:
 
 from ..base import Fx, set_ch
 from ..channels import (
+    block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -41,6 +42,7 @@ class PulsePerBar(Fx):
         ("b",             "u8",      "Pulse Blue."),
         ("probability",   "percent", "Chance per bar (0..100%). Default 100%."),
         ("beats_per_bar", "count",   "Beats between pulses (1..16). Default 4."),
+        ("group",         "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -54,6 +56,7 @@ class PulsePerBar(Fx):
             r, g, b = 255, 255, 255
         self._r, self._g, self._b = r, g, b
         self._prob = params[3] if params[3] != 0 else 255
+        self._group = clamp_group(params[5] if len(params) > 5 else 0)
         self._anchor_ms = now_ms - position_ms
         self._last_bar_index = -1
 
@@ -65,12 +68,14 @@ class PulsePerBar(Fx):
         on_bar = bar_index != self._last_bar_index
         self._last_bar_index = bar_index
 
-        set_ch(universe, CH_MASTER,     255)
-        set_ch(universe, CH_PULSE_R,    self._r)
-        set_ch(universe, CH_PULSE_G,    self._g)
-        set_ch(universe, CH_PULSE_B,    self._b)
-        set_ch(universe, CH_PULSE_TRIG, TRIGGER_HI if on_bar else TRIGGER_LO)
-        set_ch(universe, CH_PULSE_ATK,  32)
-        set_ch(universe, CH_PULSE_SUS,  64)
-        set_ch(universe, CH_PULSE_REL,  128)
-        set_ch(universe, CH_PULSE_PROB, self._prob)
+        g = self._group
+        set_ch(universe, block_channel(g, CH_MASTER),     255)
+        set_ch(universe, block_channel(g, CH_PULSE_R),    self._r)
+        set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
+        set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
+        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
+               TRIGGER_HI if on_bar else TRIGGER_LO)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  32)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  64)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  128)
+        set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)

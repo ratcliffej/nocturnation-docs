@@ -19,6 +19,7 @@ params:
 
 from ..base import Fx, set_ch
 from ..channels import (
+    block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -46,6 +47,7 @@ class LinearBuildup(Fx):
         ("b",                   "u8",      "Pulse Blue."),
         ("target_probability",  "percent", "Probability at end of buildup. Default 100%."),
         ("start_master",        "u8",      "Master at start of buildup. Default 64."),
+        ("group",               "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -58,6 +60,7 @@ class LinearBuildup(Fx):
         self._r, self._g, self._b = r, g, b
         self._target_prob = params[3] if params[3] != 0 else 255
         self._start_master = params[4] if params[4] != 0 else 64
+        self._group = clamp_group(params[5] if len(params) > 5 else 0)
         # Default duration drives is_finished(); a 0-buildup is a 1 s safety.
         dur_s = buildup_s if buildup_s > 0 else 1
         self.default_duration_ms = dur_s * 1000
@@ -87,12 +90,14 @@ class LinearBuildup(Fx):
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
 
-        set_ch(universe, CH_MASTER,     master)
-        set_ch(universe, CH_PULSE_R,    self._r)
-        set_ch(universe, CH_PULSE_G,    self._g)
-        set_ch(universe, CH_PULSE_B,    self._b)
-        set_ch(universe, CH_PULSE_TRIG, TRIGGER_HI if on_beat else TRIGGER_LO)
-        set_ch(universe, CH_PULSE_ATK,  16)
-        set_ch(universe, CH_PULSE_SUS,  16)
-        set_ch(universe, CH_PULSE_REL,  64)
-        set_ch(universe, CH_PULSE_PROB, prob)
+        g = self._group
+        set_ch(universe, block_channel(g, CH_MASTER),     master)
+        set_ch(universe, block_channel(g, CH_PULSE_R),    self._r)
+        set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
+        set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
+        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
+               TRIGGER_HI if on_beat else TRIGGER_LO)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  64)
+        set_ch(universe, block_channel(g, CH_PULSE_PROB), prob)

@@ -125,6 +125,8 @@ def run(
 
     last_poll_wall_ms = 0
     current_track_key = (None, None)
+    current_cue_path = None
+    current_cue_mtime = 0.0
     iterations = 0
 
     log("orchestrator: started (songs_dir=%s, default_bpm=%d, output=%s%s)"
@@ -183,6 +185,8 @@ def run(
                                 "going silent"
                                 % (slug, genre_label))
                             scheduler.stop(now_ms=now)
+                            current_cue_path = None
+                            current_cue_mtime = 0.0
                         else:
                             log("matcher: %s [genre=%s] -> %s"
                                 % (slug, genre_label, path.name))
@@ -192,6 +196,8 @@ def run(
                                 log("matcher: parse failed for %s: %s"
                                     % (path.name, exc))
                                 scheduler.stop(now_ms=now)
+                                current_cue_path = None
+                                current_cue_mtime = 0.0
                             else:
                                 if debug:
                                     offset_note = (
@@ -206,14 +212,51 @@ def run(
                                            cue_file.default_bpm,
                                            offset_note))
                                 scheduler.set_cue_file(cue_file, now_ms=now)
+                                current_cue_path = path
+                                try:
+                                    current_cue_mtime = path.stat().st_mtime
+                                except OSError:
+                                    current_cue_mtime = 0.0
                         current_track_key = key
+                    elif current_cue_path is not None:
+                        # Same track. Detect re-save and hot-reload so the
+                        # LD can author live while a song plays. Polling
+                        # mtime once per now-playing cycle (~1 Hz) is
+                        # plenty - the user is editing the file by hand.
+                        try:
+                            new_mtime = current_cue_path.stat().st_mtime
+                        except OSError:
+                            new_mtime = 0.0
+                        if new_mtime and new_mtime != current_cue_mtime:
+                            try:
+                                new_file = parse_cues_file(current_cue_path)
+                            except Exception as exc:
+                                log("reload: parse failed for %s: %s; "
+                                    "keeping previous version"
+                                    % (current_cue_path.name, exc))
+                            else:
+                                pos = tracker.current_position(now)
+                                scheduler.reload_cue_file(
+                                    new_file, now_ms=now, position_ms=pos,
+                                )
+                                log("reload: %s (%d cues, %d lyric anchors, "
+                                    "applied at %s)"
+                                    % (current_cue_path.name,
+                                       len(new_file.cues),
+                                       len(new_file.lyrics),
+                                       _fmt_pos(pos)))
+                                current_cue_mtime = new_mtime
 
             # 2) Advance the scheduler against interpolated position.
             if tracker.is_playing and scheduler.cue_file is not None:
                 position_ms = tracker.current_position(now)
                 scheduler.advance(position_ms, now_ms=now)
 
-            # 3) Tick the FX engine.
+            # 3) Tick the FX engine. Capture pre-tick state too so a
+            # one-tick FX (notably Blackout - the `stop` cue) still
+            # gets its zero universe dispatched even though it
+            # finishes mid-tick.
+            pre_tick_active = runner.is_active
             runner.tick(now, universe)
 
             # 4) Dispatch - with two layers of suppression so we look
@@ -243,7 +286,10 @@ def run(
             # so the FIRST frame of the new FX always lands on the
             # wire even if its bytes happen to equal the last frame
             # sent before going quiet.
-            if runner.is_active:
+            # Active EITHER pre-tick (caught a one-tick FX writing
+            # values before finishing) OR post-tick (a long-running
+            # FX still writing). Either way we want to dispatch.
+            if pre_tick_active or runner.is_active:
                 if not was_active:
                     last_dispatched = None
                     was_active = True

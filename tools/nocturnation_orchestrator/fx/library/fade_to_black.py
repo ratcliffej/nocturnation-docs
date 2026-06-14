@@ -18,7 +18,7 @@ params:
 """
 
 from ..base import Fx, set_ch
-from ..channels import CH_MASTER
+from ..channels import block_channel, clamp_group, CH_MASTER
 from ..registry import fx_registry
 
 
@@ -36,13 +36,15 @@ class FadeToBlack(Fx):
     )
 
     PARAMS = [
-        ("start_master", "u8", "Master at start of fade. Default 255."),
+        ("start_master", "u8",    "Master at start of fade. Default 255."),
+        ("group",        "count", "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms
         self._cancelled_ms = None
         self._start_master = params[0] if params[0] != 0 else 255
+        self._group = clamp_group(params[1] if len(params) > 1 else 0)
         dur_s = buildup_s if buildup_s > 0 else 1
         self.default_duration_ms = dur_s * 1000
         self._dur_ms = self.default_duration_ms
@@ -55,4 +57,4 @@ class FadeToBlack(Fx):
         if progress > 1.0:
             progress = 1.0
         master = int(self._start_master * (1.0 - progress))
-        set_ch(universe, CH_MASTER, master)
+        set_ch(universe, block_channel(self._group, CH_MASTER), master)

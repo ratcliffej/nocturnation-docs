@@ -67,10 +67,8 @@ def validate_params_attr(cls):
     params = getattr(cls, "PARAMS", None)
     if params is None:
         raise ValueError("%s missing PARAMS class attribute" % cls.__name__)
-    if len(params) < 1:
-        raise ValueError(
-            "%s.PARAMS must have at least one entry; got 0" % cls.__name__
-        )
+    # No lower bound: FX with no params at all (e.g. Blackout) declare
+    # PARAMS = [] and the cue line has no positional values.
     for i, entry in enumerate(params):
         if not isinstance(entry, tuple) or len(entry) != 3:
             raise ValueError(

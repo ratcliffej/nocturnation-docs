@@ -29,6 +29,7 @@ phase is stable across late-join (position_ms).
 
 from ..base import Fx, set_ch
 from ..channels import (
+    block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -54,6 +55,7 @@ class SparkleOnBeat(Fx):
         ("g",           "u8",      "Pulse Green."),
         ("b",           "u8",      "Pulse Blue."),
         ("probability", "percent", "Chance per beat (0..100%). Default 100%."),
+        ("group",       "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -66,6 +68,7 @@ class SparkleOnBeat(Fx):
             r, g, b = 255, 255, 255
         self._r, self._g, self._b = r, g, b
         self._prob = params[3] if params[3] != 0 else 255
+        self._group = clamp_group(params[4] if len(params) > 4 else 0)
         # Beat phase: align the first beat to `now_ms - position_ms` so
         # late-join keeps the same on-the-beat timing.
         self._beat_anchor_ms = now_ms - position_ms
@@ -79,12 +82,14 @@ class SparkleOnBeat(Fx):
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
 
-        set_ch(universe, CH_MASTER,     255)
-        set_ch(universe, CH_PULSE_R,    self._r)
-        set_ch(universe, CH_PULSE_G,    self._g)
-        set_ch(universe, CH_PULSE_B,    self._b)
-        set_ch(universe, CH_PULSE_TRIG, TRIGGER_HI if on_beat else TRIGGER_LO)
-        set_ch(universe, CH_PULSE_ATK,  16)
-        set_ch(universe, CH_PULSE_SUS,  16)
-        set_ch(universe, CH_PULSE_REL,  96)
-        set_ch(universe, CH_PULSE_PROB, self._prob)
+        g = self._group
+        set_ch(universe, block_channel(g, CH_MASTER),     255)
+        set_ch(universe, block_channel(g, CH_PULSE_R),    self._r)
+        set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
+        set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
+        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
+               TRIGGER_HI if on_beat else TRIGGER_LO)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  96)
+        set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)

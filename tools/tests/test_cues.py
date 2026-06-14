@@ -80,11 +80,11 @@ class TestLexer:
 
     def test_multiple_whitespace_between_fields(self):
         f = parse_cues("00:30   sparkle_on_beat    255   0   255  100")
-        assert f.cues[0].params == (255, 0, 255, 255)
+        assert f.cues[0].params == (255, 0, 255, 255, 0)
 
     def test_tab_separated(self):
         f = parse_cues("00:30\tsparkle_on_beat\t255\t0\t255\t100")
-        assert f.cues[0].params == (255, 0, 255, 255)
+        assert f.cues[0].params == (255, 0, 255, 255, 0)
 
     def test_lyric_style_comments_between_rows(self):
         text = """
@@ -121,13 +121,14 @@ class TestDirectives:
         f = parse_cues("@default_fx quiet_wash 20 40 80")
         qw = fx_registry.get(1)
         assert f.default_fx_id == qw.id
-        # quiet_wash declares 5 slots; params tuple is sized to match.
-        assert f.default_fx_params == (20, 40, 80, 0, 0)
+        # quiet_wash declares 6 slots (5 + group); params tuple sized
+        # to match.
+        assert f.default_fx_params == (20, 40, 80, 0, 0, 0)
 
     def test_default_fx_no_params(self):
         f = parse_cues("@default_fx quiet_wash")
         assert f.default_fx_id == 1
-        assert f.default_fx_params == (0, 0, 0, 0, 0)
+        assert f.default_fx_params == (0, 0, 0, 0, 0, 0)
 
     def test_unknown_directive(self):
         with pytest.raises(CueParseError) as exc:
@@ -222,9 +223,16 @@ class TestOffsetDirective:
 # ---------------------------------------------------------------------------
 
 class TestStop:
-    def test_stop_emits_fx_id_zero(self):
+    def test_stop_resolves_to_blackout(self):
+        # `stop` is a parser alias for the Blackout FX; the cue
+        # carries Blackout's id, not 0. (Used to be 0 = cancel
+        # sentinel; the cancel-only model left lights stuck on the
+        # last LIGHT_WASH because dispatch stopped before sending the
+        # zero-out frame. Blackout fixes by writing zeros for one
+        # tick which the dispatcher pushes out.)
         f = parse_cues("03:00 stop")
-        assert f.cues[0].fx_id == 0
+        from nocturnation_orchestrator.fx.library.blackout import Blackout
+        assert f.cues[0].fx_id == Blackout.id
         assert f.cues[0].kind == "fx"
 
     def test_stop_takes_no_arguments(self):
@@ -296,12 +304,12 @@ class TestCueParsing:
         assert "unknown FX" in str(exc.value)
 
     def test_positional_params_map_to_named_slots(self):
-        # SparkleOnBeat: r, g, b, probability  (4 slots, no reserved).
-        # probability is percent -> u8: 100% -> 255.
+        # SparkleOnBeat: r, g, b, probability, group  (5 slots).
+        # probability is percent -> u8: 100% -> 255. group omitted -> 0.
         f = parse_cues("00:30 sparkle_on_beat 80 200 200 100")
         c = f.cues[0]
         assert c.fx_id == 11
-        assert c.params == (80, 200, 200, 255)
+        assert c.params == (80, 200, 200, 255, 0)
 
     def test_percent_converts_to_u8(self):
         f = parse_cues("00:30 sparkle_on_beat 0 0 0 50")
@@ -309,22 +317,23 @@ class TestCueParsing:
         assert f.cues[0].params[3] == 128
 
     def test_partial_positional_leaves_unfilled_slots_zero(self):
-        # SparkleOnBeat: r, g, b, probability. User supplies 2 values;
-        # the rest stay 0 in the output tuple.
+        # SparkleOnBeat: r, g, b, probability, group. User supplies 2
+        # values; the rest stay 0 in the output tuple.
         f = parse_cues("00:00 sparkle_on_beat 80 200")
         c = f.cues[0]
-        assert c.params == (80, 200, 0, 0)
+        assert c.params == (80, 200, 0, 0, 0)
 
     def test_too_many_positional_params(self):
-        # SparkleOnBeat has 4 non-reserved slots; supplying 5 errors.
+        # SparkleOnBeat has 5 slots (r, g, b, probability, group);
+        # supplying 6 errors.
         with pytest.raises(CueParseError) as exc:
-            parse_cues("00:30 sparkle_on_beat 1 2 3 4 5")
+            parse_cues("00:30 sparkle_on_beat 1 2 3 4 5 6")
         assert "at most" in str(exc.value)
 
     def test_partial_positional_fills_from_left(self):
         # Only the first 2 named slots are populated; rest stay 0.
         f = parse_cues("00:30 sparkle_on_beat 100 200")
-        assert f.cues[0].params == (100, 200, 0, 0)
+        assert f.cues[0].params == (100, 200, 0, 0, 0)
 
     def test_param_out_of_range(self):
         with pytest.raises(CueParseError):
@@ -339,8 +348,8 @@ class TestFlags:
     def test_bpm_override(self):
         f = parse_cues("00:30 sparkle_on_beat 100 100 100 100 --bpm 140")
         assert f.cues[0].bpm == 140
-        # positional still parses
-        assert f.cues[0].params == (100, 100, 100, 255)
+        # positional still parses (5 slots: r, g, b, prob, group)
+        assert f.cues[0].params == (100, 100, 100, 255, 0)
 
     def test_buildup_override(self):
         f = parse_cues("01:20 linear_buildup 255 0 0 100 64 --buildup 8")
@@ -355,10 +364,11 @@ class TestFlags:
             parse_cues("00:30 sparkle_on_beat 1 2 3 50 --bpm")
 
     def test_flag_then_positional_then_flag(self):
-        # FadeToBlack: only 1 positional (start_master). Flags interleave.
+        # FadeToBlack: 2 positional slots (start_master, group).
+        # Flags interleave with positional args cleanly.
         f = parse_cues("02:55 fade_to_black 200 --buildup 4 --bpm 138")
         c = f.cues[0]
-        assert c.params == (200,)
+        assert c.params == (200, 0)
         assert c.buildup_s == 4
         assert c.bpm == 138
 
@@ -400,9 +410,10 @@ class TestFileLevel:
         assert f.title == "Fix You"
         assert f.default_bpm == 138
         assert f.default_fx_id == 1
-        assert f.default_fx_params == (20, 40, 80, 0, 0)
+        assert f.default_fx_params == (20, 40, 80, 0, 0, 0)
         assert len(f.cues) == 8
-        assert f.cues[-1].fx_id == 0
+        from nocturnation_orchestrator.fx.library.blackout import Blackout
+        assert f.cues[-1].fx_id == Blackout.id   # `stop` -> Blackout
         assert f.cues[-2].buildup_s == 4
 
     def test_empty_file(self):
@@ -476,7 +487,7 @@ class TestLyricExtraction:
             # 00:13.40  When you try your best
             00:13.50 sparkle_on_beat 80 200 200 100
             # 00:20  but you don't succeed
-            00:20 sparkle_on_beat 255 0 255 100
+            00:20 sparkle_on_beat 255 0 255 100 0
         """
         f = parse_cues(text)
         assert len(f.cues) == 2

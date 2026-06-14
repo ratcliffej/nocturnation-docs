@@ -309,11 +309,16 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
     name = tokens[1]
     rest = tokens[2:]
 
-    # `stop` is the cancel sentinel; takes no params or flags.
+    # `stop` is a parser alias for the Blackout FX (cue_name="blackout").
+    # We resolve through the registry so the alias survives any future
+    # id reassignment of Blackout.
     if name == "stop":
         if rest:
             raise CueParseError("`stop` takes no arguments", line_no)
-        return Cue(time_ms=time_ms, kind="fx", fx_id=0, line_no=line_no)
+        blackout_id = _resolve_fx_by_name("blackout", line_no, registry)
+        return Cue(
+            time_ms=time_ms, kind="fx", fx_id=blackout_id, line_no=line_no,
+        )
 
     # `bpm N` is a meta cue: changes the file-level default BPM
     # mid-track. Fires no FX itself. FX cues at or after this time

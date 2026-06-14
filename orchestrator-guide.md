@@ -143,9 +143,39 @@ At 120 BPM each beat is 500 ms, so use centisecond grain
 (`MM:SS.xx`) for beat-aligned cues - it also matches LRC lyric
 timestamps exactly.
 
-`stop` is the cancel sentinel: equivalent to "no FX". Use it to end
-a song cleanly. For an explicit fade-out, schedule `fade_to_black`
-before the `stop`.
+`stop` is a parser alias for the `blackout` FX: it writes zero to
+every output channel for one tick, which drives the Lume LIGHT_WASH
+to (0,0,0,intensity=0). Use it to reset the fleet to dark at song
+boundaries (before a fade-in, or at the end of a song). For a
+gradual fade-out, schedule `fade_to_black` before the `stop`.
+
+### Targeting device groups
+
+Every single-target FX takes an optional **last positional
+parameter** that selects which device group it writes to::
+
+    0       = broadcast (every Lume, regardless of group)  - default
+    1..9    = group N only
+
+So:
+
+```text
+00:00  quiet_wash       100 0 0           # red wash on everyone
+00:30  quiet_wash       0 0 255 0 0 3     # blue wash on group 3 ONLY
+00:30  sparkle_on_beat  255 255 255 100 5 # sparkle on group 5 ONLY
+01:00  stop                               # blackout the whole fleet
+```
+
+The group param is the LAST positional slot on every FX that writes
+a single block. Omit it and you get broadcast. `group_cascade` is
+the exception - it's multi-group by design and uses its own
+`num_groups` slot instead.
+
+This lets you score sections of a venue independently: e.g. a slow
+drift wash on group 1 (the back of the room) while group 2 (the
+front) is sparkling on the beat. Author two cues at the same time
+with different group params - both run in parallel because they
+write non-overlapping universe blocks.
 
 ### Mid-track BPM changes
 
@@ -253,6 +283,7 @@ the time of writing:
 | 21 | `linear_buildup` | buildup | Ramps Master and Pulse Probability over `buildup_s` seconds. |
 | 32 | `strobe_burst` | drop | Max strobe rate for a short window, then auto-finish. |
 | 41 | `fade_to_black` | transition | Ramps Master from start value to 0 over `buildup_s` seconds. |
+| 254 | `blackout` | transition | Writes zero to every output channel for one tick. The `stop` cue is an alias. |
 
 Each entry in [`fx-library.md`](fx-library.md) documents its
 parameters, ranges, and defaults.
@@ -287,6 +318,36 @@ You then open the file and replace the `# MM:SS  TODO: cue here`
 markers with actual cue lines. The lyric anchors stay as comments
 and surface in `--debug` mode so you can hear what you're cueing
 to.
+
+## Hot-reload during authoring
+
+The orchestrator watches the active `.cues` file's modification time.
+Save the file in your editor while the song is playing and within
+~1 second the change takes effect - no need to restart the
+orchestrator or scrub the music.
+
+Behaviour:
+
+- **Past-position cues do NOT re-fire.** The running FX keeps going;
+  only cues at or after the current play position fire when their
+  time comes.
+- **`bpm` cues before the current position ARE applied** so the
+  default BPM matches the most recent `bpm` cue at-or-before the
+  cursor. (This means you can save a tempo-change cue earlier in
+  the file mid-song and the rest of the timeline picks it up
+  correctly without restarting.)
+- **Parse errors are caught** - if the file is malformed (typo,
+  incomplete edit between save events) the orchestrator logs the
+  error and keeps using the previous version. Fix and save again.
+
+A reload event surfaces in the log regardless of `--debug` so you
+know the change landed::
+
+    reload: coldplay-fix-you.cues (8 cues, 27 lyric anchors, applied at 00:42.350)
+
+There's a one-poll-cycle (~1 s) latency between save and reload;
+the orchestrator only polls the OS once a second to avoid spinning
+on file stats.
 
 ## Output modes
 

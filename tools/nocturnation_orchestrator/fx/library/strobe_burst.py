@@ -14,7 +14,7 @@ params:
 """
 
 from ..base import Fx, set_ch
-from ..channels import CH_MASTER, CH_STROBE
+from ..channels import block_channel, clamp_group, CH_MASTER, CH_STROBE
 from ..registry import fx_registry
 
 
@@ -33,6 +33,7 @@ class StrobeBurst(Fx):
     PARAMS = [
         ("duration",     "100ms", "Burst length in 100 ms units. Default 5 (500 ms)."),
         ("strobe_rate",  "u8",    "Strobe rate (0..255 -> 0..4 Hz). Default 255."),
+        ("group",        "count", "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -41,7 +42,9 @@ class StrobeBurst(Fx):
         dur_units = params[0] if params[0] != 0 else 5
         self.default_duration_ms = dur_units * 100
         self._strobe_rate = params[1] if params[1] != 0 else 255
+        self._group = clamp_group(params[2] if len(params) > 2 else 0)
 
     def tick(self, now_ms, universe):
-        set_ch(universe, CH_MASTER, 255)
-        set_ch(universe, CH_STROBE, self._strobe_rate)
+        g = self._group
+        set_ch(universe, block_channel(g, CH_MASTER), 255)
+        set_ch(universe, block_channel(g, CH_STROBE), self._strobe_rate)

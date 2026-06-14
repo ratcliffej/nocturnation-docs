@@ -92,13 +92,14 @@ loader converts to u8 before calling the FX's `start()`.
 
 Sustained single-colour wash. Holds Wash A; Wash B is zeroed so there is no drift cycle. The default ambient bed.
 
-| Slot | Name      | Unit | Description                                     |
-|------|-----------|------|-------------------------------------------------|
-| 0    | r         | u8   | Wash Red (0..255).                              |
-| 1    | g         | u8   | Wash Green (0..255).                            |
-| 2    | b         | u8   | Wash Blue (0..255).                             |
-| 3    | intensity | u8   | Wash intensity (0..255). Default 200 when zero. |
-| 4    | master    | u8   | Master scalar (0..255). Default 255 when zero.  |
+| Slot | Name      | Unit  | Description                                                          |
+|------|-----------|-------|----------------------------------------------------------------------|
+| 0    | r         | u8    | Wash Red (0..255).                                                   |
+| 1    | g         | u8    | Wash Green (0..255).                                                 |
+| 2    | b         | u8    | Wash Blue (0..255).                                                  |
+| 3    | intensity | u8    | Wash intensity (0..255). Default 200 when zero.                      |
+| 4    | master    | u8    | Master scalar (0..255). Default 255 when zero.                       |
+| 5    | group     | count | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ### Drift Wash (id 2)
 
@@ -115,6 +116,7 @@ Two-colour wash that cycles A <-> B over the cycle time. The Lume fades between 
 | 4    | b_g   | u8    | Anchor B Green (0..255).                                                                 |
 | 5    | b_b   | u8    | Anchor B Blue (0..255).                                                                  |
 | 6    | cycle | 100ms | Drift cycle time in 100 ms units (1..255 = 100 ms..25.5 s). Default 80 (~8 s) when zero. |
+| 7    | group | count | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0.                     |
 
 ## Beat
 
@@ -124,12 +126,13 @@ Two-colour wash that cycles A <-> B over the cycle time. The Lume fades between 
 
 Fires one pulse per beat at the supplied BPM. Broadcast (all groups). Sits naturally on top of a previous ambient FX's release tail.
 
-| Slot | Name        | Unit    | Description                                 |
-|------|-------------|---------|---------------------------------------------|
-| 0    | r           | u8      | Pulse Red. White default if R/G/B all zero. |
-| 1    | g           | u8      | Pulse Green.                                |
-| 2    | b           | u8      | Pulse Blue.                                 |
-| 3    | probability | percent | Chance per beat (0..100%). Default 100%.    |
+| Slot | Name        | Unit    | Description                                                          |
+|------|-------------|---------|----------------------------------------------------------------------|
+| 0    | r           | u8      | Pulse Red. White default if R/G/B all zero.                          |
+| 1    | g           | u8      | Pulse Green.                                                         |
+| 2    | b           | u8      | Pulse Blue.                                                          |
+| 3    | probability | percent | Chance per beat (0..100%). Default 100%.                             |
+| 4    | group       | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ### Pulse Per Bar (id 12)
 
@@ -137,13 +140,14 @@ Fires one pulse per beat at the supplied BPM. Broadcast (all groups). Sits natur
 
 Fires one pulse every N beats (default 4 = one per bar in 4/4). Useful for anchor pulses on top of a wash without the constant sparkle texture.
 
-| Slot | Name          | Unit    | Description                              |
-|------|---------------|---------|------------------------------------------|
-| 0    | r             | u8      | Pulse Red. White default if all zero.    |
-| 1    | g             | u8      | Pulse Green.                             |
-| 2    | b             | u8      | Pulse Blue.                              |
-| 3    | probability   | percent | Chance per bar (0..100%). Default 100%.  |
-| 4    | beats_per_bar | count   | Beats between pulses (1..16). Default 4. |
+| Slot | Name          | Unit    | Description                                                          |
+|------|---------------|---------|----------------------------------------------------------------------|
+| 0    | r             | u8      | Pulse Red. White default if all zero.                                |
+| 1    | g             | u8      | Pulse Green.                                                         |
+| 2    | b             | u8      | Pulse Blue.                                                          |
+| 3    | probability   | percent | Chance per bar (0..100%). Default 100%.                              |
+| 4    | beats_per_bar | count   | Beats between pulses (1..16). Default 4.                             |
+| 5    | group         | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ### Group Cascade (id 13)
 
@@ -165,19 +169,20 @@ Rotates a pulse around groups 1..N, one beat per group. Broadcast (block 0) is l
 
 Layered drift wash + sparkle-on-beat in a single FX. The wash cycles between anchors A and B over the cycle time; the sparkle fires a pulse on each beat at the supplied BPM. Single cue for the most-common ambient-bed + beat-texture composition.
 
-| Slot | Name        | Unit    | Description                                         |
-|------|-------------|---------|-----------------------------------------------------|
-| 0    | a_r         | u8      | Wash anchor A Red.                                  |
-| 1    | a_g         | u8      | Wash anchor A Green.                                |
-| 2    | a_b         | u8      | Wash anchor A Blue.                                 |
-| 3    | b_r         | u8      | Wash anchor B Red.                                  |
-| 4    | b_g         | u8      | Wash anchor B Green.                                |
-| 5    | b_b         | u8      | Wash anchor B Blue.                                 |
-| 6    | cycle       | 100ms   | Wash cycle time. Default 80 (~8 s) when zero.       |
-| 7    | s_r         | u8      | Sparkle Red. White default if all sparkle RGB zero. |
-| 8    | s_g         | u8      | Sparkle Green.                                      |
-| 9    | s_b         | u8      | Sparkle Blue.                                       |
-| 10   | probability | percent | Sparkle chance per beat (0..100%). Default 100%.    |
+| Slot | Name        | Unit    | Description                                                          |
+|------|-------------|---------|----------------------------------------------------------------------|
+| 0    | a_r         | u8      | Wash anchor A Red.                                                   |
+| 1    | a_g         | u8      | Wash anchor A Green.                                                 |
+| 2    | a_b         | u8      | Wash anchor A Blue.                                                  |
+| 3    | b_r         | u8      | Wash anchor B Red.                                                   |
+| 4    | b_g         | u8      | Wash anchor B Green.                                                 |
+| 5    | b_b         | u8      | Wash anchor B Blue.                                                  |
+| 6    | cycle       | 100ms   | Wash cycle time. Default 80 (~8 s) when zero.                        |
+| 7    | s_r         | u8      | Sparkle Red. White default if all sparkle RGB zero.                  |
+| 8    | s_g         | u8      | Sparkle Green.                                                       |
+| 9    | s_b         | u8      | Sparkle Blue.                                                        |
+| 10   | probability | percent | Sparkle chance per beat (0..100%). Default 100%.                     |
+| 11   | group       | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ## Buildup
 
@@ -187,13 +192,14 @@ Layered drift wash + sparkle-on-beat in a single FX. The wash cycles between anc
 
 Ramps Master + Pulse Probability from start to target over buildup_s seconds. Fires one pulse per beat. Auto-finishes after the buildup window so the next cue (typically the drop) takes over cleanly.
 
-| Slot | Name               | Unit    | Description                                  |
-|------|--------------------|---------|----------------------------------------------|
-| 0    | r                  | u8      | Pulse Red. White default if all zero.        |
-| 1    | g                  | u8      | Pulse Green.                                 |
-| 2    | b                  | u8      | Pulse Blue.                                  |
-| 3    | target_probability | percent | Probability at end of buildup. Default 100%. |
-| 4    | start_master       | u8      | Master at start of buildup. Default 64.      |
+| Slot | Name               | Unit    | Description                                                          |
+|------|--------------------|---------|----------------------------------------------------------------------|
+| 0    | r                  | u8      | Pulse Red. White default if all zero.                                |
+| 1    | g                  | u8      | Pulse Green.                                                         |
+| 2    | b                  | u8      | Pulse Blue.                                                          |
+| 3    | target_probability | percent | Probability at end of buildup. Default 100%.                         |
+| 4    | start_master       | u8      | Master at start of buildup. Default 64.                              |
+| 5    | group              | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ## Drop
 
@@ -203,10 +209,11 @@ Ramps Master + Pulse Probability from start to target over buildup_s seconds. Fi
 
 Max strobe rate for a short window, then auto-finish. A drop accent. Leaves wash channels alone so an underlying wash from a previous FX's release tail can still bleed through.
 
-| Slot | Name        | Unit  | Description                                       |
-|------|-------------|-------|---------------------------------------------------|
-| 0    | duration    | 100ms | Burst length in 100 ms units. Default 5 (500 ms). |
-| 1    | strobe_rate | u8    | Strobe rate (0..255 -> 0..4 Hz). Default 255.     |
+| Slot | Name        | Unit  | Description                                                          |
+|------|-------------|-------|----------------------------------------------------------------------|
+| 0    | duration    | 100ms | Burst length in 100 ms units. Default 5 (500 ms).                    |
+| 1    | strobe_rate | u8    | Strobe rate (0..255 -> 0..4 Hz). Default 255.                        |
+| 2    | group       | count | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
 
 ## Transition
 
@@ -216,9 +223,19 @@ Max strobe rate for a short window, then auto-finish. A drop accent. Leaves wash
 
 Ramps Master from start value to 0 over buildup_s seconds. Leaves RGB channels alone so the final state is just 'lights off, colours preserved'. For instant blackout use the `stop` cue instead.
 
-| Slot | Name         | Unit | Description                           |
-|------|--------------|------|---------------------------------------|
-| 0    | start_master | u8   | Master at start of fade. Default 255. |
+| Slot | Name         | Unit  | Description                                                          |
+|------|--------------|-------|----------------------------------------------------------------------|
+| 0    | start_master | u8    | Master at start of fade. Default 255.                                |
+| 1    | group        | count | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
+
+### Blackout (id 254)
+
+`blackout` - transition
+
+Writes zero to every output channel for one tick, then auto-finishes. The `stop` cue is an alias. Used to reset the fleet to dark at song boundaries (e.g. before a fade-in from black) or any time the LD wants an immediate blackout. Covers the broadcast block and all 9 group blocks.
+
+| Slot | Name | Unit | Description |
+|------|------|------|-------------|
 
 ---
 

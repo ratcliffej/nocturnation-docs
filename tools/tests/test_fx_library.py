@@ -37,6 +37,7 @@ from nocturnation_orchestrator.fx.library.wash_with_sparkle import WashWithSpark
 from nocturnation_orchestrator.fx.library.linear_buildup import LinearBuildup
 from nocturnation_orchestrator.fx.library.strobe_burst import StrobeBurst
 from nocturnation_orchestrator.fx.library.fade_to_black import FadeToBlack
+from nocturnation_orchestrator.fx.library.blackout import Blackout
 
 
 def _u():
@@ -88,15 +89,16 @@ class TestChannelConstants:
 # ---------------------------------------------------------------------------
 
 EXPECTED_IDS = {
-    1:  ("Quiet Wash",        "ambient"),
-    2:  ("Drift Wash",        "ambient"),
-    11: ("Sparkle On Beat",   "beat"),
-    12: ("Pulse Per Bar",     "beat"),
-    13: ("Group Cascade",     "beat"),
-    14: ("Wash With Sparkle", "beat"),
-    21: ("Linear Buildup",    "buildup"),
-    32: ("Strobe Burst",      "drop"),
-    41: ("Fade To Black",     "transition"),
+    1:   ("Quiet Wash",        "ambient"),
+    2:   ("Drift Wash",        "ambient"),
+    11:  ("Sparkle On Beat",   "beat"),
+    12:  ("Pulse Per Bar",     "beat"),
+    13:  ("Group Cascade",     "beat"),
+    14:  ("Wash With Sparkle", "beat"),
+    21:  ("Linear Buildup",    "buildup"),
+    32:  ("Strobe Burst",      "drop"),
+    41:  ("Fade To Black",     "transition"),
+    254: ("Blackout",          "transition"),
 }
 
 
@@ -145,6 +147,34 @@ class TestQuietWash:
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_INT) == 200
         assert _ch(u, CH_MASTER) == 255
+
+    def test_group_routes_to_correct_block(self):
+        # Group 3: writes hit block 3 (universe ch 121..160), broadcast
+        # block (ch 1..40) stays untouched.
+        fx = _make(QuietWash, params=(100, 100, 100, 0, 0, 3))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        # Group 3 master at universe ch 121.
+        assert _ch(u, block_channel(3, CH_MASTER)) == 255
+        assert _ch(u, block_channel(3, CH_WASH_A_R)) == 100
+        # Broadcast block untouched.
+        assert _ch(u, CH_MASTER) == 0
+        assert _ch(u, CH_WASH_A_R) == 0
+
+    def test_group_zero_routes_to_broadcast(self):
+        # The default (group=0) writes to the broadcast block.
+        fx = _make(QuietWash, params=(100, 100, 100, 0, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_MASTER) == 255
+        assert _ch(u, CH_WASH_A_R) == 100
+
+    def test_group_param_omitted_in_cue_defaults_to_broadcast(self):
+        # The cue parser always builds the params tuple to len(PARAMS),
+        # so an omitted group token in the cue file becomes 0 in slot 5.
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("00:00 quiet_wash 100 100 100")
+        assert f.cues[0].params == (100, 100, 100, 0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +468,46 @@ class TestFadeToBlack:
         fx = _make(FadeToBlack, buildup_s=2)
         assert not fx.is_finished(now_ms=1500)
         assert fx.is_finished(now_ms=2500)
+
+
+# ---------------------------------------------------------------------------
+# Blackout
+# ---------------------------------------------------------------------------
+
+class TestBlackout:
+    def test_writes_zero_to_broadcast_block(self):
+        # Pre-fill some channels to simulate a wash being interrupted.
+        u = _u()
+        u[0] = 255       # ch 1 master
+        u[10] = 200      # ch 11 wash A R
+        u[12] = 200      # ch 13 wash A B
+        u[5] = 255       # ch 6 pulse trigger
+        fx = _make(Blackout)
+        fx.tick(now_ms=0, universe=u)
+        # Every broadcast-block channel should be zero now.
+        for ch in range(40):
+            assert u[ch] == 0, "ch %d should be zero, got %d" % (ch + 1, u[ch])
+
+    def test_writes_zero_to_group_blocks_too(self):
+        # Pre-fill channels in groups 1..9 (broadcast = block 0;
+        # group 1 starts at offset 40, etc.).
+        u = _u()
+        for block in range(10):
+            u[block * 40] = 255  # master of each block
+        fx = _make(Blackout)
+        fx.tick(now_ms=0, universe=u)
+        for block in range(10):
+            assert u[block * 40] == 0
+
+    def test_finishes_after_one_tick(self):
+        fx = _make(Blackout)
+        assert not fx.is_finished(now_ms=0)
+        u = _u()
+        fx.tick(now_ms=10, universe=u)
+        assert fx.is_finished(now_ms=20)
+
+    def test_stop_cue_resolves_to_blackout(self):
+        # The `stop` alias in cue files lands on the Blackout FX.
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("03:00 stop")
+        assert f.cues[0].fx_id == Blackout.id

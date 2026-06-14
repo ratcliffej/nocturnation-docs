@@ -448,14 +448,18 @@ class TestCueScheduler:
         fired = [c["fx_id"] for c in runner.calls[starts_before:]]
         assert fired == [11]
 
-    def test_stop_cue_emits_cancel(self):
+    def test_stop_cue_admits_blackout(self):
         runner = FakeRunner()
         sched = CueScheduler(runner)
         sched.set_cue_file(_coldplay_cues(), now_ms=0)
         sched.advance(35_000, now_ms=10_000)
-        # The stop cue maps to fx_id=0 (which the runner treats as cancel).
+        # The `stop` cue is a parser alias for Blackout (id 254).
+        # Scheduler admits Blackout via the normal runner.start path
+        # so the dispatcher gets one final all-zero universe frame
+        # before the runner goes idle.
+        from nocturnation_orchestrator.fx.library.blackout import Blackout
         ids = [c["fx_id"] for c in runner.calls]
-        assert 0 in ids
+        assert Blackout.id in ids
 
     def test_on_cue_fire_callback_invoked(self):
         # The debug observer should be called for every cue admission.
@@ -640,6 +644,76 @@ class TestCueSchedulerLyrics:
         sched.advance(10_000, now_ms=1000)
         assert f.default_bpm == 100
 
+    def test_reload_swaps_file_without_disturbing_running_fx(self):
+        # Hot-reload model: scheduler.reload_cue_file() swaps the cue
+        # file, advances cursors past the current position so already-
+        # elapsed cues don't re-fire, applies past bpm cues so
+        # default_bpm matches expected state, and DOES NOT call into
+        # the runner (the currently-running FX keeps writing).
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        # Initial file: quiet_wash on default at 00:00, then nothing.
+        f1 = parse_cues("""
+            @bpm 100
+            @default_fx quiet_wash 40 80 120
+        """)
+        sched.set_cue_file(f1, now_ms=0)
+        # Play to 30 s.
+        sched.advance(30_000, now_ms=30_000)
+        calls_before = list(runner.calls)
+        cancels_before = list(runner.cancels)
+
+        # Author the file: add a bpm change at 10 s, a cue at 20 s, and
+        # a future cue at 60 s. Reload at the current position (30 s).
+        f2 = parse_cues("""
+            @bpm 100
+            @default_fx quiet_wash 40 80 120
+            00:10 bpm 138
+            00:20 sparkle_on_beat 255 0 0 100
+            01:00 sparkle_on_beat 0 0 255 100
+        """)
+        sched.reload_cue_file(f2, now_ms=30_000, position_ms=30_000)
+        # Runner state untouched.
+        assert runner.calls == calls_before
+        assert runner.cancels == cancels_before
+        # Past bpm cue applied to the new file's default_bpm.
+        assert f2.default_bpm == 138
+        # Subsequent advance should fire the 01:00 cue when we get
+        # there; the 00:20 cue should NOT re-fire.
+        sched.advance(60_500, now_ms=60_500)
+        added = runner.calls[len(calls_before):]
+        added_ids = [c["fx_id"] for c in added]
+        assert added_ids == [11]   # only the 60 s sparkle, not 20 s
+        # The 60 s cue picked up the new BPM (138).
+        assert added[0]["bpm"] == 138
+
+    def test_reload_lyric_cursor_skips_past_anchors(self):
+        # Same idea for lyric anchors: past-position lyrics don't
+        # surface again on reload.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues("# 00:10 A\n"), now_ms=0)
+        sched.advance(15_000, now_ms=15_000)
+        # Reload with a file that adds a past anchor and a future one.
+        f2 = parse_cues("""
+            # 00:05 PAST
+            # 00:10 A
+            # 00:20 FUTURE
+        """)
+        observed.clear()
+        sched.reload_cue_file(f2, now_ms=15_000, position_ms=15_000)
+        # No replays yet.
+        assert observed == []
+        # Advance to 20 s: only FUTURE fires.
+        sched.advance(20_500, now_ms=20_500)
+        assert observed == ["FUTURE"]
+
     def test_backward_seek_reapplies_intermediate_bpm(self):
         # Two bpm changes on the same timeline; seek back to a point
         # AFTER the first but BEFORE the second should leave the
@@ -803,6 +877,67 @@ class TestMainLoopSmoke:
         # but more than 1.
         n = len(disp.sends)
         assert 4 <= n <= 20, "expected ~8 dispatches, got %d" % n
+
+    def test_main_loop_reloads_cue_file_on_mtime_change(self, tmp_path):
+        # Author flow: orchestrator running, song playing, LD saves a
+        # change to the .cues file. Within one poll cycle the new
+        # cues should take effect. We exercise this from inside a
+        # single run() by mutating the file from the test-injected
+        # sleep() callback at a known wall-clock moment.
+        import os
+        cue_path = tmp_path / "x-track.cues"
+        cue_path.write_text(
+            "@bpm 100\n"
+            "@default_fx quiet_wash 40 80 120\n"
+        )
+        original_mtime = cue_path.stat().st_mtime
+
+        # Keep returning the same playing snapshot indefinitely so
+        # the orchestrator polls many times.
+        class RepeatingBackend:
+            def poll(self):
+                return NowPlaying(
+                    True, "X", "Track",
+                    position_ms=0, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        modified = [False]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+            # Once the simulated clock has passed 1500 ms, rewrite
+            # the cue file with an added cue and bump mtime so the
+            # next poll detects the change.
+            if not modified[0] and clock[0] >= 1500:
+                cue_path.write_text(
+                    "@bpm 100\n"
+                    "@default_fx quiet_wash 40 80 120\n"
+                    "01:00 sparkle_on_beat 255 0 0 100\n"
+                )
+                os.utime(cue_path, (original_mtime + 5, original_mtime + 5))
+                modified[0] = True
+
+        run(
+            nowplaying_backend=RepeatingBackend(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=False,
+            sleep=sleep,
+            now_ms=now_ms,
+            iteration_budget=200,  # enough to cross multiple polls
+        )
+
+        joined = "\n".join(lines)
+        # The original file was loaded.
+        assert "matcher: x-track" in joined
+        # The reload was detected and applied.
+        assert "reload: x-track" in joined
 
     def test_debug_output_uses_slug_for_artist_title(self, tmp_path):
         # The LD reads the orchestrator's log to know what file name

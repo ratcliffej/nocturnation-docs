@@ -12,6 +12,7 @@ Channels written every tick:
 
 from ..base import Fx, set_ch
 from ..channels import (
+    block_channel, clamp_group,
     CH_MASTER,
     CH_WASH_A_R, CH_WASH_A_G, CH_WASH_A_B,
     CH_WASH_B_R, CH_WASH_B_G, CH_WASH_B_B,
@@ -43,6 +44,7 @@ class DriftWash(Fx):
         ("b_b",    "u8",    "Anchor B Blue (0..255)."),
         ("cycle",  "100ms", "Drift cycle time in 100 ms units (1..255 = "
                             "100 ms..25.5 s). Default 80 (~8 s) when zero."),
+        ("group",  "count", "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -55,16 +57,18 @@ class DriftWash(Fx):
         self._bg = params[4]
         self._bb = params[5]
         self._cycle = params[6] if params[6] != 0 else 80
+        self._group = clamp_group(params[7] if len(params) > 7 else 0)
 
     def tick(self, now_ms, universe):
-        set_ch(universe, CH_MASTER,     255)
-        set_ch(universe, CH_WASH_A_R,   self._ar)
-        set_ch(universe, CH_WASH_A_G,   self._ag)
-        set_ch(universe, CH_WASH_A_B,   self._ab)
-        set_ch(universe, CH_WASH_B_R,   self._br)
-        set_ch(universe, CH_WASH_B_G,   self._bg)
-        set_ch(universe, CH_WASH_B_B,   self._bb)
-        set_ch(universe, CH_WASH_CYCLE, self._cycle)
-        set_ch(universe, CH_WASH_INT,   220)
-        set_ch(universe, CH_WASH_ATK,   30)
-        set_ch(universe, CH_WASH_REL,   30)
+        g = self._group
+        set_ch(universe, block_channel(g, CH_MASTER),     255)
+        set_ch(universe, block_channel(g, CH_WASH_A_R),   self._ar)
+        set_ch(universe, block_channel(g, CH_WASH_A_G),   self._ag)
+        set_ch(universe, block_channel(g, CH_WASH_A_B),   self._ab)
+        set_ch(universe, block_channel(g, CH_WASH_B_R),   self._br)
+        set_ch(universe, block_channel(g, CH_WASH_B_G),   self._bg)
+        set_ch(universe, block_channel(g, CH_WASH_B_B),   self._bb)
+        set_ch(universe, block_channel(g, CH_WASH_CYCLE), self._cycle)
+        set_ch(universe, block_channel(g, CH_WASH_INT),   220)
+        set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
+        set_ch(universe, block_channel(g, CH_WASH_REL),   30)

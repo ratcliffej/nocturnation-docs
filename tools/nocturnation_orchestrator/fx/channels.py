@@ -62,3 +62,17 @@ def block_channel(block, channel):
     if not (1 <= channel <= ACTIVE_CHANNELS_PER_BLOCK):
         raise ValueError("channel out of range for block: %d" % channel)
     return block * BLOCK_WIDTH + channel
+
+
+def clamp_group(value):
+    """Clamp a `group` param value to a valid block index (0..9).
+
+    0 = broadcast (every Lume regardless of configured group), 1..9 =
+    that group only. Used by every single-target FX to coerce a
+    possibly-malformed cue-file value into a safe block index.
+    """
+    if value is None or value < 0:
+        return 0
+    if value > 9:
+        return 9
+    return value

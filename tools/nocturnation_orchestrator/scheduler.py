@@ -190,6 +190,50 @@ class CueScheduler:
         """Tear down. Cancels any running FX and clears state."""
         self.set_cue_file(None, now_ms=now_ms)
 
+    def reload_cue_file(self, cue_file, *, now_ms, position_ms):
+        """Hot-reload the active cue file at the current position
+        without restarting playback or interrupting the running FX.
+
+        Used by the main loop when it detects the file has been
+        re-saved on disk while the song is still playing. The LD's
+        authoring workflow is: edit the .cues file, save, watch the
+        change land within ~1 s without scrubbing the music.
+
+        Behaviour:
+          - cue_file is swapped wholesale; the new cues / lyrics /
+            offset / default_bpm all take effect.
+          - All cues that are AT OR BEFORE position_ms are treated as
+            "already happened" - they don't fire. The runner's
+            current FX continues uninterrupted.
+          - All `bpm` cues at or before position_ms ARE applied to
+            cue_file.default_bpm so the value matches what the most
+            recent bpm cue in the new file would set it to.
+          - _original_default_bpm is updated to the new file's @bpm.
+          - The runner is NOT touched. The currently-running FX
+            (started by the previous file's cues) keeps writing the
+            universe until a fresh cue at-or-after position_ms fires.
+        """
+        self.cue_file = cue_file
+        self._original_default_bpm = cue_file.default_bpm
+        # Advance cue cursor past already-elapsed entries; apply any
+        # past bpm cues so default_bpm matches the rolled-forward
+        # state of the file.
+        self._cursor = 0
+        while (self._cursor < len(cue_file.cues)
+               and cue_file.cues[self._cursor].time_ms <= position_ms):
+            cue = cue_file.cues[self._cursor]
+            self._cursor += 1
+            if cue.kind == "bpm":
+                cue_file.default_bpm = cue.bpm
+        # Same for lyric cursor.
+        self._lyric_cursor = 0
+        while (self._lyric_cursor < len(cue_file.lyrics)
+               and cue_file.lyrics[self._lyric_cursor].time_ms <= position_ms):
+            self._lyric_cursor += 1
+        # Keep _last_position_ms - we're at the same wall-clock spot,
+        # and we DO NOT want this to read as a seek on the next
+        # advance().
+
     def advance(self, position_ms, now_ms):
         """Fire any cues + lyrics that fall at or before ``position_ms``.
 

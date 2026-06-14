@@ -26,3 +26,4 @@ from . import wash_with_sparkle   # noqa: F401  id=14
 from . import linear_buildup      # noqa: F401  id=21
 from . import strobe_burst        # noqa: F401  id=32
 from . import fade_to_black       # noqa: F401  id=41
+from . import blackout            # noqa: F401  id=254

@@ -23,6 +23,7 @@ holds the phase.
 
 from ..base import Fx, set_ch
 from ..channels import (
+    block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -60,6 +61,7 @@ class WashWithSparkle(Fx):
         ("s_g",         "u8",      "Sparkle Green."),
         ("s_b",         "u8",      "Sparkle Blue."),
         ("probability", "percent", "Sparkle chance per beat (0..100%). Default 100%."),
+        ("group",       "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -76,24 +78,26 @@ class WashWithSparkle(Fx):
             sr, sg, sb = 255, 255, 255
         self._sr, self._sg, self._sb = sr, sg, sb
         self._prob = params[10] if params[10] != 0 else 255
+        self._group = clamp_group(params[11] if len(params) > 11 else 0)
         # Beat cadence.
         self._beat_ms = max(1, int(round(60_000.0 / bpm)))
         self._beat_anchor_ms = now_ms - position_ms
         self._last_beat_index = -1
 
     def tick(self, now_ms, universe):
+        g = self._group
         # Wash (continuous).
-        set_ch(universe, CH_MASTER,     255)
-        set_ch(universe, CH_WASH_A_R,   self._ar)
-        set_ch(universe, CH_WASH_A_G,   self._ag)
-        set_ch(universe, CH_WASH_A_B,   self._ab)
-        set_ch(universe, CH_WASH_B_R,   self._br)
-        set_ch(universe, CH_WASH_B_G,   self._bg)
-        set_ch(universe, CH_WASH_B_B,   self._bb)
-        set_ch(universe, CH_WASH_CYCLE, self._cycle)
-        set_ch(universe, CH_WASH_INT,   220)
-        set_ch(universe, CH_WASH_ATK,   30)
-        set_ch(universe, CH_WASH_REL,   30)
+        set_ch(universe, block_channel(g, CH_MASTER),     255)
+        set_ch(universe, block_channel(g, CH_WASH_A_R),   self._ar)
+        set_ch(universe, block_channel(g, CH_WASH_A_G),   self._ag)
+        set_ch(universe, block_channel(g, CH_WASH_A_B),   self._ab)
+        set_ch(universe, block_channel(g, CH_WASH_B_R),   self._br)
+        set_ch(universe, block_channel(g, CH_WASH_B_G),   self._bg)
+        set_ch(universe, block_channel(g, CH_WASH_B_B),   self._bb)
+        set_ch(universe, block_channel(g, CH_WASH_CYCLE), self._cycle)
+        set_ch(universe, block_channel(g, CH_WASH_INT),   220)
+        set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
+        set_ch(universe, block_channel(g, CH_WASH_REL),   30)
         # Sparkle (beat-aligned rising edge).
         elapsed = now_ms - self._beat_anchor_ms
         if elapsed < 0:
@@ -101,11 +105,12 @@ class WashWithSparkle(Fx):
         beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
-        set_ch(universe, CH_PULSE_R,    self._sr)
-        set_ch(universe, CH_PULSE_G,    self._sg)
-        set_ch(universe, CH_PULSE_B,    self._sb)
-        set_ch(universe, CH_PULSE_TRIG, TRIGGER_HI if on_beat else TRIGGER_LO)
-        set_ch(universe, CH_PULSE_ATK,  16)
-        set_ch(universe, CH_PULSE_SUS,  16)
-        set_ch(universe, CH_PULSE_REL,  96)
-        set_ch(universe, CH_PULSE_PROB, self._prob)
+        set_ch(universe, block_channel(g, CH_PULSE_R),    self._sr)
+        set_ch(universe, block_channel(g, CH_PULSE_G),    self._sg)
+        set_ch(universe, block_channel(g, CH_PULSE_B),    self._sb)
+        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
+               TRIGGER_HI if on_beat else TRIGGER_LO)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  96)
+        set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)
