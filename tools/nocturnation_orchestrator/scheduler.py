@@ -190,11 +190,19 @@ class CueScheduler:
             self._last_position_ms = position_ms
             return
 
+        # Late-join: the first advance() call ever, OR the first call
+        # after a cue-file change. If the song is already past zero
+        # we treat this as a forward seek so the scheduler lands on
+        # the most-recent cue / lyric instead of firing every prior
+        # event in one tick. Without this the operator pressing play
+        # mid-song dumps a wall of pre-position events.
+        late_join = (self._last_position_ms < 0 and position_ms > 0)
+
         seek_back = (
             self._last_position_ms >= 0
             and position_ms + PAUSE_DRIFT_THRESHOLD_MS < self._last_position_ms
         )
-        seek_forward = (
+        seek_forward = late_join or (
             self._last_position_ms >= 0
             and position_ms - self._last_position_ms > SEEK_FORWARD_THRESHOLD_MS
         )

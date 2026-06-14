@@ -462,6 +462,69 @@ class TestCueSchedulerLyrics:
         sched.advance(25_000, now_ms=1000)
         assert observed == ["B"]
 
+    def test_late_join_collapses_lyrics(self):
+        # Operator presses play mid-song (or wall-clock interpolation
+        # has already crossed several lyrics by the time the runner
+        # gets ticked). The first advance() should fire only the most-
+        # recent lyric, not dump every prior one in a burst.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:16  First
+            # 00:24  Second
+            # 00:32  Third
+            # 00:55  Future
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        # First advance is at 53 s - we joined mid-song; collapse to
+        # the most recent prior anchor (Third), don't fire First /
+        # Second too.
+        sched.advance(53_000, now_ms=100)
+        assert observed == ["Third"]
+
+    def test_late_join_collapses_cues(self):
+        # Same as above but for cues - the audible analogue of the
+        # 5-lyrics-at-once dump was 5-cues-at-once.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        # _coldplay_cues has cues at 0, 10s, 20s, 30s, 35s. Default fx
+        # fires on set_cue_file. After that the runner has been called
+        # once (the default_fx start). Joining at 25 s should add only
+        # the cue at 20 s (most-recent prior).
+        calls_before = len(runner.calls)
+        sched.advance(25_000, now_ms=100)
+        added = runner.calls[calls_before:]
+        # Exactly one cue fires (the 20 s sparkle), not three.
+        assert len(added) == 1
+        assert added[0]["fx_id"] == 11   # sparkle_on_beat
+
+    def test_late_join_at_zero_still_fires_zero_cue(self):
+        # A genuine song-start (position 0 on first advance) is not a
+        # late-join - we want the file's 00:00 cue to fire normally,
+        # not be skipped.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:00  At the very start
+            # 00:10  Later
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        # Both the cue cursor and lyric cursor land on the 00:00
+        # anchor - that's normal monotonic behaviour, not a seek.
+        assert observed == ["At the very start"]
+
     def test_backward_seek_replays_landing_lyric(self):
         runner = FakeRunner()
         observed = []

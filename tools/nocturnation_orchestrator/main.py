@@ -142,17 +142,17 @@ def run(
                     tracker.update_from_poll(snapshot, now)
                     key = (snapshot.artist, snapshot.title)
                     if debug:
-                        # Show interpolated position (what the
-                        # scheduler is actually using) as the headline
-                        # value, plus the raw OS-reported position in
-                        # parentheses so stale-cache behaviour is
-                        # diagnosable from one log.
+                        # Interpolated (live) position is what the
+                        # scheduler is using; that's what the LD cares
+                        # about. The raw OS position is sticky on
+                        # macOS (MediaRemote caches it; nowplaying-cli
+                        # `get-raw` reads the same cached value), so
+                        # printing it every poll is noise.
                         live_pos = tracker.current_position(now)
-                        log("[%s] poll:  %s / %s (playing=%s, OS pos=%s)" % (
+                        log("[%s] poll:  %s / %s (playing=%s)" % (
                             _fmt_pos(live_pos),
                             snapshot.artist, snapshot.title,
                             "yes" if snapshot.is_playing else "no",
-                            _fmt_pos(snapshot.position_ms),
                         ))
                     if key != current_track_key:
                         path = find_cue_path(
