@@ -669,6 +669,40 @@ class TestMainLoopSmoke:
         n = len(disp.sends)
         assert 4 <= n <= 20, "expected ~8 dispatches, got %d" % n
 
+    def test_debug_output_uses_slug_for_artist_title(self, tmp_path):
+        # The LD reads the orchestrator's log to know what file name
+        # the matcher is hunting for. Showing slug form (the same
+        # transformation the matcher applies) trains the LD on the
+        # expected file naming convention.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "Coldplay", "A Sky Full of Stars",
+                       position_ms=0, duration_ms=295_000),
+        ])
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=80,  # enough to cross the 1 s poll boundary
+        )
+        joined = "\n".join(lines)
+        assert "coldplay-a-sky-full-of-stars" in joined
+        # The pre-slug form must NOT appear (we want a single visual
+        # convention so the LD doesn't see two formats).
+        assert "Coldplay / A Sky Full of Stars" not in joined
+        assert "'Coldplay', 'A Sky Full of Stars'" not in joined
+
     def test_inactive_to_active_clears_dispatch_cache(self, tmp_path):
         # If the orchestrator stops sending (no FX) and later
         # re-activates with the same universe bytes, the first frame

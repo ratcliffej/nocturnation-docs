@@ -23,7 +23,7 @@ from .cues import parse_cues_file
 from .fx import library  # noqa: F401  side-effects: register all FX
 from .fx.registry import fx_registry
 from .fx.runner import FxRunner
-from .matcher import find_cue_path
+from .matcher import find_cue_path, slugify
 from .scheduler import CueScheduler, PositionTracker
 
 
@@ -143,6 +143,12 @@ def run(
                 else:
                     tracker.update_from_poll(snapshot, now)
                     key = (snapshot.artist, snapshot.title)
+                    # Render artist/title using the same slug form
+                    # the matcher uses for file lookup, so the LD
+                    # reads the log and knows exactly what filename
+                    # to author. Falls back to a placeholder when
+                    # both fields are empty.
+                    slug = slugify(snapshot.artist, snapshot.title) or "(no-track)"
                     if debug:
                         # Interpolated (live) position is what the
                         # scheduler is using; that's what the LD cares
@@ -151,9 +157,9 @@ def run(
                         # `get-raw` reads the same cached value), so
                         # printing it every poll is noise.
                         live_pos = tracker.current_position(now)
-                        log("[%s] poll:  %s / %s (playing=%s)" % (
+                        log("[%s] poll:  %s (playing=%s)" % (
                             _fmt_pos(live_pos),
-                            snapshot.artist, snapshot.title,
+                            slug,
                             "yes" if snapshot.is_playing else "no",
                         ))
                     if key != current_track_key:
@@ -161,11 +167,11 @@ def run(
                             songs_dir, snapshot.artist, snapshot.title,
                         )
                         if path is None:
-                            log("matcher: no cue file for %s / %s; going silent"
-                                % (snapshot.artist, snapshot.title))
+                            log("matcher: no cue file for %s; going silent"
+                                % slug)
                             scheduler.stop(now_ms=now)
                         else:
-                            log("matcher: %s -> %s" % (key, path.name))
+                            log("matcher: %s -> %s" % (slug, path.name))
                             try:
                                 cue_file = parse_cues_file(path)
                             except Exception as exc:
