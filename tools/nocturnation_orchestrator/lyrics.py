@@ -142,16 +142,18 @@ def render_skeleton(artist, title, lyric_lines, *,
                     default_fx_params="20 40 80"):
     """Render a starter `.cues` file as a string.
 
-    Each lyric line becomes a `#` comment at its stamped time. Blank
-    cue rows between lyric anchors are emitted as `# TODO:` markers
-    so the LD has a clear place to drop in an FX cue.
+    Each lyric line becomes a `#` comment at its stamped time. The
+    LD adds real cue lines between the anchors by hand - the lyric
+    comments orient them in the song; the actual cue authoring is
+    the creative act and shouldn't be auto-pre-stubbed with TODO
+    placeholders that pile up as noise.
     """
     out = []
     out.append("# %s - %s" % (artist, title))
     out.append("#")
     out.append("# Skeleton generated from lrclib.net synced lyrics.")
-    out.append("# Replace # TODO lines with actual cues; the lyric")
-    out.append("# rows are anchor reminders, not cues themselves.")
+    out.append("# The lyric rows are time anchors; add real cue")
+    out.append("# lines between them to choreograph the show.")
     out.append("")
     out.append("@artist     %s" % artist)
     out.append("@title      %s" % title)
@@ -164,12 +166,9 @@ def render_skeleton(artist, title, lyric_lines, *,
         out.append("")
         return "\n".join(out) + "\n"
 
-    for i, line in enumerate(lyric_lines):
+    for line in lyric_lines:
         stamp = _fmt_time(line.time_ms)
         out.append("# %s  %s" % (stamp, line.text))
-        # TODO marker only between lyrics, not after the last one.
-        if i < len(lyric_lines) - 1:
-            out.append("# %s  TODO: cue here" % stamp)
     out.append("")
     return "\n".join(out) + "\n"
 

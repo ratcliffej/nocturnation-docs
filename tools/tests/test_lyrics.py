@@ -137,14 +137,20 @@ class TestRenderSkeleton:
         assert "# 00:30  When you try your best" in body
         assert "# 01:05  Lights will guide you home" in body
 
-    def test_todo_markers_between_lyrics(self):
+    def test_no_todo_markers_emitted(self):
+        # Skeleton output is just the lyric anchors; the LD adds real
+        # cue lines between them. TODO markers were noise.
         lines = [
             LyricLine(time_ms=30_000, text="First"),
             LyricLine(time_ms=60_000, text="Second"),
+            LyricLine(time_ms=90_000, text="Third"),
         ]
         body = render_skeleton("X", "Y", lines)
-        # Exactly one TODO between two lyrics; none after the last.
-        assert body.count("TODO: cue here") == 1
+        assert "TODO" not in body
+        # All three lyric lines present.
+        assert "# 00:30  First" in body
+        assert "# 01:00  Second" in body
+        assert "# 01:30  Third" in body
 
     def test_no_synced_lyrics_renders_placeholder(self):
         body = render_skeleton("X", "Y", [])
