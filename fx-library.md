@@ -92,14 +92,13 @@ loader converts to u8 before calling the FX's `start()`.
 
 Sustained single-colour wash. Holds Wash A; Wash B is zeroed so there is no drift cycle. The default ambient bed.
 
-| Slot | Name       | Unit | Description                                     |
-|------|------------|------|-------------------------------------------------|
-| 0    | r          | u8   | Wash Red (0..255).                              |
-| 1    | g          | u8   | Wash Green (0..255).                            |
-| 2    | b          | u8   | Wash Blue (0..255).                             |
-| 3    | intensity  | u8   | Wash intensity (0..255). Default 200 when zero. |
-| 4    | master     | u8   | Master scalar (0..255). Default 255 when zero.  |
-| 5    | _reserved_ | -    | reserved                                        |
+| Slot | Name      | Unit | Description                                     |
+|------|-----------|------|-------------------------------------------------|
+| 0    | r         | u8   | Wash Red (0..255).                              |
+| 1    | g         | u8   | Wash Green (0..255).                            |
+| 2    | b         | u8   | Wash Blue (0..255).                             |
+| 3    | intensity | u8   | Wash intensity (0..255). Default 200 when zero. |
+| 4    | master    | u8   | Master scalar (0..255). Default 255 when zero.  |
 
 ### Drift Wash (id 2)
 
@@ -131,8 +130,6 @@ Fires one pulse per beat at the supplied BPM. Broadcast (all groups). Sits natur
 | 1    | g           | u8      | Pulse Green.                                |
 | 2    | b           | u8      | Pulse Blue.                                 |
 | 3    | probability | percent | Chance per beat (0..100%). Default 100%.    |
-| 4    | _reserved_  | -       | reserved                                    |
-| 5    | _reserved_  | -       | reserved                                    |
 
 ### Pulse Per Bar (id 12)
 
@@ -147,7 +144,6 @@ Fires one pulse every N beats (default 4 = one per bar in 4/4). Useful for ancho
 | 2    | b             | u8      | Pulse Blue.                              |
 | 3    | probability   | percent | Chance per bar (0..100%). Default 100%.  |
 | 4    | beats_per_bar | count   | Beats between pulses (1..16). Default 4. |
-| 5    | _reserved_    | -       | reserved                                 |
 
 ### Group Cascade (id 13)
 
@@ -162,7 +158,6 @@ Rotates a pulse around groups 1..N, one beat per group. Broadcast (block 0) is l
 | 2    | b           | u8      | Pulse Blue.                                 |
 | 3    | probability | percent | Chance per beat (0..100%). Default 100%.    |
 | 4    | num_groups  | count   | Groups to cascade across (1..9). Default 4. |
-| 5    | _reserved_  | -       | reserved                                    |
 
 ### Wash With Sparkle (id 14)
 
@@ -199,7 +194,6 @@ Ramps Master + Pulse Probability from start to target over buildup_s seconds. Fi
 | 2    | b                  | u8      | Pulse Blue.                                  |
 | 3    | target_probability | percent | Probability at end of buildup. Default 100%. |
 | 4    | start_master       | u8      | Master at start of buildup. Default 64.      |
-| 5    | _reserved_         | -       | reserved                                     |
 
 ## Drop
 
@@ -213,10 +207,6 @@ Max strobe rate for a short window, then auto-finish. A drop accent. Leaves wash
 |------|-------------|-------|---------------------------------------------------|
 | 0    | duration    | 100ms | Burst length in 100 ms units. Default 5 (500 ms). |
 | 1    | strobe_rate | u8    | Strobe rate (0..255 -> 0..4 Hz). Default 255.     |
-| 2    | _reserved_  | -     | reserved                                          |
-| 3    | _reserved_  | -     | reserved                                          |
-| 4    | _reserved_  | -     | reserved                                          |
-| 5    | _reserved_  | -     | reserved                                          |
 
 ## Transition
 
@@ -229,11 +219,6 @@ Ramps Master from start value to 0 over buildup_s seconds. Leaves RGB channels a
 | Slot | Name         | Unit | Description                           |
 |------|--------------|------|---------------------------------------|
 | 0    | start_master | u8   | Master at start of fade. Default 255. |
-| 1    | _reserved_   | -    | reserved                              |
-| 2    | _reserved_   | -    | reserved                              |
-| 3    | _reserved_   | -    | reserved                              |
-| 4    | _reserved_   | -    | reserved                              |
-| 5    | _reserved_   | -    | reserved                              |
 
 ---
 

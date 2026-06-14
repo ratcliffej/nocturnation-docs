@@ -54,8 +54,6 @@ class SparkleOnBeat(Fx):
         ("g",           "u8",      "Pulse Green."),
         ("b",           "u8",      "Pulse Blue."),
         ("probability", "percent", "Chance per beat (0..100%). Default 100%."),
-        (None,          None,      "reserved"),
-        (None,          None,      "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):

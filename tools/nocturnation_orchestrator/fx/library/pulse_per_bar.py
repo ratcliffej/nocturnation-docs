@@ -41,7 +41,6 @@ class PulsePerBar(Fx):
         ("b",             "u8",      "Pulse Blue."),
         ("probability",   "percent", "Chance per bar (0..100%). Default 100%."),
         ("beats_per_bar", "count",   "Beats between pulses (1..16). Default 4."),
-        (None,            None,      "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):

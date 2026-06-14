@@ -46,7 +46,6 @@ class LinearBuildup(Fx):
         ("b",                   "u8",      "Pulse Blue."),
         ("target_probability",  "percent", "Probability at end of buildup. Default 100%."),
         ("start_master",        "u8",      "Master at start of buildup. Default 64."),
-        (None,                  None,      "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):

@@ -50,7 +50,6 @@ class GroupCascade(Fx):
         ("b",           "u8",      "Pulse Blue."),
         ("probability", "percent", "Chance per beat (0..100%). Default 100%."),
         ("num_groups",  "count",   "Groups to cascade across (1..9). Default 4."),
-        (None,          None,      "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):

@@ -51,7 +51,6 @@ class QuietWash(Fx):
         ("b",         "u8",      "Wash Blue (0..255)."),
         ("intensity", "u8",      "Wash intensity (0..255). Default 200 when zero."),
         ("master",    "u8",      "Master scalar (0..255). Default 255 when zero."),
-        (None,        None,      "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):

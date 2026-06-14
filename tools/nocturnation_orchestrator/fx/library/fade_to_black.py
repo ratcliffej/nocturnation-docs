@@ -37,11 +37,6 @@ class FadeToBlack(Fx):
 
     PARAMS = [
         ("start_master", "u8", "Master at start of fade. Default 255."),
-        (None,           None, "reserved"),
-        (None,           None, "reserved"),
-        (None,           None, "reserved"),
-        (None,           None, "reserved"),
-        (None,           None, "reserved"),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
