@@ -964,6 +964,90 @@ class TestMainLoopSmoke:
         # The reload was detected and applied.
         assert "reload: x-track" in joined
 
+    def test_debug_poll_log_throttles_when_state_steady(self, tmp_path):
+        # At 1 Hz polling, --debug used to emit a poll line every
+        # second. Once a song is steady that's just noise. Now:
+        # log every poll if the state changed, otherwise no more
+        # than once per ~10 s.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        # 20 consecutive identical snapshots (same track, playing).
+        class Steady:
+            def poll(self):
+                return NowPlaying(
+                    True, "X", "Track",
+                    position_ms=0, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+
+        run(
+            nowplaying_backend=Steady(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=1500,  # ~30 s simulated time
+        )
+        poll_lines = [l for l in lines if l.startswith("[") and "poll:" in l]
+        # ~30 s window. With state-steady throttling at 10 s, expect
+        # somewhere around 3-5 lines (kickoff + 3 quiet pings).
+        # Without throttling we'd see ~30.
+        assert 1 <= len(poll_lines) <= 6, (
+            "expected throttled poll log, got %d lines:\n%s"
+            % (len(poll_lines), "\n".join(poll_lines))
+        )
+
+    def test_debug_poll_log_fires_on_state_change(self, tmp_path):
+        # State changes (play / pause / track switch) must log
+        # immediately, not wait for the 10 s quiet timer.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        class Toggling:
+            def __init__(self):
+                self._tick = 0
+            def poll(self):
+                # alternate playing / paused on each call
+                self._tick += 1
+                return NowPlaying(
+                    self._tick % 2 == 1,
+                    "X", "Track",
+                    position_ms=self._tick * 1000, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+
+        run(
+            nowplaying_backend=Toggling(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=400,  # ~8 polls
+        )
+        poll_lines = [l for l in lines if l.startswith("[") and "poll:" in l]
+        # Every poll flipped state, so every one should log even
+        # though the 10 s quiet timer hasn't elapsed.
+        assert len(poll_lines) >= 4
+
     def test_debug_output_uses_slug_for_artist_title(self, tmp_path):
         # The LD reads the orchestrator's log to know what file name
         # the matcher is hunting for. Showing slug form (the same

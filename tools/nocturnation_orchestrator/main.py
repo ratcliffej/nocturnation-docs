@@ -29,6 +29,7 @@ from .scheduler import CueScheduler, PositionTracker
 
 TICK_INTERVAL_MS = 20    # 50 Hz
 POLL_INTERVAL_MS = 1000  # nowplaying-cli is ~50 ms per call - throttle
+POLL_LOG_QUIET_MS = 10_000  # debug poll-log min cadence when state is steady
 
 
 def _now_ms():
@@ -131,6 +132,12 @@ def run(
     current_track_key = (None, None)
     current_cue_path = None
     current_cue_mtime = 0.0
+    # Debug-mode poll-log throttle: log every poll on state change,
+    # but otherwise no more than once per ~10 s when nothing's
+    # happening (same track, same play state). Avoids drowning the
+    # log in identical "poll: X (playing=yes)" lines.
+    last_poll_logged_ms = -POLL_LOG_QUIET_MS
+    last_poll_logged_state = (None, None, None)
     iterations = 0
 
     log("orchestrator: started (songs_dir=%s, default_bpm=%d, output=%s%s)"
@@ -172,13 +179,27 @@ def run(
                         # macOS (MediaRemote caches it; nowplaying-cli
                         # `get-raw` reads the same cached value), so
                         # printing it every poll is noise.
-                        live_pos = tracker.current_position(now)
-                        log("[%s] poll:  %s [genre=%s] (playing=%s)" % (
-                            _fmt_pos(live_pos),
-                            slug,
-                            genre_label,
-                            "yes" if snapshot.is_playing else "no",
-                        ))
+                        #
+                        # Throttle: log every poll on state change
+                        # (track / play-state / first time we see this
+                        # snapshot), but otherwise no more than once
+                        # per POLL_LOG_QUIET_MS while nothing's
+                        # changing. Otherwise --debug fills with
+                        # near-identical lines once a song is steady.
+                        state = (snapshot.artist, snapshot.title,
+                                 snapshot.is_playing)
+                        state_changed = state != last_poll_logged_state
+                        quiet_elapsed = now - last_poll_logged_ms
+                        if state_changed or quiet_elapsed >= POLL_LOG_QUIET_MS:
+                            live_pos = tracker.current_position(now)
+                            log("[%s] poll:  %s [genre=%s] (playing=%s)" % (
+                                _fmt_pos(live_pos),
+                                slug,
+                                genre_label,
+                                "yes" if snapshot.is_playing else "no",
+                            ))
+                            last_poll_logged_ms = now
+                            last_poll_logged_state = state
                     if key != current_track_key:
                         path = find_cue_path(
                             songs_dir, snapshot.artist, snapshot.title,
