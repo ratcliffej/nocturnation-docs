@@ -22,7 +22,7 @@ from nocturnation_orchestrator.main import run
 from nocturnation_orchestrator.matcher import find_cue_path, slugify
 from nocturnation_orchestrator.nowplaying import NowPlaying
 from nocturnation_orchestrator.nowplaying.macos import (
-    MacOSBackend, _NSDATE_TO_UNIX_OFFSET, _parse_output,
+    MacOSBackend, _parse_raw_output,
 )
 from nocturnation_orchestrator.output.artnet import (
     ArtnetDispatcher, build_artdmx_packet,
@@ -36,9 +36,20 @@ from nocturnation_orchestrator.scheduler import (
 # Now-playing: macOS output parser
 # ---------------------------------------------------------------------------
 
-class TestMacOSParseOutput:
+_SAMPLE_RAW = """
+{
+  "kMRMediaRemoteNowPlayingInfoTitle" : "Fix You",
+  "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
+  "kMRMediaRemoteNowPlayingInfoElapsedTime" : 30.5,
+  "kMRMediaRemoteNowPlayingInfoDuration" : 295,
+  "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1.0
+}
+"""
+
+
+class TestMacOSParseRawOutput:
     def test_basic_playing(self):
-        np = _parse_output("Fix You\nColdplay\n30.5\n295.0\n1.0\n")
+        np = _parse_raw_output(_SAMPLE_RAW)
         assert np is not None
         assert np.is_playing
         assert np.artist == "Coldplay"
@@ -47,27 +58,46 @@ class TestMacOSParseOutput:
         assert np.duration_ms == 295_000
 
     def test_paused_track(self):
-        np = _parse_output("Fix You\nColdplay\n12.0\n295.0\n0.0\n")
+        raw = _SAMPLE_RAW.replace(
+            '"kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1.0',
+            '"kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0',
+        )
+        np = _parse_raw_output(raw)
         assert np is not None
         assert np.is_playing is False
 
-    def test_no_source(self):
-        np = _parse_output("\n\n\n\n\n")
-        assert np is None
+    def test_no_source_empty_stdout(self):
+        assert _parse_raw_output("") is None
+        assert _parse_raw_output("   \n") is None
 
-    def test_null_strings(self):
-        np = _parse_output("null\nnull\nnull\nnull\nnull\n")
-        assert np is None
+    def test_no_source_empty_object(self):
+        assert _parse_raw_output("{}") is None
 
-    def test_truncated_output(self):
-        # Older nowplaying-cli builds might cut off short.
-        np = _parse_output("Track\nArtist\n")
-        # Title + artist present -> should still return a NowPlaying with
-        # whatever fields we got, defaulting position/duration to 0.
+    def test_malformed_json(self):
+        # Defensive: a busted nowplaying-cli build shouldn't crash the loop.
+        assert _parse_raw_output("not json") is None
+
+    def test_real_world_sample(self):
+        # Real MediaRemote output captured at the bench:
+        # Coldplay / A Sky Full of Stars, paused at 52.97 s, 268 s total.
+        raw = """
+        {
+          "kMRMediaRemoteNowPlayingInfoTitle" : "A Sky Full of Stars",
+          "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
+          "kMRMediaRemoteNowPlayingInfoAlbum" : "Ghost Stories",
+          "kMRMediaRemoteNowPlayingInfoElapsedTime" : 52.966817133,
+          "kMRMediaRemoteNowPlayingInfoDuration" : 268,
+          "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0,
+          "kMRMediaRemoteNowPlayingInfoTrackNumber" : 8
+        }
+        """
+        np = _parse_raw_output(raw)
         assert np is not None
-        assert np.title == "Track"
-        assert np.artist == "Artist"
-        assert np.position_ms == 0
+        assert np.title == "A Sky Full of Stars"
+        assert np.artist == "Coldplay"
+        assert np.position_ms == 52_967
+        assert np.duration_ms == 268_000
+        assert not np.is_playing
 
 
 class TestMacOSBackendInjection:
@@ -76,75 +106,16 @@ class TestMacOSBackendInjection:
 
         def runner(args, timeout):
             captured_args.append(args)
-            return "Fix You\nColdplay\n30.0\n295.0\n1.0\n", 0
+            return _SAMPLE_RAW, 0
 
         backend = MacOSBackend(runner=runner)
         np = backend.poll()
         assert np is not None
         assert np.title == "Fix You"
-        # The runner was called with the expected get-fields list.
-        assert captured_args[0][1] == "get"
-        assert "elapsedTime" in captured_args[0]
-        assert "infoUpdateTime" in captured_args[0]
-
-
-class TestMacOSLivePositionExtrapolation:
-    """elapsedTime alone is the cached value at the last state change;
-    the LIVE position is elapsedTime + (now - infoUpdateTime) *
-    playbackRate. Without this our scheduler never advances past 0."""
-
-    def test_extrapolates_forward_while_playing(self):
-        # Pretend MediaRemote sampled elapsedTime=10s twenty seconds ago.
-        # With playbackRate=1, the live position should be ~30s.
-        now = 1_000_000_000.0
-        sampled_at_unix = now - 20.0
-        info_update_nsdate = sampled_at_unix - _NSDATE_TO_UNIX_OFFSET
-        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
-        np = _parse_output(stdout, now_unix=lambda: now)
-        assert np.position_ms == 30_000
-
-    def test_no_extrapolation_when_paused(self):
-        # playbackRate=0 -> is_playing=False, cached value used as-is.
-        now = 1_000_000_000.0
-        info_update_nsdate = (now - 20.0) - _NSDATE_TO_UNIX_OFFSET
-        stdout = "Title\nArtist\n10.0\n295.0\n0.0\n%f\n" % info_update_nsdate
-        np = _parse_output(stdout, now_unix=lambda: now)
-        assert np.position_ms == 10_000
-        assert not np.is_playing
-
-    def test_no_extrapolation_when_info_update_missing(self):
-        # Older nowplaying-cli builds may not expose infoUpdateTime.
-        # Fall back to the raw elapsedTime; main loop interpolates by
-        # wall-clock between polls.
-        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n\n"
-        np = _parse_output(stdout, now_unix=lambda: 1_000_000_000.0)
-        assert np.position_ms == 10_000
-
-    def test_scales_by_playback_rate(self):
-        # 2x speed: 5s real-time -> 10s of track elapsed.
-        now = 1_000_000_000.0
-        info_update_nsdate = (now - 5.0) - _NSDATE_TO_UNIX_OFFSET
-        stdout = "Title\nArtist\n10.0\n295.0\n2.0\n%f\n" % info_update_nsdate
-        np = _parse_output(stdout, now_unix=lambda: now)
-        assert np.position_ms == 20_000
-
-    def test_ignores_extrapolation_when_gap_absurd(self):
-        # If infoUpdateTime is hours old (stale session leftover),
-        # don't extrapolate; trust the cached value.
-        now = 1_000_000_000.0
-        info_update_nsdate = (now - 10_000.0) - _NSDATE_TO_UNIX_OFFSET
-        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
-        np = _parse_output(stdout, now_unix=lambda: now)
-        assert np.position_ms == 10_000
-
-    def test_ignores_negative_extrapolation(self):
-        # If infoUpdateTime is in the future (clock skew), don't
-        # rewind the position.
-        now = 1_000_000_000.0
-        info_update_nsdate = (now + 5.0) - _NSDATE_TO_UNIX_OFFSET
-        stdout = "Title\nArtist\n10.0\n295.0\n1.0\n%f\n" % info_update_nsdate
-        np = _parse_output(stdout, now_unix=lambda: now)
-        assert np.position_ms == 10_000
+        # The runner was invoked with the get-raw subcommand
+        # (the workaround for the buggy per-field 'get').
+        assert captured_args[0][1] == "get-raw"
+        assert len(captured_args[0]) == 2
 
 
 # ---------------------------------------------------------------------------

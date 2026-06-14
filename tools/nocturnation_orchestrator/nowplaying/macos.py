@@ -1,50 +1,50 @@
 """macOS now-playing backend via the `nowplaying-cli` tool.
 
 `brew install nowplaying-cli` makes the binary available; it wraps
-the private MediaRemote framework and prints the requested fields
-one per line.
+the private MediaRemote framework.
 
 Polled invocation::
 
-    nowplaying-cli get title artist elapsedTime duration playbackRate \\
-                       infoUpdateTime
+    nowplaying-cli get-raw
 
-Output is one value per line, blank line for missing fields. We
-interpret playbackRate > 0 as "playing" (paused tracks report 0).
+This returns the full MediaRemote info dictionary as JSON. We
+deliberately avoid `nowplaying-cli get <field...>`: at least on the
+0.x builds shipping via Homebrew today it returns 0 for
+`elapsedTime` regardless of the real value, while the same field in
+`get-raw` reports the actual position. The bug is in the per-field
+plumbing, not the underlying API, so `get-raw` is the workaround.
 
-The elapsedTime returned by MediaRemote is the cached value at the
-last state change (play / pause / seek); it does NOT tick forward
-while a track plays. To get the live position we also read
-`infoUpdateTime` (NSDate seconds since 2001-01-01) and extrapolate:
+Output (real example, Coldplay / A Sky Full of Stars at 52.97 s)::
 
-    live_position_ms = elapsedTime_ms
-                       + (now_unix - (infoUpdateTime + NSDATE_OFFSET))
-                         * 1000 * playbackRate
+    {
+      "kMRMediaRemoteNowPlayingInfoTitle" : "A Sky Full of Stars",
+      "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
+      "kMRMediaRemoteNowPlayingInfoElapsedTime" : 52.966817133,
+      "kMRMediaRemoteNowPlayingInfoDuration" : 268,
+      "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0,
+      ...
+    }
 
-Without this, a playing track's position would stay frozen at
-whatever it was when the user pressed play, and the cue scheduler
-would never advance past time zero.
+`playbackRate > 0` means "playing"; 0 means paused / stopped. The
+MediaRemote `Timestamp` field that would let us extrapolate the live
+position purely from one poll isn't present on this build, so we
+rely on the scheduler's PositionTracker (wall-clock interpolation
+between polls, anchored only on real changes) for the live position.
 """
 
+import json
 import shutil
 import subprocess
-import time
 
 from .base import NowPlaying, NowPlayingBackend, NowPlayingError
 
 
-_FIELDS = (
-    "title", "artist", "elapsedTime", "duration", "playbackRate",
-    "infoUpdateTime",
-)
-
-# NSDate reference date (2001-01-01 00:00:00 UTC) as a Unix timestamp.
-_NSDATE_TO_UNIX_OFFSET = 978_307_200
-
-# Sanity cap: ignore extrapolation gaps larger than this. Protects
-# against a stale infoUpdateTime from a previous Music.app session
-# pushing the position into orbit.
-_MAX_EXTRAPOLATION_S = 7200  # 2 hours
+# MediaRemote info-dict keys we read.
+_KEY_TITLE         = "kMRMediaRemoteNowPlayingInfoTitle"
+_KEY_ARTIST        = "kMRMediaRemoteNowPlayingInfoArtist"
+_KEY_ELAPSED_TIME  = "kMRMediaRemoteNowPlayingInfoElapsedTime"
+_KEY_DURATION      = "kMRMediaRemoteNowPlayingInfoDuration"
+_KEY_PLAYBACK_RATE = "kMRMediaRemoteNowPlayingInfoPlaybackRate"
 
 
 class MacOSBackend(NowPlayingBackend):
@@ -77,7 +77,7 @@ class MacOSBackend(NowPlayingBackend):
     def poll(self):
         try:
             stdout, rc = self._runner(
-                [self.binary, "get", *_FIELDS], self.timeout,
+                [self.binary, "get-raw"], self.timeout,
             )
         except FileNotFoundError:
             raise NowPlayingError(
@@ -88,11 +88,7 @@ class MacOSBackend(NowPlayingBackend):
             raise NowPlayingError(
                 "%s exited %d" % (self.binary, rc)
             )
-        return _parse_output(stdout)
-
-
-def _now_unix():
-    return time.time()
+        return _parse_raw_output(stdout)
 
 
 def _default_runner(args, timeout):
@@ -103,52 +99,31 @@ def _default_runner(args, timeout):
     return completed.stdout, completed.returncode
 
 
-def _parse_output(stdout, *, now_unix=None):
-    """Parse nowplaying-cli's line-per-field output.
+def _parse_raw_output(stdout):
+    """Parse `nowplaying-cli get-raw` JSON output into a NowPlaying.
 
-    Empty / 'null' values denote "no source"; returning None lets the
-    main loop go ambient.
-
-    Args:
-        stdout (str): raw nowplaying-cli stdout.
-        now_unix (callable | None): provider of the current Unix
-            timestamp; defaults to time.time. Injected by tests so
-            the infoUpdateTime extrapolation is deterministic.
+    Returns None when no audio source is registered with MediaRemote
+    (empty / non-object response, or no Title/Artist).
     """
-    if now_unix is None:
-        now_unix = _now_unix
-    lines = stdout.splitlines()
-    # Pad to expected field count so we don't IndexError on truncated
-    # output from older nowplaying-cli builds.
-    while len(lines) < len(_FIELDS):
-        lines.append("")
-    title       = lines[0].strip()
-    artist      = lines[1].strip()
-    elapsed     = lines[2].strip()
-    duration    = lines[3].strip()
-    rate        = lines[4].strip()
-    info_update = lines[5].strip()
+    stdout = stdout.strip()
+    if not stdout:
+        return None
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
 
-    # No source: nowplaying-cli prints 'null' for every field.
+    title  = _str_or_empty(data.get(_KEY_TITLE))
+    artist = _str_or_empty(data.get(_KEY_ARTIST))
     if not title and not artist:
         return None
-    if title.lower() == "null" and artist.lower() == "null":
-        return None
 
-    position_ms = _seconds_to_ms(elapsed)
-    duration_ms = _seconds_to_ms(duration)
-    playback_rate = _float_or_zero(rate)
-    is_playing = playback_rate > 0.0
-
-    # Extrapolate the live position from the OS sample. MediaRemote
-    # only refreshes elapsedTime on state changes, so without this
-    # the position stays frozen across an entire track.
-    info_update_nsdate = _float_or_zero(info_update)
-    if is_playing and info_update_nsdate > 0:
-        unix_info_update = info_update_nsdate + _NSDATE_TO_UNIX_OFFSET
-        delta_s = now_unix() - unix_info_update
-        if 0 < delta_s <= _MAX_EXTRAPOLATION_S:
-            position_ms += int(delta_s * 1000 * playback_rate)
+    position_ms   = _seconds_to_ms(data.get(_KEY_ELAPSED_TIME))
+    duration_ms   = _seconds_to_ms(data.get(_KEY_DURATION))
+    playback_rate = _float_or_zero(data.get(_KEY_PLAYBACK_RATE))
+    is_playing    = playback_rate > 0.0
 
     return NowPlaying(
         is_playing=is_playing,
@@ -159,15 +134,21 @@ def _parse_output(stdout, *, now_unix=None):
     )
 
 
-def _seconds_to_ms(token):
+def _str_or_empty(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _seconds_to_ms(value):
     try:
-        return int(round(float(token) * 1000))
+        return int(round(float(value) * 1000))
     except (ValueError, TypeError):
         return 0
 
 
-def _float_or_zero(token):
+def _float_or_zero(value):
     try:
-        return float(token)
+        return float(value)
     except (ValueError, TypeError):
         return 0.0
