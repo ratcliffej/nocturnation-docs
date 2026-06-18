@@ -232,7 +232,18 @@ The 40 % is structural: the bracelet's IR receiver is **deaf while it's painting
 
 **Fix:** the periodic refresh uses `T_0_MS` attack always. The bracelet snaps to the snapshot colour at refresh time and immediately enters its (steady-state, IR-receptive) sustain. The bracelet's deaf-window per refresh cycle shrinks from ~2.4 s to ~0 s, raising the bracelet's overall responsiveness to incoming sparkles.
 
-**Cost:** the drift between A and B reads as **step-wise between snapshots** instead of a continuous morph. At a 3 s refresh cadence against a 5 s drift cycle, the bracelet steps through ~3 visibly-distinct snapshot colours per cycle (vs the Tildagon's continuously-moving cosine drift). Visible stepping but visually distinguishable from "broken wash".
+**Cost:** the drift between A and B reads as **step-wise between snapshots** instead of a continuous morph. To minimise the visible stepping, the refresh cadence auto-scales with `cycle_ms`: the binding aims for ~10 snapshots per A↔B↔A round-trip, clamped to `[500 ms, 3000 ms]`. For a 5 s drift cycle that's a refresh every 500 ms = 10 visibly-distinct snapshot colours per cycle, each adjacent pair only ~10 % of the colour delta apart — reads as smooth drift, not "alternating two-tone". Static washes (`cycle_ms == 0`) keep the slow 3000 ms cadence since there's no drift to smooth.
+
+| Drift cycle | Refresh interval | Snapshots per cycle |
+|---|---|---|
+| 1 s (fast) | 500 ms (floor) | 2 |
+| 5 s | 500 ms | 10 |
+| 10 s | 1000 ms | 10 |
+| 30 s | 3000 ms (cap) | 10 |
+| 60 s (slow) | 3000 ms (cap) | 20 |
+| static (0) | 3000 ms | n/a |
+
+IR airtime check at the EMF-2026 deployment ceiling (4 simultaneous groups — broadcast + 3): a 5 s cycle across all 4 groups = 4 × 2 refreshes/s = 8 commands/s × ~50 ms wire each = ~40 % utilisation. Leaves headroom for sparkles (~20 % at 120 BPM × 2 commands per sparkle).
 
 **Design philosophy.** PixMob bracelets are essentially legacy IR-remote-controlled lights — bench observation from Jason 2026-06-18: *"not much better than IR remote control. They're really dumb."* The future of crowd lighting on this stack is ESP-NOW Lumes (Tildagon and successor designs) where wash drift renders natively as continuous on the receiver. PixMob is best-effort EMF-2026 deployment, not the long-term aesthetic baseline. Optimising for "sparkles land reliably during a wash" is the right design choice over "drift between A and B is perfectly continuous" given the hardware constraint.
 
