@@ -16,12 +16,12 @@ This document is the contract for Epic 6C. Every implementation phase (B through
 
 NocturNation Lumes vary by *what they can physically do with light*. The current cohort:
 
-- **PixMob bracelets** (driven through `PixMobIrBinding` over IR): fire-and-forget ASR pulse only. The hardware has no persistent state between commands beyond the residual envelope of the last pulse; it cannot hold a colour, cannot run a continuous wash, cannot overlay one command on another. This is a property of the bracelet, not a deficiency of the binding — PixMob's design intentionally treats each command as a stateless envelope.
+- **PixMob bracelets** (driven through `PixMobIrBinding` over IR): fire-and-forget ASR pulse hardware that does NOT auto-render any persistent state. Each IR command produces one envelope; the bracelet returns to dark after release. **Originally classified as pulse-only**, but bench testing in Epic 11 (2026-06-18) confirmed the bracelet honours long-sustain `SingleColor` envelopes (e.g. `T_3840_MS` = ~3.84 s held colour) and a periodic refresh at 3000 ms cadence produces a **continuous wash with no visible gaps**. So the bracelet *can* support the wash family — not via the protocol's documented `SetColor(background)` slot (that stores RAM state but doesn't auto-render), but via Director-side periodic refresh built into `PixMobIrBinding`. See §10 below for the encoding decisions. Cancellation works cleanly: stopping the refresh lets the last envelope complete naturally, providing a clean "terminate FX early" mechanism with no carry-over.
 - **Tildagon badges** (perimeter LED ring + round LCD): can hold state, can run a continuous wash, can overlay pulses on washes. The MicroPython app drives both surfaces and can keep a baseline rendered indefinitely.
 - **M5 Stick screens** (via `LocalDisplayBinding`, treated as a Screen-class light surface per §7.4): same capability set as Tildagon — hold state, run a wash, overlay pulses.
 - **Future native NocturNation wearables** (post-Epic-7): assume the full capability set unless their binding declares otherwise.
 
-The point of this Epic is to make those capability differences a first-class property of the binding, so the dispatch layer can route protocol traffic correctly without the Director needing to know how each Lume is built.
+The point of this Epic is to make those capability differences a first-class property of the binding, so the dispatch layer can route protocol traffic correctly without the Director needing to know how each Lume is built. The architectural principle: **the wire protocol carries semantic events; the binding decides hardware encoding per Lume class**.
 
 ## 2. The `BindingCapabilities` struct
 
@@ -44,13 +44,15 @@ public:
 
 Existing-binding declarations:
 
-| Binding                | `can_pulse` | `can_wash` | `can_overlay` |
-|------------------------|:---:|:---:|:---:|
-| `PixMobIrBinding`      | ✓ | — | — |
-| `LocalDisplayBinding`  | ✓ | ✓ | ✓ |
-| Tildagon ring + screen | ✓ | ✓ | ✓ |
+| Binding                | `can_pulse` | `can_wash` | `can_overlay` | Notes |
+|------------------------|:---:|:---:|:---:|---|
+| `PixMobIrBinding`      | ✓ | ✓ (Epic 11) | ✓ (Epic 11) | Wash via Director-side periodic `SingleColor` refresh; overlay via `TwoColors`. See §10. |
+| `LocalDisplayBinding`  | ✓ | ✓ | ✓ | LCD wash phase machine — native hold-state. |
+| Tildagon ring + screen | ✓ | ✓ | ✓ | Receives `LIGHT_WASH` over ESP-NOW and runs its own renderer. |
 
 When in doubt about a new binding, declare `{true, false, false}` — the safer baseline. The struct is extensible: future capability flags slot in without breaking existing bindings (they default-init to `false` and are silently dropped by capable-only message paths).
+
+**Pre-Epic-11 status**: `PixMobIrBinding` was declared `{can_pulse: true, can_wash: false, can_overlay: false}`. Epic 11 (bench-validated 2026-06-18) flipped it to full wash-capable based on the periodic-refresh mechanism described in §10. Historical commits with the pulse-only declaration should be read with that context — it wasn't wrong at the time; we hadn't yet discovered the refresh trick.
 
 ## 3. `LIGHT_COMMAND` → `LIGHT_PULSE` rename
 
@@ -148,6 +150,74 @@ NocturNation is not deployed externally; the project memory ([deployment scope -
 - No protocol version bump is needed. The wire surface gains new types but does not break existing ones.
 
 Phase D's acceptance criteria includes a grep-check for any leftover parser for `MSG_MUSIC_EVENT` / `MSG_SNARE_DETECTED` / `MSG_HIHAT_DETECTED` before reusing the slots — defensive but cheap.
+
+## 10. PixMob wash via Director-side periodic refresh (Epic 11)
+
+Added 2026-06-18 after Epic 11's B-0.5 bench experiments empirically established the encoding decisions for PixMob bracelets. This section is normative for `PixMobIrBinding`.
+
+The wire protocol carries semantic events (`LIGHT_WASH`, `LIGHT_WASH_PULSE`, `LIGHT_WASH_END`). The binding receives them, holds per-`target_group` wash state, and emits IR commands at the cadence the bracelet hardware needs. The orchestrator and the Show framework should NEVER make PixMob-specific encoding decisions — that's the binding's job, by the architectural principle in §1.
+
+### Bench-grounded design parameters
+
+All parameters below come directly from the Epic 11 B-0.5 bench results:
+
+| Parameter | Value | Why |
+|---|---|---|
+| Refresh cadence | **3000 ms** | T5 confirmed 3000 ms produces no visible gaps with the documented `T_3840_MS` sustain. Comfortable headroom; faster also works but doesn't visibly differ. |
+| Refresh envelope | **`T_0_MS / T_3840_MS / T_0_MS`** (square wave) | Snap on, hold, snap off. T5 with `T_480_MS` release showed a visible decay tail between refreshes; square envelope eliminates it. |
+| Cancel behaviour | **Stop refreshing** | The bracelet's currently-active envelope completes naturally — snap-off at sustain end since release is `T_0_MS`. No special cancel command needed. |
+| Faded cancel | **One `SingleColor(rgb, T_0, T_0, release_bucket)`** | When `LIGHT_WASH_END.release_time > 0`, after stopping refresh, fire one final envelope with a release tail sized to the bucket closest to `release_time × 100 ms`. |
+
+### IR encoding per wash-family event
+
+| Event | IR encoding | Notes |
+|---|---|---|
+| `LIGHT_WASH` (any) | `SingleColor(r1,g1,b1, T_0, T_3840, T_0)` + start periodic refresh at 3000 ms cadence | If `cycle_ms > 0`, the binding computes the live blended A↔B colour at each refresh based on cycle phase |
+| `LIGHT_WASH_PULSE` (and `LIGHT_PULSE` on a washing group) | Two back-to-back `SingleColor` commands: (a) `SingleColor(sparkle_rgb, orchestrator envelope)` — the visible flash; (b) `SingleColor(current_wash_rgb, T_192_MS, T_3840_MS, T_0_MS)` — the fast recovery to wash colour. See §10a "Why TwoColors isn't used" below. |
+| `LIGHT_WASH_END` (instant) | Stop refreshing | Last envelope completes naturally |
+| `LIGHT_WASH_END` (faded) | Stop refreshing + one `SingleColor(current_rgb, T_0, T_0, release_bucket)` | Bracelet fades to black over the release time |
+
+### What the SetColor(background) path is NOT used for
+
+Bench experiments (Epic 11 T1/T2/T3) confirmed that `SetColor(isBackground=true)` stores a colour in RAM but **does not auto-render it as a tint**. The bracelet flashes the colour briefly then goes dark. So:
+
+- `LIGHT_WASH` is NOT encoded as `SetColor(background)` — that was the original draft, falsified by bench.
+- `LIGHT_WASH_END` is NOT encoded as `SetColor(0,0,0,background)` — that briefly re-renders the *previously*-stored colour before going dark.
+
+The `SetColor`/`CycleProfiles` family stays in `pixmob_protocol.h` for parity completeness and any future use-case where storing state without rendering is genuinely useful (e.g. fleet provisioning), but is not used by the wash family.
+
+### "Terminate FX early" mechanism
+
+Because the cancel path is *"stop refreshing"* and the bracelet snap-offs naturally, the binding gains a useful side-property: **any in-flight wash can be cleanly terminated mid-cycle** without leaving the bracelet stuck on a stale colour. The dispatch layer's `LIGHT_WASH_END` handler (or a `LIGHT_WASH` to the same target with new anchors) cleanly halts the current refresh stream — bracelets converge to the new state within one sustain window (≤3.84 s in the worst case, immediately on the next refresh in the typical case). This is the early-termination guarantee the Show framework can rely on.
+
+### Per-group multiplexing
+
+The binding holds **one wash state per `target_group`** (10 slots, 0..9). Each refresh fires its own `SingleColor` with the matching `restrictGroupId`; bracelets stored in group N respond only to their group's refresh. Worst-case IR airtime if all 10 groups wash simultaneously: ~17% of the IR channel (10 groups × 1 command / 3000 ms × 50 ms per command).
+
+### §10a. Why `TwoColors` isn't used for sparkle-on-wash
+
+The `TwoColors` protocol command (type `0b010`) is documented in `jamesw343`'s reverse-engineering notes as "flash colour 1 briefly (~25 ms), then hold colour 2 with a default 384 ms sustain" — which is a *perfect* primitive for sparkle-on-wash: one command, one IR transmission, the bracelet handles the kick-then-tail itself. The original Epic 11 design (and the implementation in commit `f1b4e39`) used exactly this.
+
+**Bench finding 2026-06-18 (PMob Bench T6):** `buildTwoColors(red, blue)` fired directly via the IR driver, bypassing all wash state, **produces no visible output** on the Aurora-class bracelets Epic 11 targets. Neither the red flash nor the blue tail renders. The bracelet appears to not recognise type `0b010` at all in this firmware revision. The previously-shipping TwoColors-based code was therefore a silent no-op: the wash held smoothly but the sparkles never landed visibly.
+
+The working composition uses **two back-to-back `SingleColor` commands**:
+
+1. **The sparkle.** `SingleColor(sparkle_rgb, ev.attack, ev.sustain, ev.release, chance, group)` — uses the orchestrator's envelope verbatim. The bracelet snaps to the sparkle colour and begins that envelope.
+2. **The recovery.** `SingleColor(current_wash_rgb, T_192_MS, T_3840_MS, T_0_MS, CHANCE_100, group)` — fires immediately after the sparkle. The bracelet pre-empts the sparkle envelope and morphs over ~192 ms from wherever it currently is to the wash colour. `current_wash_rgb` is the **lookahead-shifted** drift sample, so the morph ends at the position the Tildagon will be at when recovery completes (continuous-render Lumes and bracelets re-sync at that point).
+
+Visible effect: the sparkle is the **inter-command IR gap** (~50 ms) — the bracelet's snap-to-sparkle phase before the recovery command lands. At 120 BPM (500 ms between beats) the bracelet spends ~250 ms on wash colour between sparkles, which reads as "wash with accents" rather than "strobe with dark gaps".
+
+**Trade-offs accepted:**
+
+- 50 ms sparkle is at the lower bound of human flash perception. Sparkles read as flicker, not as discrete flashes — that's the cost of doing this on hardware that doesn't honour TwoColors.
+- IR airtime per sparkle is **2 commands** (~100 ms wire time) instead of 1 (~50 ms). At a sustained 4 Hz sparkle rate, that's ~40% IR utilisation. Acceptable but a real upper bound on simultaneous-group capacity.
+- The 192 ms recovery attack is **decoupled from the wash's configured attack**. The wash's attack is for the initial fade-in (which can be slow, e.g. 2.4 s for a moody intro); the recovery wants to be fast to keep wash continuity. Hardcoding 192 ms in the binding rather than threading another field through the wire feels right — it's an encoding decision, not a Show-layer decision.
+
+**Re-enablement path.** If a future bracelet firmware revision is found to honour TwoColors, the binding can revert to the single-command path; the `pixmob::buildTwoColors` encoder stays in `pixmob_protocol.h` for that day. PMob Bench T6 is the bench test for it — if T6 produces a visible red-flash-then-blue-hold on a future bracelet, the single-command path becomes a viable alternative for that hardware.
+
+### Where this is NOT implemented
+
+The wash logic lives in the **Director-side `PixMobIrBinding`**, not in the laptop-side orchestrator. The orchestrator emits wash semantic events (`LIGHT_WASH` wire frames via the DMX channel surface); the Director's StickC decides per-Lume-class how to encode them. Any laptop-side mechanism that tries to write PixMob-specific commands (e.g. the orchestrator-side `pixmob_refresh.py` stopgap that existed pre-Epic-11) is **architecturally wrong** and must be removed. Wash implementation belongs to the Director who controls the fleet.
 
 ---
 
