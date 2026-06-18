@@ -164,7 +164,7 @@ All parameters below come directly from the Epic 11 B-0.5 bench results:
 | Parameter | Value | Why |
 |---|---|---|
 | Refresh cadence | **3000 ms** | T5 confirmed 3000 ms produces no visible gaps with the documented `T_3840_MS` sustain. Comfortable headroom; faster also works but doesn't visibly differ. |
-| Refresh envelope | **`T_0_MS / T_3840_MS / T_0_MS`** (square wave) | Snap on, hold, snap off. T5 with `T_480_MS` release showed a visible decay tail between refreshes; square envelope eliminates it. |
+| Refresh envelope | **`T_0_MS / T_3840_MS / T_0_MS`** (square wave) | Snap on (always — regardless of the wash's configured attack, which is used only for the initial `LIGHT_WASH` first-fire and not for subsequent refreshes; see §10b for why), hold, snap off. T5 with `T_480_MS` release showed a visible decay tail between refreshes; square envelope eliminates it. Snap-on attack also keeps the bracelet's deaf-window short, so sparkles fired during an active wash land reliably (see §10b). |
 | Cancel behaviour | **Stop refreshing** | The bracelet's currently-active envelope completes naturally — snap-off at sustain end since release is `T_0_MS`. No special cancel command needed. |
 | Faded cancel | **One `SingleColor(rgb, T_0, T_0, release_bucket)`** | When `LIGHT_WASH_END.release_time > 0`, after stopping refresh, fire one final envelope with a release tail sized to the bucket closest to `release_time × 100 ms`. |
 
@@ -203,7 +203,7 @@ The `TwoColors` protocol command (type `0b010`) is documented in `jamesw343`'s r
 The working composition uses **two back-to-back `SingleColor` commands**:
 
 1. **The sparkle.** `SingleColor(sparkle_rgb, ev.attack, ev.sustain, ev.release, chance, group)` — uses the orchestrator's envelope verbatim. The bracelet snaps to the sparkle colour and begins that envelope.
-2. **The recovery.** `SingleColor(current_wash_rgb, T_192_MS, T_3840_MS, T_0_MS, CHANCE_100, group)` — fires immediately after the sparkle. The bracelet pre-empts the sparkle envelope and morphs over ~192 ms from wherever it currently is to the wash colour. `current_wash_rgb` is the **lookahead-shifted** drift sample, so the morph ends at the position the Tildagon will be at when recovery completes (continuous-render Lumes and bracelets re-sync at that point).
+2. **The recovery.** `SingleColor(current_wash_rgb, T_192_MS, T_3840_MS, T_0_MS, CHANCE_100, group)` — fires immediately after the sparkle. The bracelet pre-empts the sparkle envelope and morphs over ~192 ms from wherever it currently is to the wash colour. `current_wash_rgb` is the drift sample at the moment of the pulse (no lookahead — the periodic refresh now uses `T_0_MS` attack so there's no morph-time to compensate for; see §10b).
 
 Visible effect: the sparkle is the **inter-command IR gap** (~50 ms) — the bracelet's snap-to-sparkle phase before the recovery command lands. At 120 BPM (500 ms between beats) the bracelet spends ~250 ms on wash colour between sparkles, which reads as "wash with accents" rather than "strobe with dark gaps".
 
@@ -214,6 +214,29 @@ Visible effect: the sparkle is the **inter-command IR gap** (~50 ms) — the bra
 - The 192 ms recovery attack is **decoupled from the wash's configured attack**. The wash's attack is for the initial fade-in (which can be slow, e.g. 2.4 s for a moody intro); the recovery wants to be fast to keep wash continuity. Hardcoding 192 ms in the binding rather than threading another field through the wire feels right — it's an encoding decision, not a Show-layer decision.
 
 **Re-enablement path.** If a future bracelet firmware revision is found to honour TwoColors, the binding can revert to the single-command path; the `pixmob::buildTwoColors` encoder stays in `pixmob_protocol.h` for that day. PMob Bench T6 is the bench test for it — if T6 produces a visible red-flash-then-blue-hold on a future bracelet, the single-command path becomes a viable alternative for that hardware.
+
+### §10b. Why the refresh uses `T_0_MS` attack (snap, not morph)
+
+The original §10 design used the wash's configured attack (e.g. `T_2400_MS` for the test wash's 2.4 s fade-in) on every periodic refresh, so the drift between snapshot A and snapshot B at each refresh boundary would morph smoothly rather than snap. A lookahead-shifted phase sample on the drift blender (`compute_drift_rgb`) compensated for the morph-time so the bracelet's morph-end matched the Tildagon's continuous-drift position at that moment.
+
+**Bench cascade 2026-06-18:**
+
+| Configuration | Sparkle visibility on a one-press bench test |
+|---|---|
+| Single sparkle, recovery, no gap | ~40 % |
+| 3× sparkle burst | ~40 % + duplicate flashes when receptive |
+| Sparkle only, no recovery | ~40 % |
+| 50 ms gap between sparkle and recovery | 0 % (gap landed on the bracelet decoder's frame-end boundary) |
+
+The 40 % is structural: the bracelet's IR receiver is **deaf while it's painting an attack envelope**. With `T_2400_MS` attack on a 3 s refresh cycle, the bracelet is busy rendering attack for 80 % of every cycle — sparkles arriving in that window get dropped (and the dropouts correlate: all-three of a 3× burst miss when the window is unfavourable, all-three land when it's favourable). Hence 3× burst couldn't help.
+
+**Fix:** the periodic refresh uses `T_0_MS` attack always. The bracelet snaps to the snapshot colour at refresh time and immediately enters its (steady-state, IR-receptive) sustain. The bracelet's deaf-window per refresh cycle shrinks from ~2.4 s to ~0 s, raising the bracelet's overall responsiveness to incoming sparkles.
+
+**Cost:** the drift between A and B reads as **step-wise between snapshots** instead of a continuous morph. At a 3 s refresh cadence against a 5 s drift cycle, the bracelet steps through ~3 visibly-distinct snapshot colours per cycle (vs the Tildagon's continuously-moving cosine drift). Visible stepping but visually distinguishable from "broken wash".
+
+**Design philosophy.** PixMob bracelets are essentially legacy IR-remote-controlled lights — bench observation from Jason 2026-06-18: *"not much better than IR remote control. They're really dumb."* The future of crowd lighting on this stack is ESP-NOW Lumes (Tildagon and successor designs) where wash drift renders natively as continuous on the receiver. PixMob is best-effort EMF-2026 deployment, not the long-term aesthetic baseline. Optimising for "sparkles land reliably during a wash" is the right design choice over "drift between A and B is perfectly continuous" given the hardware constraint.
+
+**Re-enablement of smooth drift.** If a future bench finding shows the bracelet IS receptive during attack-render (e.g. on a different bracelet generation, or via a firmware revision), the change is a one-line revert: `fire_wash_refresh` can use `state.attack_100ms` again. The `quantize_100ms_to_pixmob_time` helper stays in place for that day.
 
 ### Where this is NOT implemented
 
