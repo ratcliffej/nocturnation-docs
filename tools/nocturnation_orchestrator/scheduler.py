@@ -23,6 +23,8 @@ Song change resets everything via `set_cue_file(new_file)`.
 
 import time as _time
 
+from .cues import Cue
+
 
 SEEK_FORWARD_THRESHOLD_MS = 2_000   # forward jump over this counts as a seek
 PAUSE_DRIFT_THRESHOLD_MS  =   500   # tolerance for "position hasn't moved"
@@ -148,10 +150,12 @@ class CueScheduler:
         "on_cue_fire",
         "on_lyric",
         "on_bpm_change",
+        "on_display_cue",
     )
 
     def __init__(self, runner, *,
-                 on_cue_fire=None, on_lyric=None, on_bpm_change=None):
+                 on_cue_fire=None, on_lyric=None, on_bpm_change=None,
+                 on_display_cue=None):
         self.runner = runner
         self.cue_file = None
         self._cursor = 0
@@ -164,6 +168,11 @@ class CueScheduler:
         self.on_cue_fire = on_cue_fire or _noop
         self.on_lyric = on_lyric or _noop
         self.on_bpm_change = on_bpm_change or _noop
+        # Epic 13: display-content cue dispatch. Receives header_text /
+        # body_text / clearscreen cues (which don't touch the FX
+        # runner). Default no-op so cue files without display content
+        # work unchanged.
+        self.on_display_cue = on_display_cue or _noop
 
     def set_cue_file(self, cue_file, now_ms):
         """Switch to a new cue file. Cancels any running FX and
@@ -277,22 +286,73 @@ class CueScheduler:
         # On backward seek we also restore _original_default_bpm
         # before re-walking, otherwise a leftover mid-track bpm
         # would persist past the rewind.
+        # Helper: classify a cue.kind for the dispatch fork below.
+        # During a seek, display cues collapse to a single final-state
+        # representation (at most one synthetic header_text + one
+        # body_text emission, plus optionally a clearscreen if one
+        # crossed during the skipped range). Without this, a mid-song
+        # join with N display cues in the past floods the radio with
+        # N TEXT_DISPLAY frames in rapid succession, causing visible
+        # flicker on the Lume LCD and overwriting any track-start
+        # @ShowSongInfo card almost immediately.
+        DISPLAY_KINDS = ("header_text", "body_text", "clearscreen")
         if self.cue_file.cues:
             if seek_back:
                 self._cursor = 0
                 self.cue_file.default_bpm = self._original_default_bpm
             if seek_back or seek_forward:
                 target_fx = None
+                # Collapse state across skipped display cues. None
+                # means "no change to this field"; a string (possibly
+                # empty) means "set field to this value". clearscreen
+                # forces both to "" and sets the cleared flag.
+                collapsed_header = None
+                collapsed_body = None
+                collapsed_cleared = False
                 while (self._cursor < len(self.cue_file.cues)
                        and self.cue_file.cues[self._cursor].time_ms <= position_ms):
                     cue = self.cue_file.cues[self._cursor]
                     self._cursor += 1
                     if cue.kind == "bpm":
                         self._apply_bpm(cue, position_ms)
+                    elif cue.kind == "header_text":
+                        collapsed_header = cue.text
+                    elif cue.kind == "body_text":
+                        collapsed_body = cue.text
+                    elif cue.kind == "clearscreen":
+                        collapsed_cleared = True
+                        # Clearscreen wipes any prior header/body collapsed
+                        # state. Subsequent header_text/body_text cues
+                        # after the clearscreen overwrite these back.
+                        collapsed_header = ""
+                        collapsed_body = ""
                     else:
                         target_fx = cue
                 if target_fx is not None:
                     self._fire_cue(target_fx, position_ms, now_ms)
+                # Display state emission: at most three synthetic
+                # Cues - clearscreen first (so Lume zeros its state),
+                # then header_text + body_text to paint the final
+                # values that survived the clear.
+                if collapsed_cleared:
+                    self.on_display_cue(
+                        Cue(time_ms=position_ms, kind="clearscreen"),
+                        position_ms,
+                    )
+                if collapsed_header is not None and (
+                        not collapsed_cleared or collapsed_header):
+                    self.on_display_cue(
+                        Cue(time_ms=position_ms, kind="header_text",
+                            text=collapsed_header),
+                        position_ms,
+                    )
+                if collapsed_body is not None and (
+                        not collapsed_cleared or collapsed_body):
+                    self.on_display_cue(
+                        Cue(time_ms=position_ms, kind="body_text",
+                            text=collapsed_body),
+                        position_ms,
+                    )
             else:
                 while (self._cursor < len(self.cue_file.cues)
                        and self.cue_file.cues[self._cursor].time_ms <= position_ms):
@@ -300,6 +360,8 @@ class CueScheduler:
                     self._cursor += 1
                     if cue.kind == "bpm":
                         self._apply_bpm(cue, position_ms)
+                    elif cue.kind in DISPLAY_KINDS:
+                        self.on_display_cue(cue, position_ms)
                     else:
                         self._fire_cue(cue, position_ms, now_ms)
 

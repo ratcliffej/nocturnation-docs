@@ -19,6 +19,8 @@ runner, dispatcher, and any open serial port.
 
 import time as _time
 
+from nocturnation_dmx import espnow_frame
+
 from .cues import parse_cues_file
 from .fx import library  # noqa: F401  side-effects: register all FX
 from .fx.registry import fx_registry
@@ -28,7 +30,12 @@ from .scheduler import CueScheduler, PositionTracker
 
 
 TICK_INTERVAL_MS = 20    # 50 Hz
-POLL_INTERVAL_MS = 1000  # nowplaying-cli is ~50 ms per call - throttle
+# nowplaying-cli is ~50 ms per call. 250 ms keeps re-anchor jitter
+# under ~250 ms (vs ~1 s at the original 1 Hz) for ~20% CPU on the
+# subprocess. Audio output latency dominates everything below this
+# (wired ~30 ms, Bluetooth 100-250 ms with environmental variance)
+# so polling faster than ~4 Hz buys nothing the operator can hear.
+POLL_INTERVAL_MS = 250
 POLL_LOG_QUIET_MS = 10_000  # debug poll-log min cadence when state is steady
 
 
@@ -107,6 +114,57 @@ def run(
     last_dispatched = None
     was_active = False
 
+    # Epic 13 display-content state. Tracked here (not in the scheduler
+    # or the dispatcher) because HeaderText: / BodyText: cues are
+    # incremental - each cue updates ONE field, and we compose the
+    # current (header, body) into every TEXT_DISPLAY frame so the Lume
+    # always sees the full state. sequence wraps 1..255 (0 = dedup
+    # disabled per protocol).
+    display_state = {"header": "", "body": "", "sequence": 1}
+
+    def _next_display_sequence():
+        s = display_state["sequence"]
+        display_state["sequence"] = (s % 255) + 1
+        return s
+
+    def emit_text_display(header="", body="", rgb=(255, 255, 255),
+                          ttl_ms=0, target_group=0):
+        display_state["header"] = header
+        display_state["body"] = body
+        try:
+            frame = espnow_frame.encode_text_display(
+                sequence=_next_display_sequence(),
+                target_group=target_group,
+                r=rgb[0], g=rgb[1], b=rgb[2],
+                ttl_ms=ttl_ms,
+                header=header,
+                body=body,
+            )
+        except ValueError as exc:
+            log("display: encode failed: %s" % exc)
+            return
+        ok = dispatcher.send_espnow_frame(frame)
+        if debug and not ok:
+            log("display: dispatcher rejected TEXT_DISPLAY emission")
+
+    def emit_clear_screen(target_group=0,
+                          clear_text=True, clear_bitmap=True):
+        display_state["header"] = ""
+        display_state["body"] = ""
+        try:
+            frame = espnow_frame.encode_clear_screen(
+                sequence=_next_display_sequence(),
+                target_group=target_group,
+                clear_text=clear_text,
+                clear_bitmap=clear_bitmap,
+            )
+        except ValueError as exc:
+            log("display: encode failed: %s" % exc)
+            return
+        ok = dispatcher.send_espnow_frame(frame)
+        if debug and not ok:
+            log("display: dispatcher rejected CLEAR_SCREEN emission")
+
     def on_cue_fire(cue, position_ms):
         if debug:
             log("[%s] cue:   %s" % (_fmt_pos(position_ms),
@@ -120,11 +178,26 @@ def run(
         if debug:
             log("[%s] bpm:   %d" % (_fmt_pos(position_ms), cue.bpm))
 
+    def on_display_cue(cue, position_ms):
+        if cue.kind == "header_text":
+            if debug:
+                log("[%s] head:  %r" % (_fmt_pos(position_ms), cue.text))
+            emit_text_display(header=cue.text, body=display_state["body"])
+        elif cue.kind == "body_text":
+            if debug:
+                log("[%s] body:  %r" % (_fmt_pos(position_ms), cue.text))
+            emit_text_display(header=display_state["header"], body=cue.text)
+        elif cue.kind == "clearscreen":
+            if debug:
+                log("[%s] clear: screen" % _fmt_pos(position_ms))
+            emit_clear_screen()
+
     scheduler = CueScheduler(
         runner,
         on_cue_fire=on_cue_fire,
         on_lyric=on_lyric,
         on_bpm_change=on_bpm_change,
+        on_display_cue=on_display_cue,
     )
     universe = bytearray(universe_size)
 
@@ -162,6 +235,11 @@ def run(
                         tracker.clear()
                         scheduler.stop(now_ms=now)
                         current_track_key = (None, None)
+                        # Epic 13: blank the Lume screens when the
+                        # source goes away. Otherwise the last
+                        # song's text lingers indefinitely.
+                        if display_state["header"] or display_state["body"]:
+                            emit_clear_screen()
                 else:
                     tracker.update_from_poll(snapshot, now)
                     key = (snapshot.artist, snapshot.title)
@@ -201,6 +279,13 @@ def run(
                             last_poll_logged_ms = now
                             last_poll_logged_state = state
                     if key != current_track_key:
+                        # Epic 13: on every track change, clear the
+                        # Lume screens. The new track's @ShowSongInfo
+                        # / first display cue can immediately repaint;
+                        # the clear ensures the previous track's text
+                        # doesn't linger on a no-match transition.
+                        if display_state["header"] or display_state["body"]:
+                            emit_clear_screen()
                         path = find_cue_path(
                             songs_dir, snapshot.artist, snapshot.title,
                             genre=snapshot.genre,
@@ -242,6 +327,21 @@ def run(
                                     current_cue_mtime = path.stat().st_mtime
                                 except OSError:
                                     current_cue_mtime = 0.0
+                                # Epic 13: now-playing card. When the
+                                # cue file opts in with @ShowSongInfo,
+                                # paint header=title / body=artist on
+                                # track start. The snapshot fields are
+                                # authoritative (they reflect what the
+                                # music player is actually playing);
+                                # fall back to the cue file's @title /
+                                # @artist if the snapshot is empty.
+                                if cue_file.show_song_info:
+                                    hdr = snapshot.title or cue_file.title or ""
+                                    bod = snapshot.artist or cue_file.artist or ""
+                                    if hdr or bod:
+                                        emit_text_display(
+                                            header=hdr, body=bod,
+                                        )
                         current_track_key = key
                     elif current_cue_path is not None:
                         # Same track. Detect re-save and hot-reload so the

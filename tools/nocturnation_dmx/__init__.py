@@ -21,11 +21,14 @@ from .enttec_pro import (
     ENTTEC_BAUD,
     ENTTEC_DMX_START_CODE,
     ENTTEC_END,
+    ENTTEC_LABEL_ESPNOW,
     ENTTEC_LABEL_OUTPUT,
     ENTTEC_START,
     DMX_UNIVERSE_BYTES,
+    wrap_enttec_espnow,
     wrap_enttec_pro,
 )
+from . import espnow_frame
 from .port_picker import (
     describe_port,
     device_kind_from_port,
@@ -41,10 +44,14 @@ __all__ = [
     "ENTTEC_BAUD",
     "ENTTEC_DMX_START_CODE",
     "ENTTEC_END",
+    "ENTTEC_LABEL_ESPNOW",
     "ENTTEC_LABEL_OUTPUT",
     "ENTTEC_START",
     "DMX_UNIVERSE_BYTES",
+    "wrap_enttec_espnow",
     "wrap_enttec_pro",
+    # espnow_frame (submodule, Epic 13)
+    "espnow_frame",
     # port_picker
     "describe_port",
     "device_kind_from_port",

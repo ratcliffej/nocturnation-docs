@@ -43,6 +43,21 @@ class UsbDispatcher(OutputDispatcher):
     def send(self, universe):
         self._writer.write_universe(universe)
 
+    def send_espnow_frame(self, frame: bytes) -> bool:
+        """Forward a NocturNation ESP-NOW frame through the Stick via
+        the Enttec passthrough envelope (label 0x10). Director-side
+        DMX bridge mode unwraps it and broadcasts onto the radio.
+
+        Returns False if the underlying writer is closed / errored on
+        write; the caller logs and continues. True on a successful
+        write attempt (the radio side is best-effort by nature).
+        """
+        try:
+            self._writer.write_espnow_frame(frame)
+            return True
+        except Exception:
+            return False
+
     def close(self):
         try:
             self._writer.close()

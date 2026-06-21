@@ -48,6 +48,7 @@ from nocturnation_dmx import (
     interactive_pick_port,
     open_serial,
     port_looks_like_tildagon,
+    wrap_enttec_espnow,
     wrap_enttec_pro,
 )
 
@@ -61,7 +62,20 @@ VERSION = "0.1.0"
 # Art-Net protocol
 ARTNET_HEADER = b"Art-Net\x00"
 ARTNET_OP_OUTPUT = 0x5000
+# Epic 13: NocturNation OpVendorEspNow. Carries a fully-formed
+# NocturNation ESP-NOW frame; the shim unwraps and rewraps as Enttec
+# label 0x10 so the Stick (in DMX bridge mode) broadcasts the inner
+# frame onto the radio. Mirrors the orchestrator's _OPCODE_VENDOR_ESPNOW
+# in nocturnation_orchestrator/output/artnet.py.
+ARTNET_OP_VENDOR_ESPNOW = 0xFB00
 ARTNET_DEFAULT_PORT = 6454
+
+# HTP merge tuning. A source that hasn't been heard from in this
+# many seconds is dropped from the merge - keeps QLC+ stopping mid-
+# show from pinning its last frame on top of the orchestrator's bed.
+# 500 ms is a comfortable margin over orchestrator's 250 ms poll +
+# the typical Art-Net resend cadence.
+MERGE_STALENESS_S = 0.5
 
 # Channel role labels for the diagnostics view, matching Epic 7 B7
 # layout (23 active channels per block, grouped by lighting concept).
@@ -140,6 +154,34 @@ def decode_artnet_output(data: bytes) -> Optional[tuple[int, bytes]]:
     return universe, data[18:18 + payload_len]
 
 
+def decode_artnet_vendor_espnow(data: bytes) -> Optional[bytes]:
+    """Validate an OpVendorEspNow packet (Epic 13) and extract the
+    inner NocturNation ESP-NOW frame.
+
+    Returns None for any packet that isn't a well-formed OpVendorEspNow.
+
+    Frame layout:
+      0..7    "Art-Net\\0"
+      8..9    Opcode 0xFB00 (little-endian on wire)
+      10..11  Protocol version (big-endian, 14+)
+      12..13  Inner frame length (big-endian)
+      14..    Inner ESP-NOW frame, length bytes
+    """
+    if len(data) < 14:
+        return None
+    if data[:8] != ARTNET_HEADER:
+        return None
+    opcode = data[8] | (data[9] << 8)
+    if opcode != ARTNET_OP_VENDOR_ESPNOW:
+        return None
+    frame_len = (data[12] << 8) | data[13]
+    if frame_len == 0 or frame_len > 250:
+        return None
+    if len(data) < 14 + frame_len:
+        return None
+    return data[14:14 + frame_len]
+
+
 # ============================================================================
 # Enttec Pro framing + Serial port handling
 # ============================================================================
@@ -162,6 +204,7 @@ class ShimState:
     bind_addr: str = "0.0.0.0"
     artnet_port: int = ARTNET_DEFAULT_PORT
     universe: int = 1
+    merge_mode: str = "none"      # "none" | "htp"
     frames_received: int = 0
     frames_sent: int = 0
     frames_dropped_wrong_universe: int = 0
@@ -172,6 +215,10 @@ class ShimState:
     fps: float = 0.0
     last_error_msg: str = ""
     _frame_times: list[float] = field(default_factory=list)
+    # HTP merge tracking: live source -> (last payload bytes, last_ts).
+    # Sources stale past MERGE_STALENESS_S drop out of the merge so a
+    # disconnected sender doesn't pin its last frame forever.
+    sources: dict = field(default_factory=dict)
 
     def record_frame(self, payload: bytes) -> None:
         now = time.monotonic()
@@ -248,6 +295,11 @@ def build_status_layout(state: ShimState) -> Layout:
         info.add_row("Serial", "[red]no device detected[/red]")
     info.add_row("Listening on", f"UDP {state.bind_addr}:{state.artnet_port}")
     info.add_row("Universe filter", str(state.universe))
+    if state.merge_mode != "none":
+        live = len(state.sources)
+        info.add_row(
+            "Merge", f"{state.merge_mode.upper()} ({live} source{'s' if live != 1 else ''} live)",
+        )
     info.add_row("", "")
     info.add_row("Art-Net frames in", str(state.frames_received))
     info.add_row("Last frame in", _format_age(state.last_artnet_ts))
@@ -299,6 +351,35 @@ def build_status_layout(state: ShimState) -> Layout:
 # Main loop
 # ============================================================================
 
+def htp_merge(state: ShimState, now: float) -> bytes:
+    """Per-channel max across all live (non-stale) sources in state.sources.
+
+    Returns the merged DMX payload. Sources that haven't sent within
+    MERGE_STALENESS_S are evicted before merging - so a producer
+    stopping (QLC+ closing, orchestrator killed) cleanly hands the
+    universe back to whoever's still alive instead of pinning a
+    ghost frame on top.
+    """
+    cutoff = now - MERGE_STALENESS_S
+    stale = [k for k, (_p, ts) in state.sources.items() if ts < cutoff]
+    for k in stale:
+        del state.sources[k]
+    if not state.sources:
+        return b""
+    if len(state.sources) == 1:
+        # Hot path - single source, no real merge needed.
+        payload, _ts = next(iter(state.sources.values()))
+        return payload
+    merged = bytearray(DMX_UNIVERSE_BYTES)
+    for payload, _ts in state.sources.values():
+        n = min(len(payload), DMX_UNIVERSE_BYTES)
+        for i in range(n):
+            v = payload[i]
+            if v > merged[i]:
+                merged[i] = v
+    return bytes(merged)
+
+
 def run_loop(
     state: ShimState,
     sockets: list,
@@ -331,9 +412,39 @@ def run_loop(
         for sock in sockets:
             while True:
                 try:
-                    data, _addr = sock.recvfrom(2048)
+                    data, addr = sock.recvfrom(2048)
                 except BlockingIOError:
                     break
+                # Epic 13: OpVendorEspNow passthrough. Inner frame goes
+                # to the Stick wrapped as Enttec label 0x10; the Stick's
+                # DMX bridge unwraps and broadcasts onto ESP-NOW.
+                # Independent of merge / universe-filter logic - these
+                # frames are 1:1 from author to radio.
+                espnow_inner = decode_artnet_vendor_espnow(data)
+                if espnow_inner is not None:
+                    if ser is not None:
+                        try:
+                            framed = wrap_enttec_espnow(espnow_inner)
+                            if encoding == "python":
+                                ser.write(b'#"')
+                                ser.write(binascii.hexlify(framed))
+                                ser.write(b'"\n')
+                            elif encoding == "hex":
+                                ser.write(binascii.hexlify(framed))
+                                ser.write(b";")
+                            else:
+                                ser.write(framed)
+                            state.record_sent()
+                        except (serial.SerialException, OSError) as e:
+                            state.record_error(f"espnow write failed: {e}")
+                            try:
+                                ser.close()
+                            except Exception:
+                                pass
+                            ser = None
+                            state.serial_connected = False
+                    continue
+
                 decoded = decode_artnet_output(data)
                 if decoded is None:
                     continue
@@ -341,6 +452,20 @@ def run_loop(
                 if universe != state.universe:
                     state.frames_dropped_wrong_universe += 1
                     continue
+                # `addr` is (host, port[, ...]); first two elements are
+                # the producer's address family-agnostic identity.
+                source_key = (addr[0], addr[1])
+                # Merge layer. In "none" mode we forward the incoming
+                # payload directly (the previous shim contract). In
+                # "htp" mode we add this source's frame to the merge
+                # map and emit the per-channel max across all live
+                # sources, so orchestrator + QLC+ can co-drive the
+                # rig without one process clobbering the other.
+                if state.merge_mode == "htp":
+                    state.sources[source_key] = (payload, time.monotonic())
+                    payload = htp_merge(state, time.monotonic())
+                    if not payload:
+                        continue
                 state.record_frame(payload)
 
                 # Try to send if serial is up. Apply the cable encoding
@@ -436,10 +561,23 @@ def main() -> int:
         help="UDP bind address.",
     )
     parser.add_argument(
-        "--universe", type=int, default=0,
-        help="Art-Net universe to filter on (0-32767). Default 0 matches "
-             "QLC+'s default 'ArtNet Universe' value when QLC+'s internal "
-             "Universe 1 is patched to Art-Net output.",
+        "--universe", type=int, default=1,
+        help="Art-Net universe to filter on (0-32767). Default 1 matches "
+             "QLC+ (universes are 1-indexed in the QLC+ UI) and the "
+             "nowplaying-orchestrator's --artnet-universe default.",
+    )
+    parser.add_argument(
+        "--merge",
+        choices=["none", "htp"],
+        default="none",
+        help="Multi-source merge mode. 'none' (default) forwards whichever "
+             "frame arrived last - safe with a single producer. 'htp' "
+             "(Highest-Takes-Precedence) keeps per-source state and "
+             "emits per-channel max across all live producers, so the "
+             "orchestrator's cue-driven bed and QLC+'s manual overrides "
+             "can coexist (e.g. push a button to fire a pulse without "
+             "disturbing the running show). A source idle for "
+             f"{MERGE_STALENESS_S:.1f}s drops out of the merge.",
     )
     parser.add_argument(
         "--no-ui", action="store_true",
@@ -584,6 +722,7 @@ def main() -> int:
         bind_addr=args.bind,
         artnet_port=args.artnet_port,
         universe=args.universe,
+        merge_mode=args.merge,
     )
 
     console = Console()

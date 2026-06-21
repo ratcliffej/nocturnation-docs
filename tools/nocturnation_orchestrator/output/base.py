@@ -24,6 +24,18 @@ class OutputDispatcher:
         """
         raise NotImplementedError
 
+    def send_espnow_frame(self, frame: bytes) -> bool:
+        """Emit a fully-formed NocturNation ESP-NOW frame (Epic 13).
+
+        Transports that don't support a side channel for ESP-NOW
+        broadcast return False; the orchestrator silently drops the
+        emission in that case. USB dispatcher returns True after a
+        successful write; Art-Net dispatcher returns False (no
+        passthrough opcode wired today; if needed, a future opcode
+        could be added to ArtDmxOverArtNetExtension).
+        """
+        return False
+
     def close(self):
         """Release the underlying resource (serial port, socket)."""
         raise NotImplementedError

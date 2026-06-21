@@ -12,6 +12,15 @@ ENTTEC_END = 0xE7
 ENTTEC_LABEL_OUTPUT = 0x06
 ENTTEC_DMX_START_CODE = 0x00
 
+# Epic 13: NocturNation-specific Enttec label. The payload is a fully-
+# formed NocturNation ESP-NOW frame (header + payload, up to 250 bytes).
+# The Director (in DMX bridge mode) recognises this label and forwards
+# the payload verbatim onto its ESP-NOW radio. Lets the orchestrator
+# emit display-content frames over the same USB-CDC wire it uses for
+# DMX universes, without switching the Stick out of bridge mode.
+# Firmware-side constant: nocturnation::dal::enttec_pro::kLabelEspNowBroadcast.
+ENTTEC_LABEL_ESPNOW = 0x10
+
 # Wire baud the StickC firmware listens at. 460 800 (not the conventional
 # 921 600) is a Plus2 accommodation; the ESP32-PICO-V3-02 is single-core
 # and shares its UART RX interrupt with ESP-NOW TX (heartbeat broadcast)
@@ -58,3 +67,35 @@ def wrap_enttec_pro(payload: bytes) -> bytes:
         (length >> 8) & 0xFF,
         ENTTEC_DMX_START_CODE,
     )) + payload + bytes((ENTTEC_END,))
+
+
+def wrap_enttec_espnow(frame: bytes) -> bytes:
+    """Wrap a NocturNation ESP-NOW frame in an Enttec passthrough envelope.
+
+    The ``frame`` argument is a fully-formed NocturNation ESP-NOW frame
+    (built by nocturnation_dmx.espnow_frame); the Enttec wrapper carries
+    it untouched to the Director, which broadcasts the inner frame onto
+    the ESP-NOW radio.
+
+    No DMX-start-code byte: ESP-NOW frames are not DMX-payload-shaped,
+    so the firmware's parser treats label 0x10 as a generic payload
+    (length-prefixed, end-byte-terminated).
+
+    Layout:
+      0     0x7E                    start byte
+      1     0x10                    label = ESP-NOW passthrough
+      2..3  len(frame) LE           length of inner ESP-NOW frame
+      4..   <frame bytes>
+      end   0xE7                    end byte
+    """
+    n = len(frame)
+    if n > 250:
+        # ESP-NOW payload ceiling. The Enttec parser tolerates more
+        # but the radio rejects.
+        raise ValueError(f"ESP-NOW frame too large: {n} > 250")
+    return bytes((
+        ENTTEC_START,
+        ENTTEC_LABEL_ESPNOW,
+        n & 0xFF,
+        (n >> 8) & 0xFF,
+    )) + frame + bytes((ENTTEC_END,))

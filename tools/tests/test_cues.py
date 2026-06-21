@@ -521,6 +521,95 @@ from pathlib import Path  # noqa: E402
 
 from nocturnation_orchestrator.cues import parse_cues_file  # noqa: E402
 
+
+# ---------------------------------------------------------------------------
+# Epic 13 B4: display-content cue lines + directives
+# ---------------------------------------------------------------------------
+
+
+class TestDisplayCueLines:
+    def test_header_text(self):
+        f = parse_cues("00:35 HeaderText: Coldplay")
+        assert len(f.cues) == 1
+        c = f.cues[0]
+        assert c.kind == "header_text"
+        assert c.time_ms == 35_000
+        assert c.text == "Coldplay"
+
+    def test_body_text(self):
+        f = parse_cues("00:35 BodyText: Adventure of a Lifetime")
+        assert len(f.cues) == 1
+        c = f.cues[0]
+        assert c.kind == "body_text"
+        assert c.text == "Adventure of a Lifetime"
+
+    def test_header_text_empty_clears_field(self):
+        # Per user spec: empty after the colon clears that field on the Lume.
+        f = parse_cues("00:36 HeaderText:")
+        assert f.cues[0].kind == "header_text"
+        assert f.cues[0].text == ""
+
+    def test_body_text_empty_clears_field(self):
+        f = parse_cues("00:36 BodyText:")
+        assert f.cues[0].kind == "body_text"
+        assert f.cues[0].text == ""
+
+    def test_clearscreen(self):
+        f = parse_cues("00:50 clearscreen")
+        assert len(f.cues) == 1
+        assert f.cues[0].kind == "clearscreen"
+        assert f.cues[0].time_ms == 50_000
+
+    def test_clearscreen_rejects_arguments(self):
+        with pytest.raises(CueParseError):
+            parse_cues("00:50 clearscreen text")
+
+    def test_display_cue_lines_mix_with_fx_cues(self):
+        # The shipped scheduler routes by cue.kind; the parser doesn't
+        # care about adjacency between fx + display cues at the same
+        # time, only that each line parses cleanly.
+        f = parse_cues(
+            "00:30 stop\n"
+            "00:35 HeaderText: Coldplay\n"
+            "00:35 BodyText: Adventure of a Lifetime\n"
+            "01:00 clearscreen\n"
+        )
+        kinds = [c.kind for c in f.cues]
+        assert kinds == ["fx", "header_text", "body_text", "clearscreen"]
+
+    def test_body_text_preserves_punctuation(self):
+        f = parse_cues("00:40 BodyText: Turn your magic on,  please!")
+        # Token split + space-join collapses runs of whitespace - acceptable
+        # for body text (cue files SHOULDN'T use leading/trailing spaces
+        # for visual layout; Lume centres the line).
+        assert f.cues[0].text == "Turn your magic on, please!"
+
+
+class TestDisplayDirectives:
+    def test_show_song_info_bare(self):
+        f = parse_cues("@ShowSongInfo\n00:00 stop")
+        assert f.show_song_info is True
+        assert f.show_bitmap is False  # default unchanged
+
+    def test_show_song_info_true(self):
+        f = parse_cues("@ShowSongInfo true\n00:00 stop")
+        assert f.show_song_info is True
+
+    def test_show_song_info_false(self):
+        f = parse_cues("@ShowSongInfo false\n00:00 stop")
+        assert f.show_song_info is False
+
+    def test_show_bitmap_bare(self):
+        f = parse_cues("@ShowBitmap\n00:00 stop")
+        assert f.show_bitmap is True
+
+    def test_show_song_info_default_off(self):
+        # No directive -> default False (back-compat: existing cue files
+        # that don't opt in see no behaviour change).
+        f = parse_cues("00:00 stop")
+        assert f.show_song_info is False
+        assert f.show_bitmap is False
+
 _SONGS_DIR = Path(__file__).resolve().parent.parent.parent / "songs"
 
 

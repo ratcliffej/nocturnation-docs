@@ -185,6 +185,30 @@ class TestArtdmxPacket:
             data, _addr = recv_sock.recvfrom(2048)
             assert data[:8] == b"Art-Net\0"
             assert data[18 + 5] == 0xFF
+            # Default universe MUST be 1 - QLC+ uses 1-indexed universes
+            # in its UI and the shim defaults to universe 1. The
+            # default-on-default path needs no flags from the operator.
+            assert data[14] == 1   # sub_uni
+            assert data[15] == 0   # net
+        finally:
+            d.close()
+            recv_sock.close()
+
+    def test_dispatcher_universe_override(self):
+        """Operator can target an arbitrary universe via the constructor.
+        Verifies sub_uni / net split for a value above 255."""
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        host, port = recv_sock.getsockname()
+        recv_sock.settimeout(1.0)
+
+        # Universe 258 = sub_uni=2, net=1 (0x0102).
+        d = ArtnetDispatcher.open(host=host, port=port, universe=258)
+        try:
+            d.send(bytearray(512))
+            data, _addr = recv_sock.recvfrom(2048)
+            assert data[14] == 2   # sub_uni
+            assert data[15] == 1   # net
         finally:
             d.close()
             recv_sock.close()
@@ -787,13 +811,19 @@ class TestCueSchedulerLyrics:
 
 class FakeBackend:
     def __init__(self, sequence):
-        # sequence is a list of NowPlaying | None, popped one per poll.
+        # sequence is a list of NowPlaying | None. Each poll pops the
+        # head; once exhausted, subsequent polls keep returning the
+        # last value. Matches real backends (Apple Music / SMTC /
+        # MPRIS keep reporting the current track until it actually
+        # changes), and decouples tests from the orchestrator's poll
+        # rate.
         self._sequence = list(sequence)
+        self._last = None
 
     def poll(self):
-        if not self._sequence:
-            return None
-        return self._sequence.pop(0)
+        if self._sequence:
+            self._last = self._sequence.pop(0)
+        return self._last
 
 
 class CaptureDispatcher:
@@ -801,11 +831,17 @@ class CaptureDispatcher:
 
     def __init__(self):
         self.sends = []
+        self.espnow_frames = []
         self.closed = False
 
     def send(self, universe):
         # Take a snapshot - the universe is the same buffer on every tick.
         self.sends.append(bytes(universe))
+
+    def send_espnow_frame(self, frame):
+        # Epic 13: ESP-NOW passthrough capture.
+        self.espnow_frames.append(bytes(frame))
+        return True
 
     def close(self):
         self.closed = True
@@ -842,7 +878,10 @@ class TestMainLoopSmoke:
         # A static default_fx (QuietWash with constant params) should
         # produce exactly ONE USB dispatch across many ticks. Without
         # this suppression a long-running orchestrator floods USB at
-        # 50 Hz with byte-identical frames.
+        # 50 Hz with byte-identical frames. (Epic 11 B0 rollback
+        # restored this behaviour after the mid-Epic-11 orchestrator-
+        # side pixmob_refresh stopgap was removed - wash encoding
+        # decisions belong in the Director's binding, not here.)
         (tmp_path / "_default.cues").write_text(
             "@default_fx quiet_wash 100 100 100\n"
         )
@@ -1160,3 +1199,164 @@ class TestMainLoopSmoke:
         assert last[14] == 220           # ch 15 Wash B G
         assert last[15] == 0             # ch 16 Wash B B
         assert last[16] == 80            # ch 17 cycle
+
+
+# ---------------------------------------------------------------------------
+# Epic 13 B4: display-content end-to-end via run()
+# ---------------------------------------------------------------------------
+
+
+def _decode_text_display(frame):
+    """Tiny decoder for TEXT_DISPLAY frames the orchestrator emits.
+    Mirrors the C++ wire layout; only the fields tests assert against.
+    """
+    assert frame[0] == 0x4E and frame[1] == 0x4E   # magic
+    assert frame[2] == 0x02                         # protocol_version
+    msg_type = frame[6]
+    payload_len = frame[7]
+    payload = frame[8:8 + payload_len]
+    return {
+        "msg_type": msg_type,
+        "target_group": payload[0],
+        "r": payload[1],
+        "g": payload[2],
+        "b": payload[3],
+        "ttl_ms": payload[4] | (payload[5] << 8),
+        "header": payload[7:7 + payload[6]].decode("utf-8"),
+        "body": payload[8 + payload[6]:8 + payload[6]
+                        + payload[7 + payload[6]]].decode("utf-8"),
+    }
+
+
+def _decode_clear_screen(frame):
+    assert frame[6] == 0x0C
+    payload = frame[8:8 + frame[7]]
+    return {
+        "target_group": payload[0],
+        "clear_text": bool(payload[1]),
+        "clear_bitmap": bool(payload[2]),
+    }
+
+
+class TestDisplayCuesEndToEnd:
+    """Run the orchestrator main loop against a cue file that uses
+    Epic 13 directives; assert the dispatcher captures the expected
+    TEXT_DISPLAY / CLEAR_SCREEN emissions."""
+
+    def _drive(self, tmp_path, cue_text, *, position_ms=0, iterations=20):
+        cue_path = tmp_path / "a-x.cues"
+        cue_path.write_text(cue_text)
+        backend = FakeBackend([
+            NowPlaying(True, "A", "X", position_ms=position_ms,
+                       duration_ms=120_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=iterations,
+        )
+        return disp
+
+    def test_header_and_body_text_cue_emits_text_display(self, tmp_path):
+        disp = self._drive(
+            tmp_path,
+            "@bpm 120\n"
+            "00:00 HeaderText: Coldplay\n"
+            "00:00.5 BodyText: Adventure of a Lifetime\n",
+            iterations=100,
+        )
+        # At minimum the two display cues fire (one frame each).
+        assert len(disp.espnow_frames) >= 2
+        first = _decode_text_display(disp.espnow_frames[0])
+        assert first["msg_type"] == 0x09
+        assert first["header"] == "Coldplay"
+        assert first["body"] == ""           # body not yet set
+        second = _decode_text_display(disp.espnow_frames[1])
+        assert second["header"] == "Coldplay"   # carried over from state
+        assert second["body"] == "Adventure of a Lifetime"
+
+    def test_clearscreen_cue_emits_clear_screen(self, tmp_path):
+        disp = self._drive(
+            tmp_path,
+            "00:00 BodyText: Visible\n"
+            "00:00.1 clearscreen\n",
+            iterations=100,
+        )
+        # First emission = text; second emission = clear.
+        text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
+        clear_frames = [f for f in disp.espnow_frames if f[6] == 0x0C]
+        assert len(text_frames) >= 1
+        assert len(clear_frames) >= 1
+        clear = _decode_clear_screen(clear_frames[-1])
+        assert clear["clear_text"] is True
+        assert clear["clear_bitmap"] is True
+
+    def test_show_song_info_emits_card_on_track_start(self, tmp_path):
+        # @ShowSongInfo on its own (no other cues) - the orchestrator
+        # emits a now-playing card the moment it loads the cue file.
+        # iterations >= ~13 to give the poll-loop (250ms interval) one
+        # opportunity to fire and load the cue file.
+        disp = self._drive(
+            tmp_path,
+            "@ShowSongInfo\n",
+            iterations=30,
+        )
+        text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
+        assert len(text_frames) >= 1
+        first = _decode_text_display(text_frames[0])
+        # snapshot.title -> header, snapshot.artist -> body.
+        # FakeBackend in _drive uses artist="A" title="X".
+        assert first["header"] == "X"
+        assert first["body"] == "A"
+
+    def test_no_emission_without_show_song_info_or_display_cues(self, tmp_path):
+        # Plain wash-only cue file - no Epic 13 directives, no display
+        # cues - should produce zero ESP-NOW emissions. Back-compat
+        # gate: existing cue files keep working unchanged.
+        disp = self._drive(
+            tmp_path,
+            "@bpm 120\n"
+            "@default_fx quiet_wash 100 100 100\n",
+            iterations=20,
+        )
+        assert disp.espnow_frames == []
+
+    def test_track_change_to_none_emits_clear_screen(self, tmp_path):
+        # Track plays, then the now-playing source goes away.
+        # The orchestrator should emit CLEAR_SCREEN so the previous
+        # track's text doesn't linger on the Lume screens.
+        cue_path = tmp_path / "a-x.cues"
+        cue_path.write_text(
+            "@ShowSongInfo\n"
+            "00:00 HeaderText: My Header\n"
+        )
+        # Sequence: one playing snapshot, then None (source gone).
+        backend = FakeBackend([
+            NowPlaying(True, "A", "X", position_ms=0, duration_ms=10_000),
+            None,
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 250)  # one poll per "second"
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=40,
+        )
+        # We expect: TEXT_DISPLAY (now-playing) + TEXT_DISPLAY (HeaderText cue)
+        # + CLEAR_SCREEN (source went away).
+        clear_frames = [f for f in disp.espnow_frames if f[6] == 0x0C]
+        assert len(clear_frames) >= 1

@@ -14,7 +14,7 @@ from typing import Optional
 
 import serial
 
-from .enttec_pro import ENTTEC_BAUD, wrap_enttec_pro
+from .enttec_pro import ENTTEC_BAUD, wrap_enttec_espnow, wrap_enttec_pro
 
 
 def open_serial(port: str, baud: int = ENTTEC_BAUD) -> Optional[serial.Serial]:
@@ -77,6 +77,26 @@ class UsbWriter:
             self._serial.write(frame)
         except (serial.SerialException, OSError):
             # Mark closed so callers know they need to reopen
+            self.close()
+            raise
+
+    def write_espnow_frame(self, frame: bytes) -> None:
+        """Wrap a NocturNation ESP-NOW frame in the Enttec passthrough
+        envelope (label 0x10) and write to USB. The Director-side
+        DMX bridge mode unwraps and broadcasts the inner frame onto
+        ESP-NOW; this gives the orchestrator a side channel for
+        display-content frames (TEXT_DISPLAY / BITMAP_* / CLEAR_SCREEN)
+        on the same wire it uses for DMX universes.
+
+        Raises serial.SerialException or OSError on write failure; the
+        writer is left in a closed state in that case.
+        """
+        if self._serial is None or not self._serial.is_open:
+            raise serial.SerialException("UsbWriter is not open")
+        wrapped = wrap_enttec_espnow(frame)
+        try:
+            self._serial.write(wrapped)
+        except (serial.SerialException, OSError):
             self.close()
             raise
 
