@@ -1300,8 +1300,10 @@ class TestDisplayCuesEndToEnd:
         assert clear["clear_bitmap"] is True
 
     def test_show_song_info_emits_card_on_track_start(self, tmp_path):
-        # @ShowSongInfo on its own (no other cues) - the orchestrator
-        # emits a now-playing card the moment it loads the cue file.
+        # @ShowSongInfo synthesises HeaderText + BodyText cues at
+        # time_ms=0 and the scheduler fires them on first advance().
+        # Two cues = two TEXT_DISPLAY frames (header alone, then header
+        # + body); the LAST frame holds the composed final state.
         # iterations >= ~13 to give the poll-loop (250ms interval) one
         # opportunity to fire and load the cue file.
         disp = self._drive(
@@ -1310,12 +1312,13 @@ class TestDisplayCuesEndToEnd:
             iterations=30,
         )
         text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
-        assert len(text_frames) >= 1
-        first = _decode_text_display(text_frames[0])
+        # Expect at least 2 frames: the synth header + the synth body.
+        assert len(text_frames) >= 2
+        last = _decode_text_display(text_frames[-1])
         # snapshot.title -> header, snapshot.artist -> body.
         # FakeBackend in _drive uses artist="A" title="X".
-        assert first["header"] == "X"
-        assert first["body"] == "A"
+        assert last["header"] == "X"
+        assert last["body"] == "A"
 
     def test_no_emission_without_show_song_info_or_display_cues(self, tmp_path):
         # Plain wash-only cue file - no Epic 13 directives, no display

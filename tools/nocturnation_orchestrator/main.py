@@ -21,7 +21,7 @@ import time as _time
 
 from nocturnation_dmx import espnow_frame
 
-from .cues import parse_cues_file
+from .cues import Cue, parse_cues_file
 from .fx import library  # noqa: F401  side-effects: register all FX
 from .fx.registry import fx_registry
 from .fx.runner import FxRunner
@@ -144,7 +144,13 @@ def run(
             log("display: encode failed: %s" % exc)
             return
         ok = dispatcher.send_espnow_frame(frame)
-        if debug and not ok:
+        if debug:
+            log("display: TEXT_DISPLAY %s header=%r body=%r len=%d"
+                % ("sent" if ok else "REJECTED",
+                   header, body, len(frame)))
+        elif not ok:
+            # Production mode: still surface dispatch failures so a
+            # missing display path doesn't fail silently.
             log("display: dispatcher rejected TEXT_DISPLAY emission")
 
     def emit_clear_screen(target_group=0,
@@ -162,7 +168,11 @@ def run(
             log("display: encode failed: %s" % exc)
             return
         ok = dispatcher.send_espnow_frame(frame)
-        if debug and not ok:
+        if debug:
+            log("display: CLEAR_SCREEN %s text=%d bitmap=%d"
+                % ("sent" if ok else "REJECTED",
+                   int(clear_text), int(clear_bitmap)))
+        elif not ok:
             log("display: dispatcher rejected CLEAR_SCREEN emission")
 
     def on_cue_fire(cue, position_ms):
@@ -321,27 +331,76 @@ def run(
                                            cue_file.default_fx_id,
                                            cue_file.default_bpm,
                                            offset_note))
+                                # Epic 13: synthesize @ShowSongInfo as
+                                # HeaderText/BodyText cues at time_ms=0
+                                # BEFORE handing the cue file to the
+                                # scheduler. Two benefits over the prior
+                                # "emit out-of-band at track-load" path:
+                                #   1. Re-fires automatically on a
+                                #      backward seek (song restart -
+                                #      cursor resets to 0 and the
+                                #      synthesised cues re-fire). The
+                                #      prior path only emitted on track
+                                #      change, so restarting the same
+                                #      song never re-painted the card.
+                                #   2. Composes naturally with the
+                                #      scheduler's seek-collapse: a
+                                #      mid-song join collapses the
+                                #      synthesised cues with any
+                                #      later HeaderText/BodyText cues
+                                #      into a single final-state
+                                #      emission, no flicker.
+                                # Snapshot fields are authoritative
+                                # (they reflect what the music player
+                                # is actually playing); fall back to
+                                # the cue file's @title / @artist if
+                                # the snapshot is empty.
+                                if cue_file.show_song_info:
+                                    hdr = snapshot.title or cue_file.title or ""
+                                    bod = snapshot.artist or cue_file.artist or ""
+                                    if debug:
+                                        log(("song-info: synth header=%r body=%r "
+                                             "(snapshot title=%r artist=%r; "
+                                             "file title=%r artist=%r)")
+                                            % (hdr, bod,
+                                               snapshot.title, snapshot.artist,
+                                               cue_file.title, cue_file.artist))
+                                    synth = []
+                                    if hdr:
+                                        synth.append(Cue(
+                                            time_ms=0, kind="header_text",
+                                            text=hdr, line_no=0,
+                                        ))
+                                    if bod:
+                                        synth.append(Cue(
+                                            time_ms=0, kind="body_text",
+                                            text=bod, line_no=0,
+                                        ))
+                                    if synth:
+                                        # Prepend + re-sort. Stable sort
+                                        # keeps the synth pair ahead of
+                                        # any explicit display cue at
+                                        # time_ms=0 in the same priority
+                                        # bucket, so an author who writes
+                                        # `00:00 HeaderText: Custom` can
+                                        # override the synth card.
+                                        cue_file.cues = synth + cue_file.cues
+                                        _KIND_ORDER = {"bpm": 0, "fx": 1}
+                                        cue_file.cues.sort(
+                                            key=lambda c: (
+                                                c.time_ms,
+                                                _KIND_ORDER.get(c.kind, 9),
+                                            )
+                                        )
+                                elif debug:
+                                    log("song-info: skipped (@ShowSongInfo not set)")
+
                                 scheduler.set_cue_file(cue_file, now_ms=now)
                                 current_cue_path = path
                                 try:
                                     current_cue_mtime = path.stat().st_mtime
                                 except OSError:
                                     current_cue_mtime = 0.0
-                                # Epic 13: now-playing card. When the
-                                # cue file opts in with @ShowSongInfo,
-                                # paint header=title / body=artist on
-                                # track start. The snapshot fields are
-                                # authoritative (they reflect what the
-                                # music player is actually playing);
-                                # fall back to the cue file's @title /
-                                # @artist if the snapshot is empty.
-                                if cue_file.show_song_info:
-                                    hdr = snapshot.title or cue_file.title or ""
-                                    bod = snapshot.artist or cue_file.artist or ""
-                                    if hdr or bod:
-                                        emit_text_display(
-                                            header=hdr, body=bod,
-                                        )
                         current_track_key = key
                     elif current_cue_path is not None:
                         # Same track. Detect re-save and hot-reload so the
