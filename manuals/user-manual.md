@@ -13,7 +13,9 @@ sync_direction: bidirectional
 > A practical guide to running NocturNation at a venue: what it is, how it works, how to set it up, how to configure it, and what to do when it misbehaves.
 
 **Firmware version covered**: v0.6 (`include/firmware_version.h`).
-**Reference hardware**: M5StickC Plus2 and M5StickS3 (the Sticks); PixMob Aurora bracelets.
+**Reference hardware**: M5StickC Plus2, M5StickS3 (the Sticks); M5Atom Lite; M5Stack SK6812 RGB flex strip (optional); PixMob Aurora bracelets.
+
+The boot flow is the same on every host but defaults to Lume on power-up, so a freshly-flashed device joins an existing fleet immediately. To run a device as a Director, tap any button during the 3-second boot splash to open the mode menu, then pick **Director Mode**. On the Atom Lite, where there is no display and no boot splash, the device boots straight to Lume; the front button doubles as the LED-strip brightness control once a Director is locked (see [section 2.5](#25-m5atom-lite) and [section 2.6](#26-led-strip)).
 
 ---
 
@@ -154,7 +156,9 @@ NocturNation runs on two M5Stack form-factor boards. They share the same firmwar
 | IR transmitter | GPIO 19 | GPIO 46 |
 | IR receiver | None | GPIO 42 |
 | Bluetooth | BLE 4.2 | BLE 5.0 |
-| PSRAM | None | 8 MB |
+| On-chip SRAM | 520 KB | 512 KB + 16 KB RTC |
+| Embedded PSRAM | 2 MB | 8 MB |
+| Embedded Flash | 8 MB | 8 MB |
 | Form factor | 24 x 48 x 14 mm | 24 x 48 x 14 mm |
 | Status | First-class (legacy hardware) | First-class (current reference) |
 
@@ -191,6 +195,55 @@ The Sticks transmit Wi-Fi (and hence ESP-NOW) via a small ceramic patch antenna 
 
 A Lume with the Lume-as-repeater toggle enabled retransmits every accepted frame. Chained repeaters extend radio range significantly at the cost of additional radio latency per hop (around five milliseconds per hop). The default is no repeating; turn it on only when you have measured a coverage gap.
 
+### 2.5 M5Atom Lite
+
+The Atom Lite is a sugar-cube-sized ESP32 board (the same ESP32-PICO family as the Plus2). It has one programmable button, one onboard SK6812 RGB LED, a Grove HY2.0-4P expansion port, and an optional 200 mAh battery base. It has no display, no microphone, no infra-red transmitter, no IMU.
+
+| Property | M5Atom Lite |
+|---|---|
+| MCU | ESP32-PICO-D4 |
+| Display | None |
+| Onboard LED | One SK6812 (GPIO 27) |
+| Button | One programmable, front face (GPIO 39) |
+| Grove port | HY2.0-4P, data on GPIO 26 |
+| Optional battery | 200 mAh base |
+| Form factor | 24 x 24 x 14 mm |
+| Status | First-class Lume; not viable as a Director |
+
+The Atom is a **Lume-only** host. With no microphone it cannot run beat detection; with no infra-red transmitter it cannot drive PixMob bracelets directly. What it can do is render incoming light commands on its onboard LED and on an LED strip plugged into its Grove port (see [section 2.6](#26-led-strip)).
+
+The single onboard LED doubles as the **status indicator** in place of the LCD pip the Sticks have:
+
+- **Pulsing green** at 1 Hz - the Atom is alive but has not received any frames from a Director yet. The auto-channel scan is running.
+- **Solid green for a second** - first frames just arrived. Lock acquired.
+- **Wash / pulse colours** - after the lock window, the LED takes part in the show like any other pixel on the strip.
+
+Short-pressing the front button while in Lume mode cycles the LED-strip brightness through 100 / 10 / 1 percent (see [section 4.5](#45-system)). The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+
+The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
+
+### 2.6 LED strip
+
+The firmware drives any SK6812 / WS2812-family addressable LED strip wired to the Grove port. M5Stack sell SK6812 flex strips in five lengths: 10 cm (15 LEDs), 20 cm (29 LEDs), 50 cm (72 LEDs), 1 m (144 LEDs), and 2 m (288 LEDs). All five are supported. The Atom Lite, the Plus2 and the S3 can all drive a strip; the Atom adds its onboard LED to the chain so the show extends seamlessly across the device and the strip.
+
+The strip responds to the same wash and pulse cues as every other Lume in the fleet: a `quiet_wash` cue paints the strip a colour; a `LIGHT_PULSE` cue sparkles a fraction of the pixels per the cue's `CHANCE` probability field. The configurable **group size** (see [section 4.3](#43-connectivity)) controls how the sparkle is distributed across the strip:
+
+- `1` - every LED rolls its own probability die (matches the Tildagon perimeter ring's per-LED sparkle).
+- `12` - groups of 12 LEDs flash together as a unit (a Tildagon-ring-sized block on a longer strip).
+- A group size equal to the chain length - the whole strip flashes or stays dark as one unit (PixMob-bracelet style).
+
+Default group size is 12. Default brightness is 10 percent: a 2 m strip at 100 percent draws roughly 1.7 A at full white, well over the Grove rail's 500 mA budget; the brightness scalar keeps the strip out of brown-out territory while remaining clearly visible.
+
+**Wiring**: the strip plugs into the Grove port via its bundled HY2.0-4P pigtail. Per-host data-line GPIOs are:
+
+| Host | Grove data pin |
+|---|---|
+| M5StickC Plus2 | GPIO 32 |
+| M5StickS3 | GPIO 9 |
+| M5Atom Lite | GPIO 26 (Grove) and GPIO 27 (onboard) |
+
+The strip's white-PCB end is the input; chain extra strips off the black-PCB end. The driver allocates buffer space for up to 288 pixels at boot, so changing the chain size in Config takes effect immediately without re-flashing.
+
 ---
 
 ## 3. Installing the firmware
@@ -200,16 +253,17 @@ A Lume with the Lume-as-repeater toggle enabled retransmits every accepted frame
 - A USB-C cable that supports data (cheap charging-only cables will not work).
 - A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-stickc`.
 - [PlatformIO](https://platformio.org/) installed. The project assumes the CLI tool is reachable; on macOS the executable is typically at `~/.platformio/penv/bin/pio`.
-- An M5StickC Plus2 or M5StickS3.
+- An M5StickC Plus2, M5StickS3, or M5Atom Lite.
 
 ### 3.2 Building
 
-The project ships two PlatformIO environments, one per Stick:
+The project ships three PlatformIO environments, one per supported board:
 
 | Environment | Target |
 |---|---|
 | `m5stack-stickcplus2` | M5StickC Plus2 |
 | `m5stack-stickcs3` | M5StickS3 |
+| `m5stack-atomlite` | M5Atom Lite (Lume only) |
 
 Build:
 
@@ -302,6 +356,12 @@ A picker leading to four sub-menus:
 
 **DMX** (stub, reserved for Epic 7):
 - Carrier, Universe ID, Channel mapping. Not functional in v0.6.
+
+**LED Strip** (active on hosts with a strip wired in - Atom Lite, Plus2, S3):
+- `Enable` - master gate on the LED-strip render path. NVS key `strip_en`, default on. When off, the driver drops all events; nothing reaches the strip.
+- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 100 / 10 / 1 percent. NVS key `strip_bri`, default 10. The same control is also available via a short-press of Button 1 in Lume mode (the Atom Lite's only adjustment surface).
+- `Group size` - pixels per CHANCE-roll group. Cycles 1 / 6 / 12 / 24. NVS key `strip_grp`, default 12. See [section 2.6](#26-led-strip) for the operator-meaningful values.
+- `Chain size` - physical strip length plugged in. Cycles 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288). NVS key `strip_cnt`, default 29.
 
 ### 4.4 Utilities
 
@@ -480,11 +540,15 @@ If Director is running but no `[espnow TX LIGHT]` lines appear on the serial con
 
 **HSV** - Hue, Saturation, Value colour model. The Dynamic show works in HSV internally and converts to RGB at the wire.
 
+**LED strip** - any SK6812 / WS2812-family addressable strip wired to a host's Grove port. Rendered as a row of independent pixels by the same light commands that drive bracelets and Lume displays. See [section 2.6](#26-led-strip).
+
 **LIGHT_COMMAND** - one of the two active ESP-NOW message types (alongside `HEARTBEAT`). Nine-byte payload: class, group, RGB, attack/sustain/release/chance. See the [protocol manual](protocol-manual.md).
 
-**Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter and screen pulse, so the Director can illuminate nearby bracelets and show a pulse on its own LCD.
+**Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter, screen pulse, and (where wired) LED strip, so the Director can illuminate nearby bracelets and show the cue on its own surfaces.
 
 **Director** - the Stick that listens to audio and decides what lights should do. Runs a Show, fires light commands, and is the default boot mode. Exactly one Director per deployment. See [section 1.1](#11-what-nocturnation-is) and [section 5.3](#53-director-mode).
+
+**M5Atom Lite** - a third reference host alongside the Sticks. ESP32-PICO-D4, sugar-cube form factor, one programmable button, one onboard SK6812 RGB LED, Grove port. Lume-only (no display, no mic, no IR). See [section 2.5](#25-m5atom-lite).
 
 **M5StickC Plus2** - the first-generation reference Stick. ESP32-PICO-V3-02, PDM microphone, omnidirectional IR. End-of-life from M5Stack but fully supported.
 

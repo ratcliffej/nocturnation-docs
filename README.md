@@ -24,7 +24,7 @@ The documents here are the canonical entry points for operators and implementers
 
 ## Related repositories
 
-- [`nocturnation-stickc`](https://github.com/ratcliffej/nocturnation-stickc) - reference firmware for the M5StickC Plus2 and M5StickS3 Director/Lume Sticks.
+- [`nocturnation-stickc`](https://github.com/ratcliffej/nocturnation-stickc) - reference firmware for the M5StickC Plus2, M5StickS3 and M5Atom Lite. The Sticks act as Director or Lume; the Atom is Lume-only (no display, no microphone, no IR) but drives an addressable LED strip via its Grove port.
 - [`nocturnation-tildagon`](https://github.com/ratcliffej/nocturnation-tildagon) - receiver and manual-Director app for the EMF Tildagon badge.
 
 ## Conventions
