@@ -222,6 +222,8 @@ Short-pressing the front button while in Lume mode cycles the LED-strip brightne
 
 The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
 
+**Configuring the Atom's strip**: because the Atom has no Config menu, the only way to set chain size and group size is via `platformio.ini` build flags. The `[env:m5stack-atomlite]` block holds four `-DNOCT_DEFAULT_STRIP_*` macros - edit them to match the deployment, reflash, and the values land in NVS authoritatively. See [section 3.5](#35-strip-configuration-build-flags).
+
 ### 2.6 LED strip
 
 The firmware drives any SK6812 / WS2812-family addressable LED strip wired to the Grove port. M5Stack sell SK6812 flex strips in five lengths: 10 cm (15 LEDs), 20 cm (29 LEDs), 50 cm (72 LEDs), 1 m (144 LEDs), and 2 m (288 LEDs). All five are supported. The Atom Lite, the Plus2 and the S3 can all drive a strip; the Atom adds its onboard LED to the chain so the show extends seamlessly across the device and the strip.
@@ -243,6 +245,8 @@ Default group size is 12. Default brightness is 10 percent: a 2 m strip at 100 p
 | M5Atom Lite | GPIO 26 (Grove) and GPIO 27 (onboard) |
 
 The strip's white-PCB end is the input; chain extra strips off the black-PCB end. The driver allocates buffer space for up to 288 pixels at boot, so changing the chain size in Config takes effect immediately without re-flashing.
+
+On hosts without a Config menu (the Atom Lite), the strip is configured at build time via `platformio.ini` - see [section 3.5](#35-strip-configuration-build-flags).
 
 ---
 
@@ -302,6 +306,45 @@ Press `Ctrl-C` to exit.
 If you flash bad firmware and the Stick will not respond, hold the lower side button (BtnA on the Plus2, ButtonA on the S3) for ten seconds with the USB cable disconnected; this triggers a hard reset. If that fails, plug in USB while holding the lower button to force the ROM bootloader, then re-flash.
 
 The firmware never writes to flash regions outside of its own partition table. Bricking the bootloader itself is not possible from a normal `pio run -t upload`.
+
+### 3.5 Strip configuration build flags
+
+The LED-strip settings (enable, brightness, group size, chain size) are first-boot defaults baked into the firmware at compile time. On a Stick they're only the fallback - the Config menu writes NVS at runtime and the menu's value wins on every subsequent boot. On the Atom Lite, where there is no Config menu, the build flags ARE the configuration: change them, reflash, the device runs with the new values.
+
+Each environment in `platformio.ini` carries four `-DNOCT_DEFAULT_STRIP_*` macros:
+
+```ini
+[env:m5stack-atomlite]
+build_flags =
+    ${env:firmware-base.build_flags}
+    -DNOCT_DEFAULT_STRIP_ENABLED=1
+    -DNOCT_DEFAULT_STRIP_BRIGHTNESS=10
+    -DNOCT_DEFAULT_STRIP_GROUP_SIZE=12
+    -DNOCT_DEFAULT_STRIP_CHAIN_SIZE=29
+    -DNOCT_STRIP_FORCE_DEFAULTS=1
+```
+
+| Macro | Range | Meaning |
+|---|---|---|
+| `NOCT_DEFAULT_STRIP_ENABLED` | 0 / 1 | Master enable for the strip render path |
+| `NOCT_DEFAULT_STRIP_BRIGHTNESS` | 0..100 | Per-cent device brightness (cycled by Btn1 in Lume mode) |
+| `NOCT_DEFAULT_STRIP_GROUP_SIZE` | 1..255 | Pixels per CHANCE-roll group |
+| `NOCT_DEFAULT_STRIP_CHAIN_SIZE` | 1..288 | Physical strip length in LEDs |
+| `NOCT_STRIP_FORCE_DEFAULTS` | absent / 1 | When set, treat this build's values as authoritative on flash |
+
+**`NOCT_STRIP_FORCE_DEFAULTS`** is the override flag. Without it set, the macros only matter when NVS is empty (a fresh device or post-factory-reset); after that the operator's Config-menu changes persist. With it set, the firmware compares its embedded build tag (`__DATE__ __TIME__`) to the tag stored in NVS on each boot - if they differ, it writes all four defaults to NVS and updates the tag. This makes every reflash authoritative: whatever the operator had configured at runtime gets replaced by the build's values, exactly once per fresh build.
+
+Per-env defaults shipped today:
+
+| Environment | `FORCE_DEFAULTS` | Rationale |
+|---|---|---|
+| `m5stack-stickcplus2` | off | Stick has a Config menu; runtime operator wins |
+| `m5stack-stickcs3` | off | Same |
+| `m5stack-atomlite` | **on** | No Config menu; reflash is the only configuration surface |
+
+To configure an Atom for a deployment, edit the four `-DNOCT_DEFAULT_STRIP_*` values in `[env:m5stack-atomlite]`, run `pio run -e m5stack-atomlite -t upload`, and the device boots with the new values in NVS. Repeat per Atom in the batch.
+
+To use the override flag on a Stick for a deployment-time reset (e.g. "every Stick in the batch must start with chain = 29"), uncomment the `-DNOCT_STRIP_FORCE_DEFAULTS=1` line in the Stick env, flash, then optionally remove the line and re-flash to allow runtime overrides again.
 
 ---
 
