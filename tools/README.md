@@ -124,6 +124,123 @@ If running under a process manager, on a headless venue PC, or in CI:
 Prints a one-line status summary to stdout every five seconds; no
 terminal-cursor magic. Easier to log + grep.
 
+### Dedicated Linux shim laptop (Ubuntu 24+)
+
+Recommended setup for a show: a dedicated laptop running just the shim,
+wired into the LD's Art-Net switch. Any old hardware works — the shim
+needs ≤100 MB RAM and ~30 KB/s throughput. A 2014-vintage box with a
+working USB port and Ethernet is plenty.
+
+**One-off setup:**
+
+```sh
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+git clone <your-Docs-repo-URL> ~/nocturnation
+cd ~/nocturnation/tools
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+**Serial port permissions.** Add the user to the `dialout` group so the
+shim can open `/dev/ttyACM*` without `sudo`. Log out + back in for the
+group change to take effect:
+
+```sh
+sudo usermod -aG dialout $USER
+```
+
+Verify with `groups | grep dialout` after re-login. Plug in the Director
+Stick and confirm `ls /dev/ttyACM* /dev/ttyUSB*` lists it (S3 →
+`ttyACM*`, Plus2 → `ttyUSB*`).
+
+**Firewall.** Ubuntu 24's `ufw` is disabled by default. If you've
+enabled it, open the Art-Net port:
+
+```sh
+sudo ufw status
+sudo ufw allow 6454/udp      # only if ufw is active
+```
+
+**Network — wire it.** Bring up the laptop's Ethernet on the LD's
+subnet (Art-Net convention is 2.x.x.x/8; the LD will tell you the
+range). Replace the connection name with whatever `nmcli con show`
+reports for your wired link:
+
+```sh
+sudo nmcli con mod "Wired connection 1" ipv4.method manual ipv4.addresses 2.0.0.50/8
+sudo nmcli con up "Wired connection 1"
+```
+
+Wired beats wireless for Art-Net at a festival: 3000 attendees on 2.4 /
+5 GHz makes WiFi unreliable for low-latency UDP. Disable WiFi at
+show-time so routing is deterministic:
+
+```sh
+nmcli radio wifi off
+```
+
+**Test-run** before wiring it into systemd:
+
+```sh
+.venv/bin/python artnet-to-enttec-pro.py --no-ui
+```
+
+Should print the auto-picked Stick port and "listening on 0.0.0.0:6454".
+Point a known-good Art-Net source at it (QLC+ on the same network) and
+watch the frame counts climb.
+
+**Autostart on boot.** Drop this into
+`/etc/systemd/system/nocturnation-shim.service` (substitute your
+username):
+
+```ini
+[Unit]
+Description=NocturNation Art-Net to Enttec Pro shim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/nocturnation/tools
+ExecStart=/home/YOUR_USERNAME/nocturnation/tools/.venv/bin/python artnet-to-enttec-pro.py --no-ui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable + follow logs:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now nocturnation-shim.service
+journalctl -u nocturnation-shim -f
+```
+
+**Pre-show checklist:**
+
+1. `journalctl -u nocturnation-shim -n 50` — confirms the Stick was
+   found.
+2. `ping <ld-console-ip>` — confirms the wired link.
+3. Ask the LD to send a known cue; confirm the Stick's perimeter / LED
+   strip lights up. If you want to watch raw frames flow, kill the
+   service and run the shim foreground without `--no-ui` for the rich
+   terminal UI.
+
+**Common gotchas:**
+
+- `Permission denied` on `/dev/ttyACM0` — forgot the `dialout` group
+  re-login.
+- Shim binds OK but no frames arrive — likely a universe mismatch.
+  Default is universe 1; if the LD is sending on a different universe,
+  add `--universe N` to `ExecStart` and reload the service.
+- Two network interfaces (e.g. WiFi still on) — UDP doesn't care which
+  interface receives, but the OS routing table might send replies the
+  wrong way. Disable WiFi at show-time.
+
 ### Requirements
 
 - Python 3.9 or later
