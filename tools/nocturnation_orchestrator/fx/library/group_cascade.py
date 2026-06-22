@@ -23,6 +23,7 @@ Channels written per tick on EACH group's block (1..num_groups):
 
 from ..base import Fx, set_ch
 from ..channels import (
+    percent_to_dmx,
     block_channel,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
@@ -60,7 +61,7 @@ class GroupCascade(Fx):
         if r == 0 and g == 0 and b == 0:
             r, g, b = 255, 255, 255
         self._r, self._g, self._b = r, g, b
-        self._prob = params[3] if params[3] != 0 else 255
+        self._prob = percent_to_dmx(params[3] if params[3] != 0 else 100)
         n = params[4] if params[4] != 0 else 4
         if n < 1:
             n = 1

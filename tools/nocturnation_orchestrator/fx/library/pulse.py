@@ -28,6 +28,7 @@ Universe channels written (per cue.group):
 
 from ..base import Fx, set_ch
 from ..channels import (
+    percent_to_dmx,
     block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
@@ -45,11 +46,47 @@ class Pulse(Fx):
     category = "accent"
     description = (
         "Fires one pulse at the cue's time and finishes. For accenting "
-        "specific moments (snare hits, vocal stabs, transitions). "
-        "Attack / Sustain / Decay take 1/10 s units and quantise onto "
-        "the 8-value pixmob::Time bucket lookup on the wire side; the "
-        "actual rendered time will be the nearest of 0, 32, 96, 192, "
-        "480, 960, 2400, 3840 ms."
+        "specific moments (snare hits, vocal stabs, transitions).\n\n"
+        "**Attack / Sustain / Decay (ASR) bands.** Each phase takes a "
+        "value in **1/10 s units** (so `2` = 0.2 s, `10` = 1.0 s), "
+        "then quantises onto the wire-side 8-bucket pixmob::Time enum. "
+        "Several adjacent 1/10 s values land in the same bucket; pick "
+        "from the table below so you know what you'll actually get:\n\n"
+        "| Cue value (1/10 s) | Rendered (ms) | Pixmob bucket | Feel        |\n"
+        "|--------------------|---------------|---------------|-------------|\n"
+        "| 0                  | 0             | T_0_MS        | snap        |\n"
+        "| 1                  | ~96           | T_96_MS       | quick       |\n"
+        "| 2, 3               | ~192          | T_192_MS      | gentle      |\n"
+        "| 4-7                | ~480          | T_480_MS      | swell       |\n"
+        "| 8-16               | ~960          | T_960_MS      | slow swell  |\n"
+        "| 17-31              | ~2400         | T_2400_MS     | drone       |\n"
+        "| 32+                | ~3840         | T_3840_MS     | long drone  |\n\n"
+        "Note T_32_MS is unreachable from the 1/10 s input: value `1` "
+        "(100 ms) is closer to the T_96_MS bucket centre than to T_32_MS, "
+        "so it rounds up.\n\n"
+        "**Worked examples** - the four shapes most cues need:\n\n"
+        "```\n"
+        "# Snap white flash on a snare hit - instant on, no hold, 0.2 s tail.\n"
+        "00:30.5  pulse  255 255 255   0 0 2   100\n"
+        "\n"
+        "# Drop accent in red - instant on, brief hold, 0.5 s tail.\n"
+        "01:14.0  pulse  255 0   0     0 2 5   100\n"
+        "\n"
+        "# Vocal stab in cyan - quick swell-in, no hold, 0.5 s release.\n"
+        "00:45.2  pulse  0   200 255   1 0 5   100\n"
+        "\n"
+        "# Slow swell in deep purple - 1 s in, 1 s hold, 1 s out.\n"
+        "02:10.0  pulse  150 50  200   10 10 10   100\n"
+        "```\n\n"
+        "Rule of thumb: if you want it to read as a **flash**, keep "
+        "attack at 0 (snap on). If you want a **swell**, attack > 0 "
+        "and use bright RGB - smooth attack at dim RGB just blurs into "
+        "the wash and looks like 'nothing happened'.\n\n"
+        "**One-shot, not repeating.** Each cue fires exactly once. For "
+        "a per-beat texture use `sparkle_on_beat`; for one-per-bar use "
+        "`pulse_per_bar`. Repeating identical `pulse` cues at 1 s "
+        "intervals is fine but the bracelet barely settles between "
+        "fires - widen the spacing if the pulses are visually merging."
     )
 
     PARAMS = [
@@ -73,7 +110,7 @@ class Pulse(Fx):
         self._attack = params[3]
         self._sustain = params[4]
         self._decay = params[5]
-        self._prob = params[6] if params[6] != 0 else 255
+        self._prob = percent_to_dmx(params[6] if params[6] != 0 else 100)
         self._group = clamp_group(params[7] if len(params) > 7 else 0)
         self._ticks = 0
 

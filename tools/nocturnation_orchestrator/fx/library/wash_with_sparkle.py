@@ -16,6 +16,15 @@ Channels written every tick:
     18 Wash Int       <- 220
     19 Wash Attack    <- 30
     20 Wash Release   <- 30
+    23 Wash Pulse Response <- 255 (allow LIGHT_PULSE to overlay)
+
+Wash + sparkle on PixMob bracelets is the Director's responsibility,
+not the orchestrator's: the StickC's `PixMobIrBinding` (Epic 11)
+encodes `LIGHT_WASH` into a periodic `SingleColor` refresh and maps
+`LIGHT_WASH_PULSE` (which is what a sparkle on a wash becomes for
+capable Lumes) into a `TwoColors(sparkle, wash)` composite. This FX
+just writes the wash + pulse channels; the per-Lume-class encoding
+lives in the binding.
 
 Beat cadence is anchored to (now_ms - position_ms) so late-join
 holds the phase.
@@ -23,6 +32,7 @@ holds the phase.
 
 from ..base import Fx, set_ch
 from ..channels import (
+    percent_to_dmx,
     block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
@@ -30,6 +40,7 @@ from ..channels import (
     CH_WASH_A_R, CH_WASH_A_G, CH_WASH_A_B,
     CH_WASH_B_R, CH_WASH_B_G, CH_WASH_B_B,
     CH_WASH_CYCLE, CH_WASH_INT, CH_WASH_ATK, CH_WASH_REL,
+    CH_WASH_PULSE_RESPONSE,
     TRIGGER_HI, TRIGGER_LO,
 )
 from ..registry import fx_registry
@@ -77,7 +88,7 @@ class WashWithSparkle(Fx):
         if sr == 0 and sg == 0 and sb == 0:
             sr, sg, sb = 255, 255, 255
         self._sr, self._sg, self._sb = sr, sg, sb
-        self._prob = params[10] if params[10] != 0 else 255
+        self._prob = percent_to_dmx(params[10] if params[10] != 0 else 100)
         self._group = clamp_group(params[11] if len(params) > 11 else 0)
         # Beat cadence.
         self._beat_ms = max(1, int(round(60_000.0 / bpm)))
@@ -98,6 +109,10 @@ class WashWithSparkle(Fx):
         set_ch(universe, block_channel(g, CH_WASH_INT),   220)
         set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
         set_ch(universe, block_channel(g, CH_WASH_REL),   30)
+        # Allow LIGHT_PULSE to overlay on top of this wash; without
+        # this the Lume drops every subsequent pulse cue silently.
+        # See render/perimeter.py dispatch() guard on pulse_response.
+        set_ch(universe, block_channel(g, CH_WASH_PULSE_RESPONSE), 255)
         # Sparkle (beat-aligned rising edge).
         elapsed = now_ms - self._beat_anchor_ms
         if elapsed < 0:

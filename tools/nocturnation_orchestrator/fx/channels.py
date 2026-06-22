@@ -39,10 +39,16 @@ CH_WASH_CYCLE   = 17  # 100 ms units; 0 = hold A, 1..255 = 100ms..25.5s
 CH_WASH_INT     = 18  # Wash Intensity
 CH_WASH_ATK     = 19  # Wash Attack  (100 ms units)
 CH_WASH_REL     = 20  # Wash Release (100 ms units)
+CH_WASH_TTL_LO  = 21  # Wash TTL low byte  (u16 LE seconds; 0 = infinite)
+CH_WASH_TTL_HI  = 22  # Wash TTL high byte
+CH_WASH_PULSE_RESPONSE = 23  # >=128 -> Lume allows PULSE overlay on wash;
+                             # <128 -> Lume drops PULSE while wash is in
+                             # ATTACK / HOLD. Wash FX should write 255 if
+                             # they expect accent pulses to be visible.
 
 # Block geometry.
 BLOCK_WIDTH = 40
-ACTIVE_CHANNELS_PER_BLOCK = 20
+ACTIVE_CHANNELS_PER_BLOCK = 23
 NUM_BLOCKS = 10       # Broadcast + groups 1..9.
 
 # Pulse-trigger threshold; matches dmx_channel_mapper::kTriggerHi.
@@ -76,3 +82,30 @@ def clamp_group(value):
     if value > 9:
         return 9
     return value
+
+
+def percent_to_dmx(value):
+    """Convert a percent value (0..100) declared by an FX `("percent",
+    ...)` PARAMS entry into the 0..255 DMX scalar the wire surface
+    expects.
+
+    Bug: FX files were declaring probability params as "percent" but
+    writing the raw int to DMX, so cue-file authors writing '50'
+    expecting 50% were getting DMX 50, which the StickC's mapper
+    buckets to CHANCE_10 (10%). This helper makes the percent <-> DMX
+    conversion explicit so the FX UX matches its docs.
+
+    Value clamped to 0..100; out-of-range silently coerces (>100 -> 100,
+    <0 -> 0) rather than raising, so a malformed cue line produces a
+    sensible default instead of crashing the runtime.
+
+    Quantisation note: the StickC mapper buckets DMX 0..255 into 8
+    Chance enum slots (CHANCE_4 .. CHANCE_100). 0% lands on CHANCE_4
+    (4% effective floor), 50% on CHANCE_50, 87.5%+ on CHANCE_100.
+    Bucket boundaries are inherent to the PixMob wire format.
+    """
+    if value is None or value <= 0:
+        return 0
+    if value >= 100:
+        return 255
+    return int(value * 255 / 100 + 0.5)

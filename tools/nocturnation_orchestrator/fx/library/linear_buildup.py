@@ -19,7 +19,7 @@ params:
 
 from ..base import Fx, set_ch
 from ..channels import (
-    block_channel, clamp_group,
+    block_channel, clamp_group, percent_to_dmx,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -58,7 +58,13 @@ class LinearBuildup(Fx):
         if r == 0 and g == 0 and b == 0:
             r, g, b = 255, 255, 255
         self._r, self._g, self._b = r, g, b
-        self._target_prob = params[3] if params[3] != 0 else 255
+        # target_probability is declared "percent" in PARAMS; convert
+        # to the 0..255 DMX scalar the StickC mapper buckets into a
+        # pixmob::Chance. 0 means "use the default 100%". tick() ramps
+        # from 0 -> _target_prob_dmx over the buildup duration.
+        self._target_prob_dmx = percent_to_dmx(
+            params[3] if params[3] != 0 else 100
+        )
         self._start_master = params[4] if params[4] != 0 else 64
         self._group = clamp_group(params[5] if len(params) > 5 else 0)
         # Default duration drives is_finished(); a 0-buildup is a 1 s safety.
@@ -80,7 +86,7 @@ class LinearBuildup(Fx):
             progress = 1.0
 
         master = self._start_master + int((255 - self._start_master) * progress)
-        prob = int(self._target_prob * progress)
+        prob = int(self._target_prob_dmx * progress)
 
         # Beat cadence (anchored to start time so phase stays stable).
         beat_elapsed = now_ms - self._anchor_ms

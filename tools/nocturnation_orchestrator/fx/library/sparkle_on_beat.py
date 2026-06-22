@@ -29,7 +29,7 @@ phase is stable across late-join (position_ms).
 
 from ..base import Fx, set_ch
 from ..channels import (
-    block_channel, clamp_group,
+    block_channel, clamp_group, percent_to_dmx,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
     CH_PULSE_TRIG, CH_PULSE_ATK, CH_PULSE_SUS, CH_PULSE_REL, CH_PULSE_PROB,
@@ -67,7 +67,11 @@ class SparkleOnBeat(Fx):
         if r == 0 and g == 0 and b == 0:
             r, g, b = 255, 255, 255
         self._r, self._g, self._b = r, g, b
-        self._prob = params[3] if params[3] != 0 else 255
+        # Convert the percent-declared param to the DMX 0..255 scalar
+        # the StickC mapper's quantize_chance() expects. 0 means
+        # "use the default 100%"; clamp behaviour lives in
+        # percent_to_dmx so out-of-range cues degrade gracefully.
+        self._prob = percent_to_dmx(params[3] if params[3] != 0 else 100)
         self._group = clamp_group(params[4] if len(params) > 4 else 0)
         # Beat phase: align the first beat to `now_ms - position_ms` so
         # late-join keeps the same on-the-beat timing.

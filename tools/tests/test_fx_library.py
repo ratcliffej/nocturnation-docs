@@ -23,6 +23,7 @@ from nocturnation_orchestrator.fx.channels import (
     CH_WASH_A_R, CH_WASH_A_G, CH_WASH_A_B,
     CH_WASH_B_R, CH_WASH_B_G, CH_WASH_B_B,
     CH_WASH_CYCLE, CH_WASH_INT, CH_WASH_ATK, CH_WASH_REL,
+    CH_WASH_PULSE_RESPONSE,
     block_channel, BLOCK_WIDTH, NUM_BLOCKS,
     TRIGGER_HI, TRIGGER_LO,
 )
@@ -81,8 +82,51 @@ class TestChannelConstants:
             block_channel(NUM_BLOCKS, 1)
         with pytest.raises(ValueError):
             block_channel(0, 0)
+
+
+class TestPercentToDmx:
+    """Pins the percent -> DMX conversion the FX probability params use.
+    The StickC mapper buckets the resulting DMX into a pixmob::Chance
+    enum (8 slots between CHANCE_4 and CHANCE_100); we don't model the
+    bucketing here, but the boundary table is documented in the helper's
+    docstring."""
+
+    def test_zero_percent_is_zero_dmx(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        # 0% lands on CHANCE_4 (4% effective floor) after the mapper
+        # quantises - the bracelet's wire format has no "never" slot.
+        assert percent_to_dmx(0) == 0
+
+    def test_hundred_percent_is_max_dmx(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        # 100% must land in the CHANCE_100 bucket (DMX 224..255).
+        assert percent_to_dmx(100) == 255
+
+    def test_fifty_percent_lands_in_chance_50_bucket(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        # 50% -> DMX 128, mapper buckets 128..159 into CHANCE_50.
+        assert percent_to_dmx(50) == 128
+
+    def test_clamps_above_100(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        assert percent_to_dmx(150) == 255
+
+    def test_clamps_below_0(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        assert percent_to_dmx(-5) == 0
+
+    def test_none_is_zero(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        assert percent_to_dmx(None) == 0
+
+    def test_intermediate_values_round(self):
+        from nocturnation_orchestrator.fx.channels import percent_to_dmx
+        # 25% * 2.55 = 63.75 -> rounds to 64
+        assert percent_to_dmx(25) == 64
+        # 75% * 2.55 = 191.25 -> rounds to 191
+        assert percent_to_dmx(75) == 191
         with pytest.raises(ValueError):
-            block_channel(0, 21)
+            block_channel(0, 24)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +222,16 @@ class TestQuietWash:
         f = parse_cues("00:00 quiet_wash 100 100 100")
         assert f.cues[0].params == (100, 100, 100, 0, 0, 0)
 
+    def test_writes_pulse_response_so_pulses_overlay(self):
+        # Lume's perimeter renderer drops LIGHT_PULSE during wash
+        # ATTACK / HOLD unless pulse_response > 0 on the wire (>=128
+        # at the mapper). Every wash FX must write CH_WASH_PULSE_RESPONSE
+        # or accent pulses are silently dropped.
+        fx = _make(QuietWash, params=(40, 0, 200, 0, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_WASH_PULSE_RESPONSE) >= 128
+
 
 # ---------------------------------------------------------------------------
 # DriftWash
@@ -202,6 +256,12 @@ class TestDriftWash:
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_CYCLE) == 80
+
+    def test_writes_pulse_response_so_pulses_overlay(self):
+        fx = _make(DriftWash, params=(255, 0, 0, 0, 0, 255, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_WASH_PULSE_RESPONSE) >= 128
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +291,16 @@ class TestSparkleOnBeat:
         assert _ch(u2, CH_PULSE_TRIG) == TRIGGER_HI
 
     def test_writes_rgb_and_prob(self):
-        fx = _make(SparkleOnBeat, params=(80, 200, 200, 200, 0, 0))
+        # probability=50 (percent) -> percent_to_dmx(50) = 128 (DMX).
+        # The mapper buckets DMX 128 into CHANCE_50 = 50% on the wire,
+        # which is what a cue-file author writing "50" intends.
+        fx = _make(SparkleOnBeat, params=(80, 200, 200, 50, 0, 0))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_R) == 80
         assert _ch(u, CH_PULSE_G) == 200
         assert _ch(u, CH_PULSE_B) == 200
-        assert _ch(u, CH_PULSE_PROB) == 200
+        assert _ch(u, CH_PULSE_PROB) == 128
 
     def test_late_join_phase_preserved(self):
         # Started 1500 ms into the song; first beat (relative to song)
@@ -302,6 +365,15 @@ class TestWashWithSparkle:
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
         assert _ch(u, CH_PULSE_PROB) == 255
 
+    def test_writes_pulse_response_so_pulse_cues_overlay(self):
+        fx = _make(
+            WashWithSparkle, bpm=120,
+            params=(50, 0, 50, 100, 0, 100, 50, 25, 25, 25, 50),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_WASH_PULSE_RESPONSE) >= 128
+
     def test_sparkle_re_arms_on_next_tick(self):
         fx = _make(
             WashWithSparkle, bpm=120,
@@ -329,6 +401,12 @@ class TestWashWithSparkle:
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
 
     def test_white_sparkle_default_when_rgb_zero(self):
+        # All-zero sparkle RGB defaults to white so an undermade cue
+        # still produces visible beat output. Tick 0 is the first
+        # beat -> on_beat=true -> sparkle writes pulse RGB at default
+        # white. (Epic 11 B0 rollback restored this behaviour after
+        # the mid-Epic-11 PixMob refresh layer was removed - the
+        # refresh used to win tick 0 over the sparkle.)
         fx = _make(
             WashWithSparkle, bpm=120,
             params=(100, 0, 0, 0, 0, 100, 80, 0, 0, 0, 255),
@@ -400,22 +478,24 @@ class TestLinearBuildup:
         assert _ch(u, CH_MASTER) == 255
 
     def test_probability_ramps_zero_to_target(self):
-        fx = _make(LinearBuildup, buildup_s=4, params=(255, 0, 0, 200, 0, 0))
+        # target_probability=80 (percent) -> percent_to_dmx(80) = 204 (DMX).
+        # tick ramps 0 -> 204 across the buildup window.
+        fx = _make(LinearBuildup, buildup_s=4, params=(255, 0, 0, 80, 0, 0))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_PROB) == 0
         u = _u()
         fx.tick(now_ms=4000, universe=u)
-        assert _ch(u, CH_PULSE_PROB) == 200
+        assert _ch(u, CH_PULSE_PROB) == 204
 
     def test_clamps_past_duration(self):
         # If the runner over-ticks beyond default_duration_ms, master
-        # must not exceed 255.
-        fx = _make(LinearBuildup, buildup_s=2, params=(255, 0, 0, 200, 64, 0))
+        # must not exceed 255. target_probability=80% holds at 204 DMX.
+        fx = _make(LinearBuildup, buildup_s=2, params=(255, 0, 0, 80, 64, 0))
         u = _u()
         fx.tick(now_ms=5000, universe=u)  # well past
         assert _ch(u, CH_MASTER) == 255
-        assert _ch(u, CH_PULSE_PROB) == 200
+        assert _ch(u, CH_PULSE_PROB) == 204
 
     def test_finished_after_buildup(self):
         fx = _make(LinearBuildup, buildup_s=2)
@@ -486,9 +566,16 @@ class TestBlackout:
         u[5] = 255       # ch 6 pulse trigger
         fx = _make(Blackout)
         fx.tick(now_ms=0, universe=u)
-        # Every broadcast-block channel should be zero now.
-        for ch in range(40):
-            assert u[ch] == 0, "ch %d should be zero, got %d" % (ch + 1, u[ch])
+        # Every broadcast-block channel should be zero now EXCEPT
+        # pulse_response (ch 23), which Blackout sets to 255 so the
+        # all-zero wash it emits doesn't lock the Lume out of future
+        # pulse cues. See blackout.py for rationale.
+        from nocturnation_orchestrator.fx.channels import CH_WASH_PULSE_RESPONSE
+        for ch in range(1, 41):
+            if ch == CH_WASH_PULSE_RESPONSE:
+                continue
+            assert u[ch - 1] == 0, "ch %d should be zero, got %d" % (ch, u[ch - 1])
+        assert u[CH_WASH_PULSE_RESPONSE - 1] == 255
 
     def test_writes_zero_to_group_blocks_too(self):
         # Pre-fill channels in groups 1..9 (broadcast = block 0;
@@ -500,6 +587,20 @@ class TestBlackout:
         fx.tick(now_ms=0, universe=u)
         for block in range(10):
             assert u[block * 40] == 0
+
+    def test_keeps_pulse_response_open_on_every_block(self):
+        # Blackout's purpose is "lights off NOW, but don't block what
+        # comes next". Every block's pulse_response channel must come
+        # out of Blackout at 255 so the all-zero wash the StickC mapper
+        # forwards to the Lume permits subsequent pulse cues.
+        from nocturnation_orchestrator.fx.channels import (
+            CH_WASH_PULSE_RESPONSE, block_channel,
+        )
+        u = _u()
+        fx = _make(Blackout)
+        fx.tick(now_ms=0, universe=u)
+        for block in range(10):
+            assert u[block_channel(block, CH_WASH_PULSE_RESPONSE) - 1] == 255
 
     def test_finishes_after_one_tick(self):
         fx = _make(Blackout)
