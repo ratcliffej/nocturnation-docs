@@ -332,48 +332,62 @@ def run(
                                            cue_file.default_bpm,
                                            offset_note))
                                 # Epic 13: synthesize @ShowSongInfo as
-                                # HeaderText/BodyText cues at time_ms=0
-                                # BEFORE handing the cue file to the
-                                # scheduler. Two benefits over the prior
-                                # "emit out-of-band at track-load" path:
+                                # HeaderText/BodyText cues at time_ms=
+                                # kShowSongInfoAtMs (1 second into the
+                                # song) BEFORE handing the cue file to
+                                # the scheduler. Three benefits:
                                 #   1. Re-fires automatically on a
                                 #      backward seek (song restart -
                                 #      cursor resets to 0 and the
-                                #      synthesised cues re-fire). The
-                                #      prior path only emitted on track
-                                #      change, so restarting the same
-                                #      song never re-painted the card.
+                                #      synthesised cues re-fire at 1s).
                                 #   2. Composes naturally with the
                                 #      scheduler's seek-collapse: a
-                                #      mid-song join collapses the
-                                #      synthesised cues with any
+                                #      mid-song join past 1s collapses
+                                #      the synthesised cues with any
                                 #      later HeaderText/BodyText cues
                                 #      into a single final-state
                                 #      emission, no flicker.
+                                #   3. 1-second offset (vs time_ms=0)
+                                #      dodges the burst of activity at
+                                #      song start - stop FX cancels
+                                #      previous wash, mapper emits
+                                #      LIGHT_WASH_END, wash_with_sparkle
+                                #      starts and the next frame
+                                #      typically lands at ~0:00.5. The
+                                #      radio TX queue is congested in
+                                #      that ~500 ms window; the title
+                                #      card was getting dropped. By
+                                #      ~1.0 s the FX has settled and
+                                #      the queue is quiet.
                                 # Snapshot fields are authoritative
                                 # (they reflect what the music player
                                 # is actually playing); fall back to
                                 # the cue file's @title / @artist if
                                 # the snapshot is empty.
+                                kShowSongInfoAtMs = 1000
                                 if cue_file.show_song_info:
-                                    hdr = snapshot.title or cue_file.title or ""
-                                    bod = snapshot.artist or cue_file.artist or ""
+                                    # Artist as header (the larger
+                                    # font tier on Lume LCDs), title
+                                    # as body. Operator preference -
+                                    # billing-style now-playing card.
+                                    hdr = snapshot.artist or cue_file.artist or ""
+                                    bod = snapshot.title or cue_file.title or ""
                                     if debug:
-                                        log(("song-info: synth header=%r body=%r "
+                                        log(("song-info: synth at %dms header=%r body=%r "
                                              "(snapshot title=%r artist=%r; "
                                              "file title=%r artist=%r)")
-                                            % (hdr, bod,
+                                            % (kShowSongInfoAtMs, hdr, bod,
                                                snapshot.title, snapshot.artist,
                                                cue_file.title, cue_file.artist))
                                     synth = []
                                     if hdr:
                                         synth.append(Cue(
-                                            time_ms=0, kind="header_text",
+                                            time_ms=kShowSongInfoAtMs, kind="header_text",
                                             text=hdr, line_no=0,
                                         ))
                                     if bod:
                                         synth.append(Cue(
-                                            time_ms=0, kind="body_text",
+                                            time_ms=kShowSongInfoAtMs, kind="body_text",
                                             text=bod, line_no=0,
                                         ))
                                     if synth:

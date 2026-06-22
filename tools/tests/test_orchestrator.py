@@ -1301,24 +1301,26 @@ class TestDisplayCuesEndToEnd:
 
     def test_show_song_info_emits_card_on_track_start(self, tmp_path):
         # @ShowSongInfo synthesises HeaderText + BodyText cues at
-        # time_ms=0 and the scheduler fires them on first advance().
+        # time_ms=1000 (1 s into the song to dodge the 0:00 cue-fire
+        # burst) and the scheduler fires them when position reaches 1s.
         # Two cues = two TEXT_DISPLAY frames (header alone, then header
         # + body); the LAST frame holds the composed final state.
-        # iterations >= ~13 to give the poll-loop (250ms interval) one
-        # opportunity to fire and load the cue file.
+        # iterations: poll-loop fires every ~13 ticks (250ms interval)
+        # and position needs to advance past 1000ms => need ~70+ ticks
+        # (at 20ms per tick = 1.4 s of wall-clock).
         disp = self._drive(
             tmp_path,
             "@ShowSongInfo\n",
-            iterations=30,
+            iterations=100,
         )
         text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
         # Expect at least 2 frames: the synth header + the synth body.
         assert len(text_frames) >= 2
         last = _decode_text_display(text_frames[-1])
-        # snapshot.title -> header, snapshot.artist -> body.
+        # snapshot.artist -> header, snapshot.title -> body.
         # FakeBackend in _drive uses artist="A" title="X".
-        assert last["header"] == "X"
-        assert last["body"] == "A"
+        assert last["header"] == "A"
+        assert last["body"] == "X"
 
     def test_no_emission_without_show_song_info_or_display_cues(self, tmp_path):
         # Plain wash-only cue file - no Epic 13 directives, no display
