@@ -1,22 +1,55 @@
 """USB-direct dispatcher using the existing nocturnation_dmx UsbWriter."""
 
-from nocturnation_dmx.port_picker import find_candidate_ports_with_info
+import sys
+
+from nocturnation_dmx.port_picker import (
+    find_candidate_ports_with_info,
+    interactive_pick_port,
+)
 from nocturnation_dmx.usb_writer import UsbWriter
 
 from .base import OutputDispatcher, OutputError
 
 
-def _pick_first_stickc_port():
-    """First StickC-shaped USB port. find_candidate_ports_with_info()
-    already excludes Tildagons, so any hit is a valid target."""
+def _pick_stickc_port():
+    """Pick a StickC-shaped USB serial port.
+
+    Zero candidates -> OutputError (auto-mode catches this and falls
+    through to Art-Net). One candidate -> auto-pick silently. Two or
+    more -> prompt the operator with a numbered menu (same UX as the
+    Art-Net shim). Operator-cancel raises OutputError so auto-mode
+    can fall through cleanly.
+
+    find_candidate_ports_with_info() already excludes Tildagons, so
+    any hit is a valid Director-Stick target.
+    """
     candidates = find_candidate_ports_with_info()
     if not candidates:
         raise OutputError(
             "no StickC-shaped USB serial port found; plug a Plus2 / S3 in or "
             "use --output artnet"
         )
-    device, _desc = candidates[0]
-    return device
+    if len(candidates) == 1:
+        device, _desc = candidates[0]
+        return device
+    # Multiple candidates: defer to the shim's interactive picker so
+    # the orchestrator and shim share the same numbered-prompt UX.
+    # Reuses find_candidate_ports_with_info internally - the double
+    # lookup is cheap (pyserial just walks /dev).
+    if not sys.stdin.isatty():
+        # Non-interactive context (e.g. launched from a wrapper / CI):
+        # don't block waiting for input; fall through to the first
+        # candidate and let the operator override with --usb-port if
+        # the auto-pick is wrong.
+        device, _desc = candidates[0]
+        return device
+    chosen = interactive_pick_port()
+    if chosen is None:
+        raise OutputError(
+            "no StickC port selected; operator cancelled the picker. "
+            "Pass --usb-port to skip the prompt or --output artnet."
+        )
+    return chosen
 
 
 class UsbDispatcher(OutputDispatcher):
@@ -32,7 +65,7 @@ class UsbDispatcher(OutputDispatcher):
         match. Raises OutputError if no candidate or the open failed
         (auto mode catches and falls through to Art-Net)."""
         if port is None:
-            port = _pick_first_stickc_port()
+            port = _pick_stickc_port()
         writer = UsbWriter(port) if baud is None else UsbWriter(port, baud=baud)
         if not writer.is_open:
             raise OutputError(

@@ -48,19 +48,35 @@ _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _TOOLS_DIR)
 
 from nocturnation_dmx import UsbWriter, espnow_frame
-from nocturnation_dmx.port_picker import find_candidate_ports_with_info
+from nocturnation_dmx.port_picker import (
+    find_candidate_ports_with_info,
+    interactive_pick_port,
+)
 from nocturnation_orchestrator.output.artnet import ArtnetDispatcher
 
 
 def _pick_first_stickc_port():
+    """Pick a Director Stick serial port. Auto-picks if there's only
+    one candidate; prompts the operator with the shim's numbered menu
+    when several are connected (e.g. Plus2 + S3 both plugged in)."""
     candidates = find_candidate_ports_with_info()
     if not candidates:
         raise SystemExit(
             "no StickC-shaped USB serial port found; plug a Plus2 / S3 in"
         )
-    device, desc = candidates[0]
-    print(f"[send_text] using {device} ({desc})", file=sys.stderr)
-    return device
+    if len(candidates) == 1:
+        device, desc = candidates[0]
+        print(f"[send_text] using {device} ({desc})", file=sys.stderr)
+        return device
+    if not sys.stdin.isatty():
+        device, desc = candidates[0]
+        print(f"[send_text] non-interactive; defaulting to {device} ({desc})",
+              file=sys.stderr)
+        return device
+    chosen = interactive_pick_port()
+    if chosen is None:
+        raise SystemExit("[send_text] operator cancelled port selection")
+    return chosen
 
 
 def _parse_rgb(s: str) -> tuple[int, int, int]:
