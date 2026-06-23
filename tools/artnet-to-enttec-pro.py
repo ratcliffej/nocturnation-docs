@@ -113,7 +113,38 @@ CHANNEL_ROLES = [
     "Reserved 21",
     "Reserved 22",
     "Reserved 23",
+    # Channels 24-27 are the EMF stage-team raw-RGB path (added
+    # 2026-06-23): direct LD control of each block as a dumb RGB
+    # fixture, FX engine suppressed when Raw Enable >= 128.
+    "Raw R",
+    "Raw G",
+    "Raw B",
+    "Raw Enable",
 ]
+BLOCK_WIDTH = 40       # universe channels per block
+MAX_UNIVERSE_CHANNEL = 512
+
+
+def channel_to_role_and_group(universe_channel):
+    """Map a 1-indexed universe channel to (group_label, role_label).
+
+    Block 0 (universe 1..40) is broadcast (target_group = 0). Block N
+    (universe (40*N+1)..(40*N+40)) is group N. Within each block the
+    same role layout repeats - so universe channel 44 in group 1 is
+    the same role as channel 4 in broadcast (Pulse G), just addressed
+    to a different fleet subset.
+    """
+    if not (1 <= universe_channel <= MAX_UNIVERSE_CHANNEL):
+        return ("?", "out-of-range")
+    zero_idx = universe_channel - 1
+    block_idx = zero_idx // BLOCK_WIDTH
+    offset = zero_idx % BLOCK_WIDTH
+    group_label = "Broadcast" if block_idx == 0 else f"Group {block_idx}"
+    if offset < len(CHANNEL_ROLES):
+        role = CHANNEL_ROLES[offset]
+    else:
+        role = f"Reserved {offset + 1}"
+    return (group_label, role)
 
 
 # ============================================================================
@@ -219,6 +250,12 @@ class ShimState:
     # Sources stale past MERGE_STALENESS_S drop out of the merge so a
     # disconnected sender doesn't pin its last frame forever.
     sources: dict = field(default_factory=dict)
+    # Which universe channels the debug panel should show. None =
+    # default broadcast view (channels 1..23 with no Group column).
+    # Non-empty list = operator-chosen channels via --showchannels, in
+    # the order given, with a Group column so the LD can see at a
+    # glance which fixture block each row belongs to.
+    show_channels: Optional[list] = None
 
     def record_frame(self, payload: bytes) -> None:
         now = time.monotonic()
@@ -318,27 +355,60 @@ def build_status_layout(state: ShimState) -> Layout:
         info.add_row("Last error", f"[red dim]{state.last_error_msg}[/red dim]")
     layout["info"].update(Panel(info, title="Status", border_style="blue"))
 
-    # Channels panel: 23-row hex view with bar meters (B7 broadcast block).
+    # Channels panel. Two layouts: the default "broadcast block" view
+    # (channels 1..23, no Group column - the LD is patched at base
+    # address 1 and watching the whole block) and the
+    # --showchannels view (operator-chosen channels with a Group
+    # column showing which fixture block each row addresses).
     channels = Table(show_header=True, expand=True, padding=(0, 1))
-    channels.add_column("Ch", style="dim", width=3)
+    channels.add_column("Ch", style="dim", width=4)
+    if state.show_channels is not None:
+        channels.add_column("Group", width=10)
     channels.add_column("Role", width=18)
     channels.add_column("Hex", width=4)
     channels.add_column("Val", width=4)
     channels.add_column("Level", ratio=1)
     payload = state.last_payload or b""
-    for idx, role in enumerate(CHANNEL_ROLES):
-        if idx < len(payload):
-            val = payload[idx]
-            hex_str = f"0x{val:02X}"
-            bar_width = max(1, val // 8)   # 0..32 chars wide
-            bar = "█" * bar_width
-            channels.add_row(
-                f"{idx + 1:02d}", role, hex_str, str(val),
-                f"[green]{bar}[/green]",
-            )
-        else:
-            channels.add_row(f"{idx + 1:02d}", role, "----", "-", "[dim]no data[/dim]")
-    layout["channels"].update(Panel(channels, title="DMX channels (Broadcast block)", border_style="blue"))
+
+    if state.show_channels is not None:
+        # Operator-chosen channels via --showchannels. Each row labels
+        # its block (Broadcast / Group N) so the LD can see at a glance
+        # which fixture each value belongs to.
+        for ch in state.show_channels:
+            group_label, role = channel_to_role_and_group(ch)
+            idx = ch - 1
+            if 0 <= idx < len(payload):
+                val = payload[idx]
+                hex_str = f"0x{val:02X}"
+                bar = "█" * max(1, val // 8)
+                channels.add_row(
+                    f"{ch:03d}", group_label, role, hex_str, str(val),
+                    f"[green]{bar}[/green]",
+                )
+            else:
+                channels.add_row(
+                    f"{ch:03d}", group_label, role, "----", "-",
+                    "[dim]no data[/dim]",
+                )
+        title = f"DMX channels ({len(state.show_channels)} selected)"
+    else:
+        # Default broadcast-block view (channels 1-23).
+        for idx, role in enumerate(CHANNEL_ROLES[:23]):
+            if idx < len(payload):
+                val = payload[idx]
+                hex_str = f"0x{val:02X}"
+                bar = "█" * max(1, val // 8)
+                channels.add_row(
+                    f"{idx + 1:02d}", role, hex_str, str(val),
+                    f"[green]{bar}[/green]",
+                )
+            else:
+                channels.add_row(
+                    f"{idx + 1:02d}", role, "----", "-",
+                    "[dim]no data[/dim]",
+                )
+        title = "DMX channels (Broadcast block)"
+    layout["channels"].update(Panel(channels, title=title, border_style="blue"))
 
     layout["footer"].update(Panel(
         Text("Ctrl+C to quit", justify="center", style="dim"),
@@ -600,7 +670,37 @@ def main() -> int:
              "firmware reading from a hardware UART via external FTDI, "
              "see B7).",
     )
+    parser.add_argument(
+        "--showchannels", default=None,
+        help="Comma-separated list of universe channels to display in "
+             "the debug panel instead of the default broadcast block "
+             "(channels 1-23). Each channel is 1-indexed (1..512); "
+             "the panel shows the channel number, its block (Broadcast "
+             "/ Group N), its role (Master, Raw R, etc.), and the live "
+             "value. Useful when the LD has patched fixtures in "
+             "non-broadcast groups (Group 1 at 41, Group 2 at 81, ...) "
+             "and wants to watch those specifically. "
+             "Example: --showchannels 24,25,26,27,64,65,66,67",
+    )
     args = parser.parse_args()
+
+    # Parse --showchannels into a validated list of ints, or None if
+    # the flag wasn't passed (default broadcast view).
+    show_channels = None
+    if args.showchannels is not None:
+        try:
+            show_channels = [int(c.strip()) for c in args.showchannels.split(",") if c.strip()]
+        except ValueError:
+            print("--showchannels must be a comma-separated list of integers",
+                  file=sys.stderr)
+            sys.exit(2)
+        for ch in show_channels:
+            if not (1 <= ch <= MAX_UNIVERSE_CHANNEL):
+                print(f"--showchannels: channel {ch} out of range (1..{MAX_UNIVERSE_CHANNEL})",
+                      file=sys.stderr)
+                sys.exit(2)
+        if not show_channels:
+            show_channels = None  # empty list -> fall back to default view
 
     # Bind BOTH IPv4 and IPv6 wildcards on port 6454.
     #
@@ -723,6 +823,7 @@ def main() -> int:
         artnet_port=args.artnet_port,
         universe=args.universe,
         merge_mode=args.merge,
+        show_channels=show_channels,
     )
 
     console = Console()
