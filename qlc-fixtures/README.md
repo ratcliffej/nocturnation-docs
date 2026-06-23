@@ -110,6 +110,56 @@ To turn the same group off, write 0 to channel 27 (Raw Enable drops
 below 128 → control returns to the FX engine). If your scene's FX
 channels are also zero, the result is a dark block.
 
+## Lume groups and audience distribution
+
+NocturNation is **audience-owned merch** — punters buy or are given
+a NocturNation-flashed badge (Tildagon for EMF) and bring it to the
+show. The LD has no opportunity to pre-configure each device by hand.
+For independent zone control to be possible at all, the badge fleet
+needs to **self-distribute into addressable groups** without any
+operator touch.
+
+**How it works.** The first time the NocturNation app runs on a
+device, it rolls a random group in **[1, 3]** and persists it. From
+then on the value is sticky — the same badge always lands in the
+same zone unless the owner explicitly changes it via the in-app
+settings menu. Across a large audience this gives:
+
+- **Group 1**: ~33% of the fleet
+- **Group 2**: ~33% of the fleet
+- **Group 3**: ~33% of the fleet
+
+The distribution is per-device-independent — each badge rolls its
+own random value at first run, no fleet-wide correlation.
+
+**Group 0 (broadcast)** is *not* part of the random pick. A device
+that has never had the NocturNation app run before will never
+default to 0. The only way a Lume ends up at group 0 is the owner
+explicitly setting it via the in-app settings menu (or an operator
+on a Stick's Config menu).
+
+**What this means for cuing**:
+
+- **Broadcast scenes** (patched at universe address 1, target_group 0)
+  reach every Lume in the audience regardless of their personal group.
+  Use for full-fleet looks — the entire crowd lights up together.
+- **Group-1/2/3 scenes** (patched at 41 / 81 / 121) reach roughly a
+  third of the fleet each. Use for back-and-forth callbacks,
+  syncopated patterns, "left/right/centre" stage moments.
+- **Groups 4-6** (patched at 161 / 201 / 241) reach nobody by
+  default. Available for future expansion or operator-assigned
+  groups (e.g. a tech crew sub-fleet manually set to group 4).
+
+**Persistence across shows.** A punter's badge keeps its group
+forever. If they come back to the next NocturNation show, they're
+in the same zone. That's by design — it gives the LD a stable
+addressing model across a tour without anyone touching individual
+devices.
+
+**Migration / re-roll.** If a punter wants to change zones (or
+reset to broadcast), the in-app settings menu is the operator
+recourse. The random pick only fires on a never-configured device.
+
 ## Patching the fixture in QLC+
 
 In QLC+'s **Fixtures** panel:
