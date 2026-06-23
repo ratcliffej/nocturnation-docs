@@ -46,9 +46,22 @@ CH_WASH_PULSE_RESPONSE = 23  # >=128 -> Lume allows PULSE overlay on wash;
                              # ATTACK / HOLD. Wash FX should write 255 if
                              # they expect accent pulses to be visible.
 
+# Raw-RGB path (EMF artist-stage request 2026-06-23). When CH_RAW_ENABLE
+# is >= 128, the StickC mapper treats the block as a dumb 3-channel
+# RGB fixture: emits a static LIGHT_WASH built from CH_RAW_R/G/B
+# (master-scaled) and SUPPRESSES the FX engine's pulse / wash / strobe
+# output for the block until enable drops back below 128. Lets an LD
+# bypass the FX engine entirely for plain-light control of Lumes.
+# Orchestrator FX library doesn't write these - they're for direct DMX
+# from the LD's console.
+CH_RAW_R       = 24
+CH_RAW_G       = 25
+CH_RAW_B       = 26
+CH_RAW_ENABLE  = 27   # >=128 -> raw mode active; <128 -> FX path
+
 # Block geometry.
 BLOCK_WIDTH = 40
-ACTIVE_CHANNELS_PER_BLOCK = 23
+ACTIVE_CHANNELS_PER_BLOCK = 27
 NUM_BLOCKS = 10       # Broadcast + groups 1..9.
 
 # Pulse-trigger threshold; matches dmx_channel_mapper::kTriggerHi.
@@ -57,11 +70,12 @@ TRIGGER_LO = 0
 
 
 def block_channel(block, channel):
-    """Translate a block-local channel (1..20) to its universe channel.
+    """Translate a block-local channel to its universe channel.
 
     Args:
         block (int): 0 = broadcast, 1..9 = group block index.
-        channel (int): 1..20 (one of the CH_* constants).
+        channel (int): 1..ACTIVE_CHANNELS_PER_BLOCK (one of the CH_*
+            constants).
     """
     if not (0 <= block < NUM_BLOCKS):
         raise ValueError("block out of range: %d" % block)

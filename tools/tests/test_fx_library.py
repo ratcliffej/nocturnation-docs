@@ -125,8 +125,17 @@ class TestPercentToDmx:
         assert percent_to_dmx(25) == 64
         # 75% * 2.55 = 191.25 -> rounds to 191
         assert percent_to_dmx(75) == 191
+
+    def test_block_channel_rejects_past_active(self):
+        # Channel index just past ACTIVE_CHANNELS_PER_BLOCK must raise.
+        # The active range grew to 27 with the raw-RGB path (24-27);
+        # this test pins block_channel's gate to whatever the current
+        # active count is.
+        from nocturnation_orchestrator.fx.channels import (
+            ACTIVE_CHANNELS_PER_BLOCK,
+        )
         with pytest.raises(ValueError):
-            block_channel(0, 24)
+            block_channel(0, ACTIVE_CHANNELS_PER_BLOCK + 1)
 
 
 # ---------------------------------------------------------------------------
