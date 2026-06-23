@@ -1,0 +1,148 @@
+# NocturNation QLC+ fixtures
+
+QLC+ fixture definitions (`.qxf` files) for the NocturNation Lume
+fleet. Drop these into QLC+'s user-fixtures directory, restart QLC+,
+and they appear under the **NocturNation** manufacturer in the
+fixture browser.
+
+## Files
+
+| File | Use when |
+|---|---|
+| `nocturnation-lume-group-v2.qxf` | **Current.** 40 channels per block, supports broadcast + 6 addressable groups, with Raw RGB direct-control channels (v0.3.0). |
+| `nocturnation-lume-group.qxf` | Legacy 12-channel fixture from Epic 4. Keep around for older saved workspaces; new work should use v2. |
+
+## v2 block layout (40 channels per fixture instance)
+
+The fixture is a **40-channel block** that you patch *once per Lume
+group* you want to address independently:
+
+| Base address | Targets |
+|---|---|
+| 1 | Broadcast (all Lumes, every group) |
+| 41 | Group 1 |
+| 81 | Group 2 |
+| 121 | Group 3 |
+| 161 | Group 4 |
+| 201 | Group 5 |
+| 241 | Group 6 |
+
+Within each block, channels 1-27 are active (the firmware reads them);
+28-40 are reserved padding so the next block patches cleanly at the
+spec'd base address. The channel layout, block-local:
+
+| Channel | Name | Notes |
+|---|---|---|
+| **1** | **Master Intensity** | Scales every output for this block — pulse RGB, wash intensity, **and raw RGB**. Acts as a dimmer in standard LD-fixture convention. |
+| 2 | Strobe Rate | 0 = off; 1-255 = 0..4 Hz pulse cadence (Harding-safe cap). |
+| 3-5 | Pulse R / G / B | Sparkle / accent flash colour. |
+| 6 | Pulse Trigger | Rising edge ≥128 fires one pulse. Drop below 128 to re-arm. |
+| 7-9 | Pulse Attack / Sustain / Release | Each quantises to one of 8 PixMob `Time` buckets (T_0_MS .. T_3840_MS). 32-wide slider buckets. |
+| 10 | Pulse Probability | Inverted on the slider so high = more likely to fire. Quantises to 8 PixMob `Chance` buckets (4 %, 10 %, 16 %, 32 %, 50 %, 67 %, 88 %, 100 %). |
+| 11-13 | Wash A R / G / B | Start colour of the wash. |
+| 14-16 | Wash B R / G / B | End colour (ignored when Wash Cycle = 0). |
+| 17 | Wash Cycle | 0 = hold anchor A; 1-255 = 100 ms units (0.1 s to 25.5 s) for the A↔B↔A drift period. |
+| 18 | Wash Intensity | Wash brightness; independent of Master so you can fade a wash without affecting pulses. |
+| 19 | Wash Attack | 100 ms units (fade-in time). |
+| 20 | Wash Release | 100 ms units (default fade-out). |
+| 21-23 | reserved | The firmware reads these (legacy TTL + Pulse-Response fields) but the LD doesn't need to touch them. Leave at 0. |
+| **24** | **Raw R** | See "Raw RGB direct control" below. |
+| **25** | **Raw G** | |
+| **26** | **Raw B** | |
+| **27** | **Raw Enable** | ≥ 128 → raw RGB takes over; < 128 → FX engine runs. |
+| 28-40 | padding | Reserved. Ignored by the firmware. |
+
+## Raw RGB direct control (v0.3.0, EMF stage-team feature)
+
+Channels 24-27 let an LD treat each Lume group as a plain RGB par
+fixture, **bypassing the FX engine entirely**. Useful when:
+
+- You want simple on/off colour control without sparkles / strobes /
+  wash transitions getting in the way.
+- You're cuing static-colour scenes alongside a known music track and
+  want the lighting predictable, not music-reactive.
+- The Lume group is part of a larger rig where it should match other
+  fixtures' behaviour (e.g. a row of RGB pars + Lumes all driven from
+  the same scene).
+
+**How it works.** When **Raw Enable** (channel 27) is ≥ 128, the
+StickC mapper:
+
+1. Reads Raw R / G / B (channels 24-26).
+2. Scales them by Master Intensity (channel 1) — LD's master slider
+   dims the raw colour just like any RGB fixture.
+3. Emits a **static `LIGHT_WASH`** to the Lume fleet (same wire
+   protocol as the FX engine's wash, just with `r1 == r2` and no
+   cycle).
+4. **Suppresses** the FX engine's pulse / wash / strobe output for
+   this block. No surprise flashes during raw control.
+
+When Raw Enable drops below 128, control hands back to the FX engine
+cleanly — the bridge re-emits whatever the FX channels are currently
+showing, so receivers don't keep displaying the stale raw colour.
+
+**Receiver behaviour:**
+
+- **Tildagon LCD background** — renders the raw colour as a held
+  fill.
+- **Tildagon perimeter ring** — renders the raw colour on all 12 LEDs.
+- **StickC LED strip** (Plus2 / S3 / Atom Lite) — renders the raw
+  colour across all pixels.
+- **PixMob bracelets** — render the raw colour via periodic IR
+  refresh. Note: keep raw RGB values ≥ ~16 if you're targeting groups
+  containing PixMobs. Near-black colours (e.g. `5,0,0`) risk putting
+  the bracelet into a persistent "stress" state from receiving very-
+  dim IR refreshes. Pure black (`0,0,0`) is filtered safely at the
+  driver and routed through wash-end instead.
+
+**Scene cookbook.** A scene that lights every Lume blue at 50 %
+brightness:
+
+| Channel | Value | What it does |
+|---|---|---|
+| 1 (Master) | 128 | 50 % brightness |
+| 24 (Raw R) | 0 | |
+| 25 (Raw G) | 0 | |
+| 26 (Raw B) | 255 | |
+| 27 (Raw Enable) | 255 | Raw mode on |
+
+To turn the same group off, write 0 to channel 27 (Raw Enable drops
+below 128 → control returns to the FX engine). If your scene's FX
+channels are also zero, the result is a dark block.
+
+## Patching the fixture in QLC+
+
+In QLC+'s **Fixtures** panel:
+
+1. **Add fixture** → manufacturer **NocturNation** → model
+   **Lume Group v2 (DMX bridge)** → mode **Block (40ch)**.
+2. Set the base address to one of the values from the table above
+   (1 for broadcast, 41 for group 1, etc.).
+3. Repeat for each group you want to address independently.
+
+You can patch as few or as many as you need — the typical artist-stage
+setup is the broadcast block plus 1-3 group blocks. Heads inside the
+fixture give QLC+'s RGB-fixture controls (the colour picker, the
+gradient widgets) handles for:
+
+- Pulse R/G/B (channels 3-5)
+- Wash A R/G/B (channels 11-13)
+- Wash B R/G/B (channels 14-16)
+- Raw R/G/B (channels 24-26)
+
+So a colour picker bound to a head selects the right colour for the
+right purpose.
+
+## Versioning
+
+Bumping the fixture file's internal `<Version>` rather than renaming
+the file means existing scenes keep working — channels stay at the
+same numbers, new channels just become accessible. If a future change
+needs to *renumber* an existing channel, that warrants a v3 file +
+filename change so older workspaces don't silently break.
+
+| Version | Date | Change |
+|---|---|---|
+| 0.3.0 | 2026-06-23 | Added Raw R/G/B/Enable (channels 24-27) for direct stage-LD control. |
+| 0.2.1 | (Epic 7) | 40-channel block; per-group instances; Pulse + Wash with extended params. |
+| 0.1 | (Epic 4) | Original 12-channel fixture. (Filename `nocturnation-lume-group.qxf`.) |

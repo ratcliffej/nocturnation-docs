@@ -3,7 +3,7 @@
 <FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
  <Creator>
   <Name>NocturNation</Name>
-  <Version>0.2.1</Version>
+  <Version>0.3.0</Version>
   <Author>NocturNation contributors</Author>
  </Creator>
  <Manufacturer>NocturNation</Manufacturer>
@@ -23,9 +23,19 @@
      201 - Group 5
      241 - Group 6
 
-   23 active channels per block (1..23); channels 24..40 reserved
+   27 active channels per block (1..27); channels 28..40 reserved
    for future extension. Total 280 of 512 addresses consumed; 232
    spare.
+
+   v0.3.0 (2026-06-23): added Raw R/G/B/Enable on channels 24-27
+   per block at the EMF artist-stage LD's request. When Raw Enable
+   >= 128 the StickC mapper treats the block as a dumb 3-channel
+   RGB fixture: emits a static LIGHT_WASH from Raw R/G/B (master-
+   scaled) and SUPPRESSES the FX-engine pulse / wash / strobe
+   output for this block. Lets an LD bypass the FX engine entirely
+   for plain-light control of Lume groups - patch the same fixture,
+   pull up Raw Enable, set Raw R/G/B, you've got an RGB par. Drop
+   Raw Enable below 128 to hand control back to the FX engine.
  -->
 
  <!-- ============================================================
@@ -154,16 +164,32 @@
  <Channel Name="Reserved 23"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
 
  <!-- ============================================================
+      RAW RGB (v0.3.0; EMF artist-stage request 2026-06-23)
+      ============================================================
+      Direct LD control of each Lume group as a plain RGB fixture.
+      Set Raw Enable >= 128 to take over: the FX engine's pulse,
+      wash, and strobe output for this block is suppressed and the
+      Lume shows the master-scaled Raw R/G/B colour as a held static
+      wash. Drop Raw Enable below 128 to hand control back to the
+      FX engine; the bridge then re-emits the current FX wash so
+      receivers don't keep showing the stale raw colour.
+      ============================================================ -->
+ <Channel Name="Raw R" Preset="IntensityRed"/>
+ <Channel Name="Raw G" Preset="IntensityGreen"/>
+ <Channel Name="Raw B" Preset="IntensityBlue"/>
+ <Channel Name="Raw Enable">
+  <Group Byte="0">Effect</Group>
+  <Capability Min="0"   Max="127">FX engine (Master / Strobe / Pulse / Wash apply)</Capability>
+  <Capability Min="128" Max="255">Raw RGB takes over (FX suppressed)</Capability>
+ </Channel>
+
+ <!-- ============================================================
       RESERVED PADDING
       Reserved channels keep adjacent fixture instances from
       overlapping when the LD patches them at the spec'd base
       addresses (1, 41, 81, 121, 161, 201, 241). The firmware
       ignores them.
       ============================================================ -->
- <Channel Name="Reserved 24"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 25"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 26"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 27"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 28"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 29"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
  <Channel Name="Reserved 30"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
@@ -206,10 +232,10 @@
   <Channel Number="20">Reserved 21</Channel>
   <Channel Number="21">Reserved 22</Channel>
   <Channel Number="22">Reserved 23</Channel>
-  <Channel Number="23">Reserved 24</Channel>
-  <Channel Number="24">Reserved 25</Channel>
-  <Channel Number="25">Reserved 26</Channel>
-  <Channel Number="26">Reserved 27</Channel>
+  <Channel Number="23">Raw R</Channel>
+  <Channel Number="24">Raw G</Channel>
+  <Channel Number="25">Raw B</Channel>
+  <Channel Number="26">Raw Enable</Channel>
   <Channel Number="27">Reserved 28</Channel>
   <Channel Number="28">Reserved 29</Channel>
   <Channel Number="29">Reserved 30</Channel>
@@ -226,6 +252,7 @@
   <Head><Channel>2</Channel><Channel>3</Channel><Channel>4</Channel></Head>
   <Head><Channel>10</Channel><Channel>11</Channel><Channel>12</Channel></Head>
   <Head><Channel>13</Channel><Channel>14</Channel><Channel>15</Channel></Head>
+  <Head><Channel>23</Channel><Channel>24</Channel><Channel>25</Channel></Head>
  </Mode>
 
  <Physical>
