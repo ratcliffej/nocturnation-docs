@@ -2,212 +2,166 @@
 <!DOCTYPE FixtureDefinition>
 <FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
  <Creator>
-  <Name>NocturNation</Name>
-  <Version>0.3.0</Version>
+  <Name>Q Light Controller Plus</Name>
+  <Version>5.2.1</Version>
   <Author>NocturNation contributors</Author>
  </Creator>
  <Manufacturer>NocturNation</Manufacturer>
  <Model>Lume Group v2 (DMX bridge)</Model>
  <Type>Color Changer</Type>
-
- <!--
-   Epic 7 B7: per-group + extended-parameter DMX surface. Single
-   40-channel mode used for ALL 7 fixture instances (broadcast + 6
-   groups). Patch this fixture at these universe addresses:
-
-     1   - Broadcast (target_group=0; reaches every Lume)
-     41  - Group 1
-     81  - Group 2
-     121 - Group 3
-     161 - Group 4
-     201 - Group 5
-     241 - Group 6
-
-   27 active channels per block (1..27); channels 28..40 reserved
-   for future extension. Total 280 of 512 addresses consumed; 232
-   spare.
-
-   v0.3.0 (2026-06-23): added Raw R/G/B/Enable on channels 24-27
-   per block at the EMF artist-stage LD's request. When Raw Enable
-   >= 128 the StickC mapper treats the block as a dumb 3-channel
-   RGB fixture: emits a static LIGHT_WASH from Raw R/G/B (master-
-   scaled) and SUPPRESSES the FX-engine pulse / wash / strobe
-   output for this block. Lets an LD bypass the FX engine entirely
-   for plain-light control of Lume groups - patch the same fixture,
-   pull up Raw Enable, set Raw R/G/B, you've got an RGB par. Drop
-   Raw Enable below 128 to hand control back to the FX engine.
- -->
-
- <!-- ============================================================
-      GLOBAL
-      ============================================================ -->
  <Channel Name="Master Intensity" Preset="IntensityDimmer"/>
-
  <Channel Name="Strobe Rate">
   <Group Byte="0">Shutter</Group>
   <Capability Min="0" Max="0" Preset="ShutterOpen">Off</Capability>
   <Capability Min="1" Max="255" Preset="StrobeSlowToFast">Slow &gt; Fast (max 4 Hz)</Capability>
  </Channel>
-
- <!-- ============================================================
-      PULSE
-      ============================================================ -->
  <Channel Name="Pulse R" Preset="IntensityRed"/>
  <Channel Name="Pulse G" Preset="IntensityGreen"/>
  <Channel Name="Pulse B" Preset="IntensityBlue"/>
-
  <Channel Name="Pulse Trigger">
   <Group Byte="0">Effect</Group>
   <Capability Min="0" Max="127">Idle</Capability>
   <Capability Min="128" Max="255">Fire (rising edge)</Capability>
  </Channel>
-
- <!--
-   Pulse envelope. Each "Time" channel quantises into the 8-value
-   pixmob::Time enum (T_0_MS .. T_3840_MS). Slider buckets are 32 wide
-   so a full sweep hits every value.
- -->
  <Channel Name="Pulse Attack">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="31">T_0_MS (instant)</Capability>
-  <Capability Min="32"  Max="63">T_32_MS</Capability>
-  <Capability Min="64"  Max="95">T_96_MS</Capability>
-  <Capability Min="96"  Max="127">T_192_MS</Capability>
+  <Capability Min="0" Max="31">T_0_MS (instant)</Capability>
+  <Capability Min="32" Max="63">T_32_MS</Capability>
+  <Capability Min="64" Max="95">T_96_MS</Capability>
+  <Capability Min="96" Max="127">T_192_MS</Capability>
   <Capability Min="128" Max="159">T_480_MS</Capability>
   <Capability Min="160" Max="191">T_960_MS</Capability>
   <Capability Min="192" Max="223">T_2400_MS</Capability>
   <Capability Min="224" Max="255">T_3840_MS</Capability>
  </Channel>
-
  <Channel Name="Pulse Sustain">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="31">T_0_MS</Capability>
-  <Capability Min="32"  Max="63">T_32_MS</Capability>
-  <Capability Min="64"  Max="95">T_96_MS</Capability>
-  <Capability Min="96"  Max="127">T_192_MS</Capability>
+  <Capability Min="0" Max="31">T_0_MS</Capability>
+  <Capability Min="32" Max="63">T_32_MS</Capability>
+  <Capability Min="64" Max="95">T_96_MS</Capability>
+  <Capability Min="96" Max="127">T_192_MS</Capability>
   <Capability Min="128" Max="159">T_480_MS</Capability>
   <Capability Min="160" Max="191">T_960_MS</Capability>
   <Capability Min="192" Max="223">T_2400_MS</Capability>
   <Capability Min="224" Max="255">T_3840_MS</Capability>
  </Channel>
-
  <Channel Name="Pulse Release">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="31">T_0_MS</Capability>
-  <Capability Min="32"  Max="63">T_32_MS</Capability>
-  <Capability Min="64"  Max="95">T_96_MS</Capability>
-  <Capability Min="96"  Max="127">T_192_MS</Capability>
+  <Capability Min="0" Max="31">T_0_MS</Capability>
+  <Capability Min="32" Max="63">T_32_MS</Capability>
+  <Capability Min="64" Max="95">T_96_MS</Capability>
+  <Capability Min="96" Max="127">T_192_MS</Capability>
   <Capability Min="128" Max="159">T_480_MS</Capability>
   <Capability Min="160" Max="191">T_960_MS</Capability>
   <Capability Min="192" Max="223">T_2400_MS</Capability>
   <Capability Min="224" Max="255">T_3840_MS</Capability>
  </Channel>
-
- <!--
-   Pulse Probability is INVERTED on the slider so high = more likely
-   to fire (matches LD muscle memory). The on-wire pixmob::Chance enum
-   numbers CHANCE_100 = 0 internally; the mapper inverts before
-   quantising.
- -->
  <Channel Name="Pulse Probability">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="31">4% (rare sparkle)</Capability>
-  <Capability Min="32"  Max="63">10%</Capability>
-  <Capability Min="64"  Max="95">16%</Capability>
-  <Capability Min="96"  Max="127">32%</Capability>
+  <Capability Min="0" Max="31">4% (rare sparkle)</Capability>
+  <Capability Min="32" Max="63">10%</Capability>
+  <Capability Min="64" Max="95">16%</Capability>
+  <Capability Min="96" Max="127">32%</Capability>
   <Capability Min="128" Max="159">50%</Capability>
   <Capability Min="160" Max="191">67%</Capability>
   <Capability Min="192" Max="223">88%</Capability>
   <Capability Min="224" Max="255">100% (every Lume fires)</Capability>
  </Channel>
-
- <!-- ============================================================
-      WASH
-      ============================================================ -->
  <Channel Name="Wash A R" Preset="IntensityRed"/>
  <Channel Name="Wash A G" Preset="IntensityGreen"/>
  <Channel Name="Wash A B" Preset="IntensityBlue"/>
-
  <Channel Name="Wash B R" Preset="IntensityRed"/>
  <Channel Name="Wash B G" Preset="IntensityGreen"/>
  <Channel Name="Wash B B" Preset="IntensityBlue"/>
-
  <Channel Name="Wash Cycle">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="0">Hold anchor A (no cycle)</Capability>
-  <Capability Min="1"   Max="255">100 ms units (0.1 s &gt; 25.5 s; A&lt;&gt;B&lt;&gt;A)</Capability>
+  <Capability Min="0" Max="0">Hold anchor A (no cycle)</Capability>
+  <Capability Min="1" Max="255">100 ms units (0.1 s &gt; 25.5 s; A&lt;&gt;B&lt;&gt;A)</Capability>
  </Channel>
-
  <Channel Name="Wash Intensity">
   <Group Byte="0">Intensity</Group>
-  <Capability Min="0"   Max="255">Wash brightness (independent of Master)</Capability>
+  <Capability Min="0" Max="255">Wash brightness (independent of Master)</Capability>
  </Channel>
-
  <Channel Name="Wash Attack">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="255">100 ms units (fade-in time)</Capability>
+  <Capability Min="0" Max="255">100 ms units (fade-in time)</Capability>
  </Channel>
-
  <Channel Name="Wash Release">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="255">100 ms units (default fade-out)</Capability>
+  <Capability Min="0" Max="255">100 ms units (default fade-out)</Capability>
  </Channel>
-
- <!-- Channels 21-23 were Wash TTL Lo / Hi and Wash Pulse Response.
-      Dropped from the LD surface: the DMX bridge always emits
-      LIGHT_WASH frames with ttl_seconds=0 (the 30-minute lost-
-      WASH_END failsafe takes care of stuck washes) and
-      pulse_response=1 (so sparkle on wash works by default). The
-      wire protocol still carries both fields for non-DMX Directors. -->
- <Channel Name="Reserved 21"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 22"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 23"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
-
- <!-- ============================================================
-      RAW RGB (v0.3.0; EMF artist-stage request 2026-06-23)
-      ============================================================
-      Direct LD control of each Lume group as a plain RGB fixture.
-      Set Raw Enable >= 128 to take over: the FX engine's pulse,
-      wash, and strobe output for this block is suppressed and the
-      Lume shows the master-scaled Raw R/G/B colour as a held static
-      wash. Drop Raw Enable below 128 to hand control back to the
-      FX engine; the bridge then re-emits the current FX wash so
-      receivers don't keep showing the stale raw colour.
-      ============================================================ -->
+ <Channel Name="Reserved 21">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 22">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 23">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
  <Channel Name="Raw R" Preset="IntensityRed"/>
  <Channel Name="Raw G" Preset="IntensityGreen"/>
  <Channel Name="Raw B" Preset="IntensityBlue"/>
  <Channel Name="Raw Enable">
   <Group Byte="0">Effect</Group>
-  <Capability Min="0"   Max="127">FX engine (Master / Strobe / Pulse / Wash apply)</Capability>
+  <Capability Min="0" Max="127">FX engine (Master / Strobe / Pulse / Wash apply)</Capability>
   <Capability Min="128" Max="255">Raw RGB takes over (FX suppressed)</Capability>
  </Channel>
-
- <!-- ============================================================
-      RESERVED PADDING
-      Reserved channels keep adjacent fixture instances from
-      overlapping when the LD patches them at the spec'd base
-      addresses (1, 41, 81, 121, 161, 201, 241). The firmware
-      ignores them.
-      ============================================================ -->
- <Channel Name="Reserved 28"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 29"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 30"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 31"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 32"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 33"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 34"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 35"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 36"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 37"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 38"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 39"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
- <Channel Name="Reserved 40"><Group Byte="0">Nothing</Group><Capability Min="0" Max="255">Reserved</Capability></Channel>
-
- <!-- ============================================================
-      MODE: 40-channel block. Used for ALL 7 instances.
-      Patch at universe addresses 1, 41, 81, 121, 161, 201, 241.
-      ============================================================ -->
+ <Channel Name="Reserved 28">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 29">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 30">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 31">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 32">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 33">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 34">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 35">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 36">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 37">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 38">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 39">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
+ <Channel Name="Reserved 40">
+  <Group Byte="0">Nothing</Group>
+  <Capability Min="0" Max="255">Reserved</Capability>
+ </Channel>
  <Mode Name="Block (40ch)">
   <Channel Number="0">Master Intensity</Channel>
   <Channel Number="1">Strobe Rate</Channel>
@@ -249,12 +203,27 @@
   <Channel Number="37">Reserved 38</Channel>
   <Channel Number="38">Reserved 39</Channel>
   <Channel Number="39">Reserved 40</Channel>
-  <Head><Channel>2</Channel><Channel>3</Channel><Channel>4</Channel></Head>
-  <Head><Channel>10</Channel><Channel>11</Channel><Channel>12</Channel></Head>
-  <Head><Channel>13</Channel><Channel>14</Channel><Channel>15</Channel></Head>
-  <Head><Channel>23</Channel><Channel>24</Channel><Channel>25</Channel></Head>
+  <Head>
+   <Channel>2</Channel>
+   <Channel>3</Channel>
+   <Channel>4</Channel>
+  </Head>
+  <Head>
+   <Channel>10</Channel>
+   <Channel>11</Channel>
+   <Channel>12</Channel>
+  </Head>
+  <Head>
+   <Channel>13</Channel>
+   <Channel>14</Channel>
+   <Channel>15</Channel>
+  </Head>
+  <Head>
+   <Channel>23</Channel>
+   <Channel>24</Channel>
+   <Channel>25</Channel>
+  </Head>
  </Mode>
-
  <Physical>
   <Bulb Type="LED" Lumens="0" ColourTemperature="0"/>
   <Dimensions Weight="0" Width="0" Height="0" Depth="0"/>

@@ -160,6 +160,35 @@ devices.
 reset to broadcast), the in-app settings menu is the operator
 recourse. The random pick only fires on a never-configured device.
 
+## Per-Stick brightness setting (not a DMX channel)
+
+Each Stick (Plus2 / S3 / Atom Lite) has a **per-device LED-strip
+brightness** scaler that the LD does *not* control via DMX — it's
+set on the device itself (Config menu on the Stick, or a short
+press of the front button in Lume mode). This is a hardware-side
+safety cap to prevent the strip from drawing more current than the
+device's power supply can deliver.
+
+**Levels** cycle in this order:
+
+| Level | Peak current (30-pixel strip) | When to use |
+|---|---|---|
+| **50 %** | ~900 mA | Stick on a USB-C charger or powered hub (DMX-bridge / stage rig) |
+| **25 %** | ~450 mA | Stick on laptop USB-CDC, or healthy battery |
+| **10 %** | ~180 mA | Default for fresh devices; safe on every supply |
+| **1 %**  | ~18 mA | Ambient hint / near-darkness |
+
+A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws
+~60 mA per pixel — 1.8 A total at 100 % brightness, far beyond
+any reasonable USB / battery supply. The brightness scaler is what
+keeps the device out of brownout territory.
+
+**LD-facing implication.** When you set Raw R/G/B to 255 and a
+Lume looks dim, the per-device brightness is the limiter, not your
+universe value. The fix is to bump the device's brightness setting,
+not the DMX. The stage-rig Stick should be on 50 % (wall-powered),
+audience badges typically run at 10 % (default, battery-safe).
+
 ## Patching the fixture in QLC+
 
 In QLC+'s **Fixtures** panel:

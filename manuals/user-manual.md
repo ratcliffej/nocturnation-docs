@@ -218,7 +218,7 @@ The single onboard LED doubles as the **status indicator** in place of the LCD p
 - **Solid green for a second** - first frames just arrived. Lock acquired.
 - **Wash / pulse colours** - after the lock window, the LED takes part in the show like any other pixel on the strip.
 
-Short-pressing the front button while in Lume mode cycles the LED-strip brightness through 100 / 10 / 1 percent (see [section 4.5](#45-system)). The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+Short-pressing the front button while in Lume mode cycles the LED-strip brightness through 50 / 25 / 10 / 1 percent (see [section 4.5](#45-system)). The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
 
 The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
 
@@ -234,7 +234,7 @@ The strip responds to the same wash and pulse cues as every other Lume in the fl
 - `12` - groups of 12 LEDs flash together as a unit (a Tildagon-ring-sized block on a longer strip).
 - A group size equal to the chain length - the whole strip flashes or stays dark as one unit (PixMob-bracelet style).
 
-Default group size is 12. Default brightness is 10 percent: a 2 m strip at 100 percent draws roughly 1.7 A at full white, well over the Grove rail's 500 mA budget; the brightness scalar keeps the strip out of brown-out territory while remaining clearly visible.
+Default group size is 12. Default brightness is 10 percent: a 30-pixel strip at 50 percent draws roughly 900 mA at full white, comfortably fed by a USB-C charger or powered hub but right at the edge of laptop USB-CDC and Plus2 battery budgets; the 10 percent default (~180 mA peak) sits inside every supply this firmware targets and is what a fresh out-of-box device runs at. The four levels are tuned for typical power sources: **50 %** for wall-powered Sticks (DMX bridge / stage rig), **25 %** for USB-CDC laptop or healthy battery, **10 %** for any-supply safe, **1 %** for ambient hint. 100 percent was retired 2026-06-23 after bench-confirmed brownout reboots when raw RGB sliders hit 255 (~1.8 A peak, well past any reasonable USB or battery supply).
 
 **Wiring**: the strip plugs into the Grove port via its bundled HY2.0-4P pigtail. Per-host data-line GPIOs are:
 
