@@ -175,8 +175,8 @@ device's power supply can deliver.
 |---|---|---|
 | **50 %** | ~900 mA | Stick on a USB-C charger or powered hub (DMX-bridge / stage rig) |
 | **25 %** | ~450 mA | Stick on laptop USB-CDC, or healthy battery |
-| **10 %** | ~180 mA | Default for fresh devices; safe on every supply |
-| **1 %**  | ~18 mA | Ambient hint / near-darkness |
+| **10 %** | ~180 mA | Any-supply safe |
+| **1 %**  | ~18 mA | **Default** for fresh devices; ambient hint / near-darkness |
 
 A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws
 ~60 mA per pixel — 1.8 A total at 100 % brightness, far beyond
@@ -187,7 +187,7 @@ keeps the device out of brownout territory.
 Lume looks dim, the per-device brightness is the limiter, not your
 universe value. The fix is to bump the device's brightness setting,
 not the DMX. The stage-rig Stick should be on 50 % (wall-powered),
-audience badges typically run at 10 % (default, battery-safe).
+audience badges ship at 1 % (the deliberately-conservative default) and the punter (or staff) dials it up as power supply allows.
 
 ## Patching the fixture in QLC+
 
