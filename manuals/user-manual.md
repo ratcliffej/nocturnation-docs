@@ -391,6 +391,7 @@ A picker leading to four sub-menus:
 
 **ESP-NOW** (active):
 - `Director Channel` - selects 1, 6, or 11. NVS key `mst_chan`, default 1.
+- `DirID` - this Director's Performance-range source id (one byte in `0x40..0xFE`). Shown as `P:nn`. Random on first install, persisted to NVS (key `mst_pid`), sticky across reboots. A-click drills into a hex editor with three cursor positions cycled by Btn2: high nibble (cycles `4..F`), low nibble (cycles `0..F` skipping the reserved `0xFF` slot), and `Re-roll` (rolls + persists a new random). B-hold exits. New value applies at the next Director start. The byte identifies *this* Director on the wire so Lumes can lock to it; the value is broadcast on every frame and is what the Lume's TOFU lock pins onto. Upstream show logic (Tildagon shows, the orchestrator) can pattern-match on the locked Director's ID to choose content (e.g. a stage-D logo when locked to `0xD0`, an artist QR code when locked to `0xA1`). The id matters *because* it's stable and operator-settable; pin a known value per stage / per artist when content depends on it. See [section 4.7](#47-multi-show-partitioning).
 - `Lume Channel` - 0 (auto-scan), 1, 6, or 11. NVS key `slv_chan`, default 0.
 - `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off.
 
@@ -402,7 +403,7 @@ A picker leading to four sub-menus:
 
 **LED Strip** (active on hosts with a strip wired in - Atom Lite, Plus2, S3):
 - `Enable` - master gate on the LED-strip render path. NVS key `strip_en`, default on. When off, the driver drops all events; nothing reaches the strip.
-- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 100 / 10 / 1 percent. NVS key `strip_bri`, default 10. The same control is also available via a short-press of Button 1 in Lume mode (the Atom Lite's only adjustment surface).
+- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 50 / 25 / 10 / 1 percent. NVS key `strip_bri`, default **1** (deliberately conservative; see [section 2.6](#26-led-strip)). The same control is also available via a short-press of Button 1 in Lume mode (the Atom Lite's only adjustment surface).
 - `Group size` - pixels per CHANCE-roll group. Cycles 1 / 6 / 12 / 24. NVS key `strip_grp`, default 12. See [section 2.6](#26-led-strip) for the operator-meaningful values.
 - `Chain size` - physical strip length plugged in. Cycles 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288). NVS key `strip_cnt`, default 29.
 
@@ -428,6 +429,36 @@ A picker leading to two sub-menus:
 All configuration lives in a single non-volatile-storage namespace called `noct`. Power-cycling preserves every setting. The `System > Factory Reset` action erases the namespace; the firmware then comes up with the defaults shown in the tables above.
 
 Some legacy keys are migrated on first boot after a firmware upgrade. The `slv_ir_grp` key from before Epic 4.65 is dropped (its function moved to the Lume's `slv_group` filter); the legacy visualisation id keys (`active_vis` with values "beat-pulse" or "spectrum-bars") are migrated to the new `active_show` key with value "simple-beat".
+
+### 4.7 Multi-show partitioning
+
+When two or more NocturNation Directors broadcast on the same channel (typical at a festival with parallel stages on channel 11), each Director is identified by a unique one-byte source id in the Performance range `0x40..0xFE`. The id is set per device via [Connectivity > ESP-NOW > DirID](#43-connectivity); it's random on first install, sticky across reboots, and operator-settable to a specific value.
+
+**How the partitioning works:**
+
+- Every frame a Director broadcasts carries its source id in the header.
+- A Lume locks (TOFU - Trust-On-First-Use) to the source id of the first valid frame it sees on its current channel after scan or rescan.
+- All subsequent frames from any *other* source id are silently dropped at the Lume.
+- The lock expires after 10 seconds of silence from the locked source; the next inbound frame re-locks.
+
+So at a multi-stage venue, two Lumes can be physically next to each other and render two different shows depending on which Director each happens to lock to. The split is statistically even if both Directors are equally loud.
+
+**Display content (lyrics, bitmaps) follows the same partitioning.** The Director Stick re-stamps the source id of orchestrator-bridged display frames so they carry the Director's id rather than the broadcast slot. A Lume locked to Director A then drops Director B's lyric overlays cleanly.
+
+**The DirID as upstream tagging hook.** The id is a *value* that upstream show logic (Tildagon shows, the orchestrator) can pattern-match on to choose content:
+
+- A Tildagon show can render a stage-D logo on its perimeter ring when its TOFU lock reports `0xD0`.
+- A different show can render an artist-specific QR code when locked to `0xA1`.
+- The orchestrator can pick cue files keyed by Director id.
+
+This only works when the id is *stable and knowable*. The operator pins it via the Config menu's hex editor at the start of a deployment and (in the conventional case) leaves it alone. Conventions like "stage D = `0xD0`", "stage M = `0xMD` shape" etc. are deployment-local choices; the firmware doesn't enforce any particular mapping.
+
+**Operator workflow on a fresh device:**
+
+1. Flash the firmware. The DirID is rolled randomly on first boot and persisted.
+2. If the deployment expects a specific value (e.g. for content-tagging), open `Config > ESP-NOW > DirID` and use the hex editor to set it. Random re-roll is also one click away inside that screen.
+3. Note the value (it's shown in the menu as `P:nn`) and pass it to whatever upstream consumer needs it.
+4. Reboot, or exit and re-enter Director mode, for the new id to take effect on the wire.
 
 ---
 
