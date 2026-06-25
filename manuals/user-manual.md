@@ -451,8 +451,6 @@ So at a multi-stage venue, two Lumes can be physically next to each other and re
 - A different show can render an artist-specific logo when locked to `0xA1`.
 - The orchestrator can pick cue files keyed by Director id.
 
-In-show content is restricted to logos / brand images. QR codes are deliberately out of scope for live use: a white scannable panel on every audience badge would tear focus from the stage and break the dark-venue immersion. The QR library bundled with the Tildagon firmware (`uQR.py`) remains in place for operator-facing utilities (help screen) but is not used in the show-content layer.
-
 This only works when the id is *stable and knowable*. The operator pins it via the Config menu's hex editor at the start of a deployment and (in the conventional case) leaves it alone. Conventions like "stage D = `0xD0`", "stage M = `0xMD` shape" etc. are deployment-local choices; the firmware doesn't enforce any particular mapping.
 
 **Operator workflow on a fresh device:**
@@ -461,6 +459,27 @@ This only works when the id is *stable and knowable*. The operator pins it via t
 2. If the deployment expects a specific value (e.g. for content-tagging), open `Config > ESP-NOW > DirID` and use the hex editor to set it. Random re-roll is also one click away inside that screen.
 3. Note the value (it's shown in the menu as `P:nn`) and pass it to whatever upstream consumer needs it.
 4. Reboot, or exit and re-enter Director mode, for the new id to take effect on the wire.
+
+**Tildagon LCD background images (Phase 2A).** A Tildagon Lume renders a per-Director image on the LCD background using the Tildagon's documented `ctx.image()` API. Storage convention:
+
+| Path on the badge | Used when |
+|---|---|
+| `nocturnation/images/dirid_<hex>.jpg` | Lume's TOFU lock matches that DirID (e.g. `dirid_e0.jpg` when locked to `0xE0`) |
+| `nocturnation/images/default.jpg` | Locked to a Director that has no specific file |
+| (no file matches) | Falls through to the pre-existing wash/pulse render — LCD pulses to music as before |
+
+**Authoring**: any image editor. Resize to 240×240, save as JPG, drop into the firmware tree, redeploy. The badge's Ctx graphics library handles JPG decode + internal caching automatically; no firmware-side conversion needed. On macOS the one-liner is:
+
+```bash
+sips -z 240 240 -s format jpeg <your-logo>.png \
+     --out Nocturnation-Tildagon/nocturnation/images/dirid_<hex>.jpg
+```
+
+**Designer template**: `Docs/tools/tildagon-display-template.png` is a 240×240 guide layer showing the panel-edge circle (radius 120) and the recommended safe-zone circle (radius 110). Import as a layer in any image editor; build the logo on top; export as JPG.
+
+**LCD vs. LEDs when an image is present.** When a DirID-matching image is loaded, the LCD renders the image as a static background — it does NOT pulse to music. The perimeter LED ring, the LED strip on hosts that have one, and the PixMob bracelets all continue to pulse normally; only the LCD layer is overridden. When NO image matches (or no images are present at all), the LCD reverts to its pre-Epic-13 wash render and pulses to music just like every other surface.
+
+**Out of scope for the in-show image layer**: QR codes. A white scannable panel on every audience badge would tear focus from the stage and break the dark-venue immersion. The QR library bundled with the Tildagon firmware (`uQR.py`) remains in place for operator-facing utilities (help screen) but is not used in the show-content layer.
 
 ---
 

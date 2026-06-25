@@ -263,49 +263,77 @@ BSD-3-Clause. References the Art-Net packet decode pattern from
 
 ---
 
-## `png_to_rgb565.py`
+## Tildagon Lume background images (Epic 13 Phase 2A)
 
-Offline image converter for the Tildagon Lume background-image
-layer (Epic 13 Phase 2A). Reads any Pillow-loadable image (PNG /
-JPEG / etc.), resizes / crops to the configured display dimensions
-(default 240×240), and emits a flat little-endian RGB565 binary
-blob the Tildagon's MicroPython `ctx.texture()` call can render
-without any decode cost.
+Each Tildagon Lume can render a per-Director image as the LCD
+background, picked at runtime from the badge's filesystem based on
+the Lume's current TOFU-locked DirID. The image stays as a static
+background; orchestrator-driven text overlays (artist / title /
+lyrics) compose on top. See the [user manual section 4.7](../manuals/user-manual.md#47-multi-show-partitioning)
+for the multi-show motivation.
 
-### Quick start
+### Storage convention
+
+Drop image files into the Tildagon firmware tree at:
+
+| Path | Used when |
+|---|---|
+| `nocturnation/images/dirid_<hex>.jpg` | Lume locks to that DirID (e.g. `dirid_e0.jpg` for `0xE0`) |
+| `nocturnation/images/default.jpg` | Locked to a DirID with no specific file |
+
+The badge's Ctx graphics library handles JPG decode + caching
+internally via [`ctx.image(path, x, y, w, h)`](https://tildagon.badge.emfcamp.org/tildagon-apps/reference/ctx/);
+no firmware-side conversion step is needed. PNG works too if you
+prefer it (also documented as Ctx-supported), but JPG is smaller
+for typical logo content.
+
+### Authoring (no special tool needed)
+
+Any image editor can produce a 240×240 JPG. On macOS the one-liner
+is:
 
 ```bash
-pip install pillow   # one-time
-./png_to_rgb565.py stage-d.png --out images/dirid_d0.raw
+sips -z 240 240 -s format jpeg <your-source>.png \
+     --out Nocturnation-Tildagon/nocturnation/images/dirid_<hex>.jpg
 ```
 
-Filename convention on the Tildagon: `nocturnation/images/dirid_<hex>.raw`
-where `<hex>` is the lowercase two-digit hex of the Director's
-persisted Performance-range source id (set per Stick via Config >
-ESP-NOW > DirID, see [the user manual](../manuals/user-manual.md#43-connectivity)).
-Plus a `nocturnation/images/default.raw` that's shown when the
-locked DirID has no specific file. Drop the `.raw` into the
-Tildagon firmware tree, redeploy with `deploy.sh`.
+In any other editor: resize to 240×240, save as JPG, name it per
+the convention above, drop it into `nocturnation/images/`, then
+run `./deploy.sh` from the Tildagon repo.
 
-### Fit modes
+### Designer template
 
-| Mode | Behaviour | When to use |
-|---|---|---|
-| `cover` (default) | Crop to fill | Centred logos / brand marks - the most common case |
-| `contain` | Letterbox onto black | Preserves the whole source; introduces black bars |
-| `stretch` | Distort to fit | Rare; only when source aspect already matches the target |
-
-Each conversion drops a `.meta.txt` sidecar recording source
-filename, dimensions, byte count, SHA-256 - lets the operator
-check the provenance of a deployed image during bench-debugging.
+`make_tildagon_template.py` (below) generates a 240×240 guide
+layer showing the panel-edge circle and the recommended safe zone.
+Import the template as a layer in any image editor; build the
+logo on top; export at 240×240 as JPG.
 
 ### Display geometry
 
 The Tildagon's GC9A01 panel addresses a 240×240 framebuffer; the
-physical glass is a circle inscribed in that square (so the
-corners of the framebuffer are off-glass and never visible). Use
-`make_tildagon_template.py` below to generate a designer guide
-PNG showing the visible-edge and safe-zone circles.
+physical glass is a circle inscribed in that square (the four
+corners of the framebuffer are off-glass and never visible).
+Design for the inscribed circle; pixels in the corners are written
+but not displayed.
+
+### Behaviour notes
+
+- **No image for the locked DirID + no default**: the LCD reverts
+  to the pre-Epic-13 wash render and pulses to music as before.
+- **An image IS present**: the LCD renders the static image. The
+  perimeter LED ring, the LED strip on hosts that have one, and
+  PixMob bracelets continue to pulse to music — only the LCD is
+  overridden by the image.
+
+### `png_to_rgb565.py` (legacy — not the recommended path)
+
+A pre-rendered-RGB565-binary-blob converter intended to feed the
+Ctx `texture()` API. That API hard-faulted the badge on this
+build, so we switched to the documented `ctx.image()` + JPG path.
+The script still works if you have a use case for raw RGB565
+blobs (e.g. shipping bitmaps over the wire post-EMF), but for the
+Tildagon LCD background-image use case described above, **use the
+plain-JPG workflow instead**.
 
 ---
 
