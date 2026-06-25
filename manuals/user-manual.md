@@ -218,7 +218,9 @@ The single onboard LED doubles as the **status indicator** in place of the LCD p
 - **Solid green for a second** - first frames just arrived. Lock acquired.
 - **Wash / pulse colours** - after the lock window, the LED takes part in the show like any other pixel on the strip.
 
-Short-pressing the front button while in Lume mode cycles the LED-strip brightness through 50 / 25 / 10 / 1 percent (see [section 4.5](#45-system)). The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+Short-pressing the front button while in Lume mode cycles the LED-strip brightness. The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+
+**Atom Lite brightness is hardware-capped at 10 percent**, enforced by the firmware regardless of menu input. The Atom's 200 mAh battery base plus typical 500 mA USB-hub limit cannot sustain a 30-pixel SK6812 strip at 25 percent or higher without brownout-rebooting the chip. The cap is declared in `hal::HAL::max_strip_brightness_percent()` in the Atom's HAL backend; `LedStripDriver::set_brightness_percent()` clamps any operator-driven raise to that ceiling. So the Atom-side Btn1 cycle is effectively {10, 1} (operator presses cycle through 50/25/10/1 internally but anything above 10 is silently clamped). Plus2 and S3 have no firmware cap - operator-driven cycling through 50 / 25 / 10 / 1 is fully exposed.
 
 The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
 
