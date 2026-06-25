@@ -447,9 +447,11 @@ So at a multi-stage venue, two Lumes can be physically next to each other and re
 
 **The DirID as upstream tagging hook.** The id is a *value* that upstream show logic (Tildagon shows, the orchestrator) can pattern-match on to choose content:
 
-- A Tildagon show can render a stage-D logo on its perimeter ring when its TOFU lock reports `0xD0`.
-- A different show can render an artist-specific QR code when locked to `0xA1`.
+- A Tildagon show can render a stage-D logo on the LCD background when its TOFU lock reports `0xD0`.
+- A different show can render an artist-specific logo when locked to `0xA1`.
 - The orchestrator can pick cue files keyed by Director id.
+
+In-show content is restricted to logos / brand images. QR codes are deliberately out of scope for live use: a white scannable panel on every audience badge would tear focus from the stage and break the dark-venue immersion. The QR library bundled with the Tildagon firmware (`uQR.py`) remains in place for operator-facing utilities (help screen) but is not used in the show-content layer.
 
 This only works when the id is *stable and knowable*. The operator pins it via the Config menu's hex editor at the start of a deployment and (in the conventional case) leaves it alone. Conventions like "stage D = `0xD0`", "stage M = `0xMD` shape" etc. are deployment-local choices; the firmware doesn't enforce any particular mapping.
 
