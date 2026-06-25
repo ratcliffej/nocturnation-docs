@@ -263,6 +263,73 @@ BSD-3-Clause. References the Art-Net packet decode pattern from
 
 ---
 
+## `png_to_rgb565.py`
+
+Offline image converter for the Tildagon Lume background-image
+layer (Epic 13 Phase 2A). Reads any Pillow-loadable image (PNG /
+JPEG / etc.), resizes / crops to the configured display dimensions
+(default 240×240), and emits a flat little-endian RGB565 binary
+blob the Tildagon's MicroPython `ctx.texture()` call can render
+without any decode cost.
+
+### Quick start
+
+```bash
+pip install pillow   # one-time
+./png_to_rgb565.py stage-d.png --out images/dirid_d0.raw
+```
+
+Filename convention on the Tildagon: `nocturnation/images/dirid_<hex>.raw`
+where `<hex>` is the lowercase two-digit hex of the Director's
+persisted Performance-range source id (set per Stick via Config >
+ESP-NOW > DirID, see [the user manual](../manuals/user-manual.md#43-connectivity)).
+Plus a `nocturnation/images/default.raw` that's shown when the
+locked DirID has no specific file. Drop the `.raw` into the
+Tildagon firmware tree, redeploy with `deploy.sh`.
+
+### Fit modes
+
+| Mode | Behaviour | When to use |
+|---|---|---|
+| `cover` (default) | Crop to fill | Centred logos / brand marks - the most common case |
+| `contain` | Letterbox onto black | Preserves the whole source; introduces black bars |
+| `stretch` | Distort to fit | Rare; only when source aspect already matches the target |
+
+Each conversion drops a `.meta.txt` sidecar recording source
+filename, dimensions, byte count, SHA-256 - lets the operator
+check the provenance of a deployed image during bench-debugging.
+
+### Display geometry
+
+The Tildagon's GC9A01 panel addresses a 240×240 framebuffer; the
+physical glass is a circle inscribed in that square (so the
+corners of the framebuffer are off-glass and never visible). Use
+`make_tildagon_template.py` below to generate a designer guide
+PNG showing the visible-edge and safe-zone circles.
+
+---
+
+## `make_tildagon_template.py`
+
+Generates a 240×240 PNG designer template at
+`tools/tildagon-display-template.png` showing the Tildagon's
+circular-display edge as a guide layer:
+
+* **Outer circle (red, radius 120)** — the actual visible-pixel
+  edge. Pixels outside this circle are written to the framebuffer
+  but physically not on the panel.
+* **Inner circle (amber, radius 110)** — recommended safe zone for
+  key content (logo glyphs, text). Leaves a 10-pixel margin for
+  anti-aliasing softness + alignment tolerance.
+* **Centre crosshair** for alignment.
+
+Designers import the template as a guide layer in their editor,
+build their image on top, then export at 240×240 and feed it to
+`png_to_rgb565.py`. Regenerate the template (changing radii /
+colours) by editing the script's constants and re-running it.
+
+---
+
 ## `nowplaying-orchestrator.py`
 
 The Epic 10 music orchestrator. Watches the host's OS now-playing
