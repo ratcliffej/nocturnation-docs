@@ -92,6 +92,15 @@ def main(argv=None):
             "left at their authored time."
         ),
     )
+    parser.add_argument(
+        "--seed", action="store_true",
+        help=(
+            "Emit a first-pass FX seed: a # seed-tagged quiet_wash "
+            "at each section start (colour from key + mode) plus a "
+            "sparkle_on_beat for above-median-loudness sections. "
+            "Grep '# seed' to find or bulk-delete."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cuefile = Path(args.cuefile)
@@ -143,6 +152,21 @@ def main(argv=None):
             "(max delta %.0f ms)" % (
                 snap_stats["snapped"], snap_stats["kept"],
                 snap_stats["max_delta_ms"],
+            ),
+            file=sys.stderr,
+        )
+
+    # FX seeding runs after snap (so seeded cues land on beat-snapped
+    # timestamps when applicable) and before the header rewrite (so
+    # the rewriter's body-preservation logic picks them up alongside
+    # any existing body cues).
+    if args.seed:
+        content, seed_stats = cue_rewrite.seed_fx_cues(content, analysis)
+        print(
+            "  seed: %d wash + %d sparkle cues emitted "
+            "(%d sections skipped, too short)" % (
+                seed_stats["wash_cues"], seed_stats["sparkle_cues"],
+                seed_stats["skipped"],
             ),
             file=sys.stderr,
         )

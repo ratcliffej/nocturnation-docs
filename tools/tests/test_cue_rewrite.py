@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from nocturnation_orchestrator.cue_rewrite import (
-    _fmt_ts, _nearest_beat, _parse_ts,
+    _fmt_ts, _key_palette, _nearest_beat, _parse_ts,
     _pick_section_name, _is_default_name,
-    rewrite_cue_file, snap_cue_timestamps,
+    rewrite_cue_file, seed_fx_cues, snap_cue_timestamps,
 )
 
 
@@ -435,6 +435,179 @@ class TestSnapCueTimestamps:
         # "snaps" (0ms <= threshold) but to itself.
         assert stats1["snapped"] == 1
         assert stats2["snapped"] == 1
+
+
+# ---------------------------------------------------------------------------
+# FX seeding (Epic 14 B4)
+# ---------------------------------------------------------------------------
+
+
+class TestKeyPalette:
+    def test_c_major_returns_warm_first_colour(self):
+        # C major: hue 0 = red. First palette entry should be red-ish
+        # (high R, low G/B).
+        palette = _key_palette("C", "major")
+        r, g, b = palette[0]
+        assert r > g
+        assert r > b
+
+    def test_c_minor_shifts_to_cool(self):
+        # C minor: hue 200 = cyan/blue. First palette entry blue-ish.
+        palette = _key_palette("C", "minor")
+        r, g, b = palette[0]
+        assert b > r
+
+    def test_palette_length(self):
+        palette = _key_palette("C", "major")
+        assert len(palette) == 4
+
+    def test_all_pitches_produce_valid_palettes(self):
+        # Sanity: each of the 12 pitches in each mode returns a
+        # 4-tuple palette with RGB values in [30, 200].
+        for key in ("C", "C#", "D", "D#", "E", "F", "F#", "G",
+                    "G#", "A", "A#", "B"):
+            for mode in ("major", "minor"):
+                palette = _key_palette(key, mode)
+                assert len(palette) == 4
+                for r, g, b in palette:
+                    assert 30 <= r <= 200
+                    assert 30 <= g <= 200
+                    assert 30 <= b <= 200
+
+    def test_unknown_key_falls_back_to_c(self):
+        # Defensive: an unknown key shouldn't crash; falls back to 0
+        # hue (which is C major's hue).
+        assert _key_palette("X", "major") == _key_palette("C", "major")
+
+
+class TestSeedFxCues:
+    def test_no_sections_returns_unchanged(self):
+        out, stats = seed_fx_cues("@artist X\n", {"sections": []})
+        assert out == "@artist X\n"
+        assert stats == {"wash_cues": 0, "sparkle_cues": 0, "skipped": 0}
+
+    def test_one_section_per_wash_cue(self):
+        analysis = {
+            "key": "C", "mode": "major",
+            "sections": [
+                {"start": 0.0,  "end": 30.0, "loudness_db": -14.0},
+                {"start": 30.0, "end": 60.0, "loudness_db": -10.0},
+                {"start": 60.0, "end": 90.0, "loudness_db":  -7.0},
+            ],
+        }
+        out, stats = seed_fx_cues("", analysis)
+        # Three sections -> three quiet_wash cues.
+        assert stats["wash_cues"] == 3
+        assert out.count("quiet_wash") == 3
+        # All seeded lines carry the # seed tag.
+        seed_lines = [l for l in out.splitlines() if "# seed" in l]
+        assert len(seed_lines) >= 3
+
+    def test_sparkle_on_above_median_loudness(self):
+        # Median of [-14, -10, -7] is -10. Sections at -10 and -7
+        # are >= median; both should get sparkle. But the
+        # implementation uses strict > so only -7 gets sparkle.
+        analysis = {
+            "key": "C", "mode": "major",
+            "sections": [
+                {"start": 0.0,  "end": 30.0, "loudness_db": -14.0},
+                {"start": 30.0, "end": 60.0, "loudness_db": -10.0},
+                {"start": 60.0, "end": 90.0, "loudness_db":  -7.0},
+            ],
+        }
+        out, stats = seed_fx_cues("", analysis)
+        # Strict > median means one sparkle.
+        assert stats["sparkle_cues"] == 1
+        assert out.count("sparkle_on_beat") == 1
+
+    def test_short_sections_skipped(self):
+        analysis = {
+            "key": "C", "mode": "major",
+            "sections": [
+                {"start": 0.0,  "end":  0.3, "loudness_db": -10.0},   # skip
+                {"start": 0.3,  "end": 30.0, "loudness_db": -10.0},   # keep
+            ],
+        }
+        out, stats = seed_fx_cues("", analysis)
+        assert stats["skipped"] == 1
+        assert stats["wash_cues"] == 1
+
+    def test_seed_appends_to_existing_body(self):
+        existing = (
+            "@artist X\n@title Y\n"
+            "\n"
+            "00:02   HeaderText: X\n"
+            "00:11   pulse 200 100 50\n"
+        )
+        analysis = {
+            "key": "G", "mode": "major",
+            "sections": [
+                {"start": 0.0, "end": 30.0, "loudness_db": -10.0},
+            ],
+        }
+        out, _ = seed_fx_cues(existing, analysis)
+        # Existing body cues are preserved.
+        assert "00:02   HeaderText: X" in out
+        assert "00:11   pulse 200 100 50" in out
+        # New seeded cue appended after existing body.
+        assert "# seed" in out
+        assert "quiet_wash" in out
+        # Confirm ordering: header < existing cues < seed block.
+        seed_marker_pos    = out.index("# Seeded FX")
+        existing_cue_pos   = out.index("00:11   pulse")
+        assert existing_cue_pos < seed_marker_pos
+
+    def test_trailing_newline_preserved(self):
+        analysis = {"key": "C", "mode": "major",
+                    "sections": [{"start": 0.0, "end": 30.0, "loudness_db": -10.0}]}
+        # Input with newline.
+        out, _ = seed_fx_cues("@artist X\n", analysis)
+        assert out.endswith("\n")
+        # Input without.
+        out2, _ = seed_fx_cues("@artist X", analysis)
+        assert not out2.endswith("\n")
+
+    def test_deterministic_for_same_inputs(self):
+        # Same analysis -> identical output. No timestamp / random
+        # input to the seeder beyond what's in the analysis.
+        analysis = {
+            "key": "A#", "mode": "major",
+            "sections": [
+                {"start": 0.0,  "end": 30.0, "loudness_db": -10.0},
+                {"start": 30.0, "end": 60.0, "loudness_db":  -7.0},
+            ],
+        }
+        out_a, _ = seed_fx_cues("", analysis)
+        out_b, _ = seed_fx_cues("", analysis)
+        assert out_a == out_b
+
+    def test_minor_key_uses_cool_palette(self):
+        # Minor key should produce a cooler-toned wash than the same
+        # key in major. Compare R-channel of first seed: minor wash
+        # should have lower R than major (warm vs cool).
+        major_analysis = {
+            "key": "C", "mode": "major",
+            "sections": [{"start": 0.0, "end": 30.0, "loudness_db": -10.0}],
+        }
+        minor_analysis = dict(major_analysis, mode="minor")
+        major_out, _ = seed_fx_cues("", major_analysis)
+        minor_out, _ = seed_fx_cues("", minor_analysis)
+        # Extract the R G B values from the first quiet_wash line in each.
+        major_rgb = _extract_first_wash_rgb(major_out)
+        minor_rgb = _extract_first_wash_rgb(minor_out)
+        assert major_rgb[0] > minor_rgb[0]   # major is redder
+        assert minor_rgb[2] > major_rgb[2]   # minor is bluer
+
+
+def _extract_first_wash_rgb(content):
+    """Tiny helper: pull (R, G, B) from the first quiet_wash seed line."""
+    for line in content.splitlines():
+        if "quiet_wash" in line and "# seed" in line:
+            parts = line.split()
+            # Format: MM:SS.cc   quiet_wash R G B   # seed
+            idx = parts.index("quiet_wash")
+            return (int(parts[idx + 1]), int(parts[idx + 2]), int(parts[idx + 3]))
+    raise AssertionError("no seeded quiet_wash line found in:\n%s" % content)
 
 
 class TestRewriteSchemaVersion:

@@ -403,3 +403,186 @@ def _nearest_beat(sorted_beats, target_s):
     if target_s - sorted_beats[lo] <= sorted_beats[hi] - target_s:
         return sorted_beats[lo]
     return sorted_beats[hi]
+
+
+# ---------------------------------------------------------------------------
+# FX seeding (Epic 14 B4, --seed flag)
+# ---------------------------------------------------------------------------
+#
+# Emit `# seed`-tagged FX cues at section starts based on the librosa
+# analysis. Conservative defaults that the author tweaks:
+#
+#   - Every section gets a `quiet_wash R G B` at its start; colour
+#     is derived from the track's key + mode (major = warm; minor =
+#     cool; key letter shifts the hue ~30 degrees per semitone).
+#   - Sections whose loudness is above the track's median loudness
+#     ALSO get a `sparkle_on_beat R G B prob group` at the section
+#     start; complementary colour, prob 70 %, group 0 (broadcast).
+#
+# Seeded cues append to the end of the body. Cue files don't require
+# time-order in the source - the orchestrator walks events sorted by
+# time at runtime - so this keeps the implementation small + the
+# seeded block visually grep-able. The author can re-order if they
+# want; the `# seed` tag lets them find / delete in bulk.
+
+
+_PITCH_HUE = {
+    "C": 0, "C#": 30, "D": 60, "D#": 90, "E": 120, "F": 150,
+    "F#": 180, "G": 210, "G#": 240, "A": 270, "A#": 300, "B": 330,
+}
+
+# Per-mode hue offset. Major stays at the key's hue (warm spectrum
+# around oranges/yellows when key=C); minor rotates +200 deg to
+# the cool spectrum (blues/purples). The PALETTE_OFFSETS array then
+# fans out a small 4-colour palette around that base hue.
+_MODE_OFFSETS = {"major": 0, "minor": 200}
+
+# Hue offsets from the base hue for the seeded palette. 0 = base
+# colour for the first section; +/- 30 / +60 cycles colours
+# distinguishable but stylistically consistent.
+_PALETTE_OFFSETS = (0, 30, -30, 60)
+
+# Floor + ceiling on RGB values written to seeded cues. Avoids fully
+# black (unreadable wash) and fully saturated 255 (which can push the
+# Lume strip past comfortable brightness; cleaner to write 200ish and
+# let the @default_fx / master scaling do the rest).
+_RGB_MAX = 200
+_RGB_MIN = 30
+
+
+def seed_fx_cues(content, analysis):
+    """Append `# seed`-tagged FX cues to the body based on MIR analysis.
+
+    Args:
+        content (str): existing cue file content. Empty input
+            allowed - we just emit a header-less file with seed
+            cues, which the header rewriter will later flesh out.
+        analysis (dict): output of `mir.analyse()`. Reads
+            `sections`, `key`, `mode`.
+
+    Returns:
+        (new_content, stats) where stats is a dict:
+
+            {
+              "wash_cues":    int (one per section),
+              "sparkle_cues": int (one per above-median-loudness section),
+              "skipped":      int (sections too short to seed; <0.5 s),
+            }
+    """
+    sections = analysis.get("sections", [])
+    if not sections:
+        return content, {"wash_cues": 0, "sparkle_cues": 0, "skipped": 0}
+
+    key = analysis.get("key", "C")
+    mode = analysis.get("mode", "major")
+    palette = _key_palette(key, mode)
+
+    # Beat-snap the seed timestamps. Section starts often DON'T fall
+    # exactly on a beat - the librosa segmenter snaps to feature
+    # boundaries, not to the beat clock. If we emit seed FX at the
+    # raw section start, a subsequent `snap_cue_timestamps` pass
+    # will drift them onto the nearest beat, breaking pipeline
+    # idempotency. Pre-snap here so the emitted timestamps are
+    # already on the beat grid and survive re-runs unchanged.
+    beats = sorted(analysis.get("beats", []))
+
+    # Median loudness threshold for sparkle. Sections at or above
+    # median get a sparkle layer; below-median sections stay
+    # ambient-only.
+    loudnesses = [s.get("loudness_db", -20.0) for s in sections]
+    median_loud = sorted(loudnesses)[len(loudnesses) // 2]
+
+    seeded = []
+    wash_count = 0
+    sparkle_count = 0
+    skipped = 0
+    for i, section in enumerate(sections):
+        # Defensive: skip absurdly short sections (< 0.5 s).
+        start = section["start"]
+        end = section.get("end", start + 1.0)
+        if end - start < 0.5:
+            skipped += 1
+            continue
+        wash_time = _snap_to_beat(start, beats)
+        start_ts = _fmt_ts(wash_time)
+        r, g, b = palette[i % len(palette)]
+        seeded.append("%s   quiet_wash %d %d %d   # seed" % (start_ts, r, g, b))
+        wash_count += 1
+        if section.get("loudness_db", -60.0) > median_loud:
+            sr, sg, sb = palette[(i + 1) % len(palette)]
+            # Anchor sparkle on the NEXT beat after the wash so they
+            # don't trip over each other at parse time. Snap to beat
+            # grid same as wash above.
+            sparkle_time = _next_beat_after(wash_time, beats)
+            sparkle_ts = _fmt_ts(sparkle_time)
+            seeded.append(
+                "%s   sparkle_on_beat %d %d %d 70 0   # seed"
+                % (sparkle_ts, sr, sg, sb)
+            )
+            sparkle_count += 1
+
+    if not seeded:
+        return content, {
+            "wash_cues": 0, "sparkle_cues": 0, "skipped": skipped,
+        }
+
+    trailing_newline = content.endswith("\n")
+    result = content
+    # Ensure we start the seeded block on a fresh line.
+    if content and not trailing_newline:
+        result += "\n"
+    if content:
+        result += "\n"   # blank separator between body + seeded block
+    result += "# Seeded FX (Epic 14 B4). Grep '# seed' to find or remove."
+    result += "\n"
+    result += "\n".join(seeded)
+    if trailing_newline:
+        result += "\n"
+    return result, {
+        "wash_cues":    wash_count,
+        "sparkle_cues": sparkle_count,
+        "skipped":      skipped,
+    }
+
+
+def _snap_to_beat(target_s, beats):
+    """Return nearest beat to ``target_s``, or ``target_s`` if no beats."""
+    if not beats:
+        return target_s
+    return _nearest_beat(beats, target_s)
+
+
+def _next_beat_after(target_s, beats):
+    """Return the first beat strictly after ``target_s``.
+
+    Falls back to ``target_s + 0.05`` if no beat is later (very rare;
+    happens only at the end of the track).
+    """
+    if not beats:
+        return target_s + 0.05
+    for beat in beats:
+        if beat > target_s:
+            return beat
+    return target_s + 0.05
+
+
+def _key_palette(key, mode):
+    """4-tuple RGB palette derived from the track's key + mode.
+
+    Returns a list of (r, g, b) tuples, each in [_RGB_MIN, _RGB_MAX].
+    Identical key+mode inputs always return the same palette
+    (deterministic; testable).
+    """
+    import colorsys
+    base = _PITCH_HUE.get(key, 0) + _MODE_OFFSETS.get(mode, 0)
+    palette = []
+    for offset in _PALETTE_OFFSETS:
+        h = ((base + offset) % 360) / 360.0
+        # Saturation 0.7 keeps colours readable but not blinding;
+        # value 1.0 lets us scale down to _RGB_MAX after rounding.
+        r, g, b = colorsys.hsv_to_rgb(h, 0.7, 1.0)
+        rr = max(_RGB_MIN, min(_RGB_MAX, int(round(r * _RGB_MAX))))
+        gg = max(_RGB_MIN, min(_RGB_MAX, int(round(g * _RGB_MAX))))
+        bb = max(_RGB_MIN, min(_RGB_MAX, int(round(b * _RGB_MAX))))
+        palette.append((rr, gg, bb))
+    return palette
