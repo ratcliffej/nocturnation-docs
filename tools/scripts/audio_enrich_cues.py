@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Enrich a `.cues` file with librosa MIR data (Epic 14 B2).
+
+Step 2 of the lyric-first authoring flow. Takes an existing cue
+file (typically produced by `cues_from_lyrics.py`) + an audio file,
+runs librosa beat-tracking + section segmentation + key estimation,
+and rewrites the cue file's header block with the detected tempo,
+key, mode, duration, and section directives. Hand-edited body cues
+are preserved verbatim.
+
+Idempotent: re-running with the same audio + cue file produces
+byte-identical output (modulo the `@analysis_synced` timestamp).
+Re-running with a re-mastered audio file updates the header +
+re-detects sections; author-renamed sections are preserved by
+boundary-overlap matching.
+
+Usage::
+
+    Docs/tools/scripts/audio_enrich_cues.py \\
+        Docs/songs/coldplay-fix-you.cues \\
+        --audio /path/to/fix-you.mp3
+
+    # Print to stdout instead of rewriting the file:
+    audio_enrich_cues.py Docs/songs/x.cues --audio x.mp3 --stdout
+
+    # Skip the sidecar JSON write (header-only output):
+    audio_enrich_cues.py x.cues --audio x.mp3 --no-sidecar
+
+Outputs:
+    - The cue file at `<cuefile>` is rewritten in place (atomic).
+    - A sidecar `<cuefile>.analysis.json` holds the full librosa
+      dump (beats, onsets, chroma summary, full sections array,
+      etc.). Gitignored. Used by future tools (--snap, --seed)
+      that need beat-level data.
+
+Requirements:
+    pip install librosa
+    brew install ffmpeg    # macOS; needed for .mp3 decode
+
+Network: none. Pure local audio analysis.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+_TOOLS_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_TOOLS_DIR))
+
+from nocturnation_orchestrator import cue_rewrite, mir
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Enrich a .cues file with librosa MIR data "
+                    "(tempo, key, mode, sections).",
+    )
+    parser.add_argument("cuefile", help="path to the .cues file to enrich")
+    parser.add_argument(
+        "--audio", required=True,
+        help="path to the audio file (mp3 / wav / flac / m4a / ogg)",
+    )
+    parser.add_argument(
+        "--stdout", action="store_true",
+        help="print the rewritten cue file to stdout instead of writing",
+    )
+    parser.add_argument(
+        "--no-sidecar", action="store_true",
+        help="skip writing the .cues.analysis.json sidecar",
+    )
+    parser.add_argument(
+        "--schema-version", type=int, default=1,
+        help="value for @analysis_version (default: 1)",
+    )
+    args = parser.parse_args(argv)
+
+    cuefile = Path(args.cuefile)
+    audio = Path(args.audio)
+
+    if not audio.exists():
+        sys.exit("error: audio file not found: %s" % audio)
+
+    # Read the existing cue file if it exists; treat absence as "empty
+    # input" so the tool can also do first-time enrichment of a track
+    # with no lyric-first skeleton (rare but legal).
+    if cuefile.exists():
+        content = cuefile.read_text()
+    else:
+        content = ""
+
+    print("running librosa analysis on %s..." % audio, file=sys.stderr)
+    try:
+        analysis = mir.analyse(audio)
+    except ImportError as exc:
+        sys.exit(
+            "error: librosa not installed (%s).\n"
+            "       Install with: pip install librosa  +  brew install ffmpeg"
+            % exc
+        )
+    except Exception as exc:                   # noqa: BLE001
+        sys.exit("error: librosa analysis failed: %s" % exc)
+
+    print(
+        "  tempo=%.1f bpm  key=%s %s  duration=%.1fs  sections=%d" % (
+            analysis["tempo"], analysis["key"], analysis["mode"],
+            analysis["duration_s"], len(analysis["sections"]),
+        ),
+        file=sys.stderr,
+    )
+
+    new_content = cue_rewrite.rewrite_cue_file(
+        content, analysis, schema_version=args.schema_version,
+    )
+
+    if args.stdout:
+        sys.stdout.write(new_content)
+        return
+
+    # Write the cue file atomically.
+    cuefile.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cuefile.with_suffix(cuefile.suffix + ".tmp")
+    tmp.write_text(new_content)
+    tmp.replace(cuefile)
+    print("wrote %s" % cuefile, file=sys.stderr)
+
+    if not args.no_sidecar:
+        sidecar = cuefile.with_suffix(cuefile.suffix + ".analysis.json")
+        sidecar.write_text(json.dumps(analysis, indent=2))
+        print("wrote %s (sidecar)" % sidecar, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

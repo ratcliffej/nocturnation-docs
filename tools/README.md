@@ -445,6 +445,21 @@ file's comment header so the author knows which lines to romanise
 before show time. Pass `--comment-anchors` to retain the pre-
 Epic-13 `# comment` output instead of real `BodyText:` cues.
 
+`scripts/audio_enrich_cues.py <cuefile> --audio <audiofile>` is
+Step 2 of the authoring flow. Runs librosa beat tracking + section
+segmentation + Krumhansl-Schmuckler key estimation on the audio
+file, then rewrites the cue file's header with `@bpm`, `@time_sig`,
+`@key`, `@mode`, `@duration`, `@analysis_*`, and `@section`
+directives. Hand-edited body cues + author-owned header directives
+(`@artist`, `@title`, `@default_fx`, `@offset`, `@ShowSongInfo`)
+are preserved verbatim. A sidecar `.cues.analysis.json` (gitignored)
+holds the full librosa dump (beats, onsets, chroma summary) for
+later tools that need beat-level data (`--snap`, `--seed`, etc.).
+Idempotent — re-running with the same audio is byte-stable. When
+the author has renamed sections (e.g. `section3` → `chorus2`), the
+rename carries across re-syncs by boundary-overlap matching.
+Install: `pip install librosa` + `brew install ffmpeg`.
+
 `scripts/gen_fx_library.py` regenerates `Docs/fx-library.md` from
 the registered FX classes; run after adding or modifying an FX.
 
