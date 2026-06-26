@@ -3,7 +3,8 @@
 import pytest
 
 from nocturnation_orchestrator.lyrics import (
-    LyricLine, LyricsError, fetch_lrc, parse_lrc, render_skeleton,
+    LyricLine, LyricsError, detect_non_latin_scripts,
+    fetch_lrc, parse_lrc, render_skeleton,
 )
 
 
@@ -128,18 +129,21 @@ class TestRenderSkeleton:
         assert "@bpm        138" in body
         assert "@default_fx quiet_wash 20 40 80" in body
 
-    def test_each_lyric_renders_as_comment(self):
+    def test_each_lyric_renders_as_bodytext_cue(self):
+        # Epic 14 B1: default output emits real BodyText: cues at
+        # centisecond precision, not comment anchors. Lyrics render
+        # on Lume LCDs immediately - author doesn't have to convert.
         lines = [
-            LyricLine(time_ms=30_000, text="When you try your best"),
-            LyricLine(time_ms=65_000, text="Lights will guide you home"),
+            LyricLine(time_ms=30_500, text="When you try your best"),
+            LyricLine(time_ms=65_120, text="Lights will guide you home"),
         ]
         body = render_skeleton("Coldplay", "Fix You", lines)
-        assert "# 00:30  When you try your best" in body
-        assert "# 01:05  Lights will guide you home" in body
+        assert "00:30.50  BodyText: When you try your best" in body
+        assert "01:05.12  BodyText: Lights will guide you home" in body
 
     def test_no_todo_markers_emitted(self):
         # Skeleton output is just the lyric anchors; the LD adds real
-        # cue lines between them. TODO markers were noise.
+        # FX cues between them. TODO markers were noise.
         lines = [
             LyricLine(time_ms=30_000, text="First"),
             LyricLine(time_ms=60_000, text="Second"),
@@ -147,11 +151,95 @@ class TestRenderSkeleton:
         ]
         body = render_skeleton("X", "Y", lines)
         assert "TODO" not in body
-        # All three lyric lines present.
-        assert "# 00:30  First" in body
-        assert "# 01:00  Second" in body
-        assert "# 01:30  Third" in body
+        assert "00:30.00  BodyText: First" in body
+        assert "01:00.00  BodyText: Second" in body
+        assert "01:30.00  BodyText: Third" in body
+
+    def test_comment_anchors_legacy_mode(self):
+        # Pre-Epic-13 behaviour: lyrics as `# comment` anchors. Author
+        # opts in via comment_anchors=True if they want to hand-author
+        # the BodyText: cues themselves.
+        lines = [LyricLine(time_ms=30_000, text="Lyric")]
+        body = render_skeleton("X", "Y", lines, comment_anchors=True)
+        assert "# 00:30  Lyric" in body
+        assert "BodyText:" not in body
 
     def test_no_synced_lyrics_renders_placeholder(self):
         body = render_skeleton("X", "Y", [])
         assert "(no synced lyrics found)" in body
+
+    def test_non_latin_warning_in_skeleton(self):
+        # Lyrics with Hangul trigger an in-file warning block. The
+        # author sees the warning when they open the cue file +
+        # knows which lines need romanising before show time.
+        lines = [
+            LyricLine(time_ms=30_000, text="Hello"),
+            LyricLine(time_ms=35_000, text="나를 밝혀주는 건"),  # Korean
+        ]
+        body = render_skeleton("X", "Y", lines)
+        assert "WARNING: lyrics contain non-Latin script(s)" in body
+        assert "Hangul" in body
+        # Lyrics still rendered as cues - the warning is advisory,
+        # not a refusal to emit.
+        assert "BodyText:" in body
+
+    def test_no_warning_for_pure_latin(self):
+        lines = [LyricLine(time_ms=30_000, text="Plain English lyric")]
+        body = render_skeleton("X", "Y", lines)
+        assert "WARNING" not in body
+        # Pure-Latin English + accented Latin characters don't warn.
+        lines = [LyricLine(time_ms=30_000, text="César with diacritic")]
+        body = render_skeleton("X", "Y", lines)
+        assert "WARNING" not in body
+
+
+# ---------------------------------------------------------------------------
+# detect_non_latin_scripts (Epic 14 B1)
+# ---------------------------------------------------------------------------
+
+class TestDetectNonLatinScripts:
+    def test_pure_latin_returns_empty(self):
+        assert detect_non_latin_scripts("Hello, world!") == set()
+        assert detect_non_latin_scripts("") == set()
+
+    def test_latin_with_diacritics_returns_empty(self):
+        # Latin-1 supplement + Latin Extended-A cover standard
+        # European diacritics; these aren't "non-Latin" for our purposes.
+        assert detect_non_latin_scripts("Café naïve résumé") == set()
+        assert detect_non_latin_scripts("łodź Lodź") == set()
+
+    def test_hangul_detected(self):
+        # Korean lyric (random sample): "Star woven from your love"
+        assert "Hangul" in detect_non_latin_scripts("너란 사랑으로")
+
+    def test_hangul_jamo_detected(self):
+        # Hangul Jamo block (U+1100-U+11FF) - rarely used but valid.
+        assert "Hangul" in detect_non_latin_scripts("각")
+
+    def test_cjk_detected(self):
+        assert "CJK" in detect_non_latin_scripts("你好")   # Chinese "ni hao"
+
+    def test_hiragana_detected(self):
+        assert "Hiragana" in detect_non_latin_scripts("こんにちは")  # Japanese
+
+    def test_katakana_detected(self):
+        assert "Katakana" in detect_non_latin_scripts("サクラ")
+
+    def test_cyrillic_detected(self):
+        assert "Cyrillic" in detect_non_latin_scripts("Привет")
+
+    def test_greek_detected(self):
+        assert "Greek" in detect_non_latin_scripts("γεια")
+
+    def test_arabic_detected(self):
+        assert "Arabic" in detect_non_latin_scripts("مرحبا")
+
+    def test_mixed_english_and_korean(self):
+        # Realistic case: a K-pop chorus that mixes English and Korean.
+        scripts = detect_non_latin_scripts("Never-ending forever, 너와 함께")
+        assert scripts == {"Hangul"}
+
+    def test_multiple_non_latin_scripts(self):
+        text = "나 你 П"   # Hangul + CJK + Cyrillic in one string
+        scripts = detect_non_latin_scripts(text)
+        assert scripts == {"Hangul", "CJK", "Cyrillic"}

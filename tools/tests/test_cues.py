@@ -453,7 +453,8 @@ class TestLyricExtraction:
         assert f.lyrics[0].time_ms == (1 * 3600 + 2 * 60 + 30) * 1000
 
     def test_todo_skeleton_placeholder_skipped(self):
-        # gen_cues_skeleton.py emits these; they're not real lyrics.
+        # cues_from_lyrics.py --comment-anchors mode emits these legacy
+        # placeholders; they're not real lyrics.
         text = (
             "# 00:30  Real lyric line\n"
             "# 00:30  TODO: cue here\n"

@@ -139,22 +139,54 @@ def parse_lrc(lrc_text):
 
 def render_skeleton(artist, title, lyric_lines, *,
                     default_bpm=120, default_fx="quiet_wash",
-                    default_fx_params="20 40 80"):
+                    default_fx_params="20 40 80",
+                    comment_anchors=False):
     """Render a starter `.cues` file as a string.
 
-    Each lyric line becomes a `#` comment at its stamped time. The
-    LD adds real cue lines between the anchors by hand - the lyric
-    comments orient them in the song; the actual cue authoring is
-    the creative act and shouldn't be auto-pre-stubbed with TODO
-    placeholders that pile up as noise.
+    By default (Epic 14 B1, lyric-first authoring): each lyric line
+    becomes a real ``BodyText:`` cue at its stamped time, with
+    centisecond precision preserved from the LRC source. Lyrics
+    render on Lume LCDs immediately - no manual conversion needed.
+
+    Legacy mode (``comment_anchors=True``): each lyric becomes a
+    ``#`` comment instead. Pre-Epic-13 behaviour, preserved for
+    the rare case where the author wants to add lyrics as cues
+    themselves.
+
+    Detected non-Latin scripts in the lyric text trigger a single
+    `#` comment block warning the author that the relevant lines
+    need transliteration before they'll render on the Tildagon
+    (see [[tildagon-font-latin-only]] in project memory).
     """
     out = []
     out.append("# %s - %s" % (artist, title))
     out.append("#")
     out.append("# Skeleton generated from lrclib.net synced lyrics.")
-    out.append("# The lyric rows are time anchors; add real cue")
-    out.append("# lines between them to choreograph the show.")
+    if comment_anchors:
+        out.append("# The lyric rows are time anchors; add real cue")
+        out.append("# lines between them to choreograph the show.")
+    else:
+        out.append("# Lyrics emitted as BodyText: cues; add FX cues")
+        out.append("# alongside them to choreograph the show. Re-run")
+        out.append("# audio_enrich_cues.py to add librosa MIR data.")
     out.append("")
+
+    # Non-Latin script detection. Single up-front warning lets the
+    # author skim once + know which lines need romanising rather than
+    # discovering it at bench-test time.
+    scripts = detect_non_latin_scripts(
+        "\n".join(l.text for l in lyric_lines)
+    )
+    if scripts:
+        out.append(
+            "# WARNING: lyrics contain non-Latin script(s): %s."
+            % ", ".join(sorted(scripts))
+        )
+        out.append("# These will render as missing-glyph boxes on the")
+        out.append("# Tildagon (Arimo font is Latin-only). Romanise or")
+        out.append("# translate the affected BodyText: lines before show.")
+        out.append("")
+
     out.append("@artist     %s" % artist)
     out.append("@title      %s" % title)
     out.append("@bpm        %d" % default_bpm)
@@ -166,15 +198,80 @@ def render_skeleton(artist, title, lyric_lines, *,
         out.append("")
         return "\n".join(out) + "\n"
 
-    for line in lyric_lines:
-        stamp = _fmt_time(line.time_ms)
-        out.append("# %s  %s" % (stamp, line.text))
+    if comment_anchors:
+        for line in lyric_lines:
+            stamp = _fmt_time(line.time_ms, with_centiseconds=False)
+            out.append("# %s  %s" % (stamp, line.text))
+    else:
+        for line in lyric_lines:
+            stamp = _fmt_time(line.time_ms, with_centiseconds=True)
+            out.append("%s  BodyText: %s" % (stamp, line.text))
     out.append("")
     return "\n".join(out) + "\n"
 
 
-def _fmt_time(time_ms):
+def _fmt_time(time_ms, *, with_centiseconds=True):
+    """Format a millisecond time as ``MM:SS`` or ``MM:SS.cc``.
+
+    Centisecond precision matches the cue file schema's preferred
+    format for cue line timestamps + preserves the source LRC's
+    precision rather than truncating it.
+    """
     total_seconds = time_ms // 1000
     minutes = total_seconds // 60
     seconds = total_seconds % 60
-    return "%02d:%02d" % (minutes, seconds)
+    if not with_centiseconds:
+        return "%02d:%02d" % (minutes, seconds)
+    cs = (time_ms % 1000) // 10   # centiseconds (00..99)
+    return "%02d:%02d.%02d" % (minutes, seconds, cs)
+
+
+# ---------------------------------------------------------------------------
+# Non-Latin script detection (Epic 14 B1)
+# ---------------------------------------------------------------------------
+#
+# The Tildagon's bundled Ctx font is Arimo Regular - Latin-only. Hangul
+# / kana / kanji / Cyrillic / Greek / Arabic / Devanagari etc. render
+# as missing-glyph boxes on the LCD. Detect at authoring time so the
+# author can romanise / translate before the show.
+#
+# Detection is intentionally coarse: Unicode block ranges, not full
+# script analysis. Good enough to flag "you have Hangul here" without
+# overreaching into rare-block edge cases.
+
+_SCRIPT_BLOCKS = (
+    # name             start     end (inclusive)
+    ("Hangul",         0xAC00,   0xD7AF),   # Hangul Syllables
+    ("Hangul",         0x1100,   0x11FF),   # Hangul Jamo
+    ("Hiragana",       0x3040,   0x309F),
+    ("Katakana",       0x30A0,   0x30FF),
+    ("CJK",            0x4E00,   0x9FFF),   # CJK Unified Ideographs
+    ("Cyrillic",       0x0400,   0x04FF),
+    ("Greek",          0x0370,   0x03FF),
+    ("Arabic",         0x0600,   0x06FF),
+    ("Hebrew",         0x0590,   0x05FF),
+    ("Devanagari",     0x0900,   0x097F),
+    ("Thai",           0x0E00,   0x0E7F),
+)
+
+
+def detect_non_latin_scripts(text):
+    """Return the set of non-Latin script names appearing in ``text``.
+
+    Empty set if ``text`` is pure Latin (Basic Latin, Latin-1
+    supplement, Latin Extended-A/B). Hangul / kana / CJK etc. each
+    contribute their script name. A line of mixed English + Korean
+    returns ``{"Hangul"}``.
+    """
+    found = set()
+    for ch in text:
+        cp = ord(ch)
+        if cp < 0x0250:
+            # Basic Latin + Latin-1 supplement + Latin Extended-A
+            # (covers all standard European diacritics).
+            continue
+        for name, lo, hi in _SCRIPT_BLOCKS:
+            if lo <= cp <= hi:
+                found.add(name)
+                break
+    return found

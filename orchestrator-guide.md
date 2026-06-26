@@ -324,10 +324,33 @@ the time of writing:
 Each entry in [`fx-library.md`](fx-library.md) documents its
 parameters, ranges, and defaults.
 
+### Wash on PixMob bracelets is the Director's job, not ours
+
+The orchestrator is "high-level" - it writes wash channels into the
+DMX universe and lets the Director decide what to do with them per
+Lume class. As of Epic 11 (2026-06-18) the StickC's `PixMobIrBinding`
+renders the wash family natively over IR: a periodic `SingleColor`
+refresh at 3000 ms cadence holds the bracelet's colour continuously,
+`LIGHT_WASH_PULSE` maps to a `TwoColors` sparkle-plus-tail composite,
+and `LIGHT_WASH_END` cleanly stops the refresh stream. The encoding
+is documented in [`lume-capabilities-design.md`](lume-capabilities-design.md) §10.
+
+What this means for cue authoring: **you don't need to think about
+PixMob fleets**. The same `quiet_wash` / `drift_wash` / `wash_with_sparkle`
+cue lights both Tildagon Lumes and PixMob bracelets correctly.
+
+What this used to mean: an interim "orchestrator-side `pixmob_refresh.py`
+stopgap" briefly existed (mid-Epic-11) that fired periodic LIGHT_PULSE
+events from each wash FX. That was architecturally wrong - wash
+encoding decisions belong in the binding, not in the orchestrator
+- and has been removed. Cue files written against the stopgap don't
+need any changes; the same cues now route through the Director-side
+encoder.
+
 ## Lyric anchors
 
 A comment line starting with a timestamp - the format
-`gen_cues_skeleton.py` emits - is lifted out of the comment stream
+`cues_from_lyrics.py` emits - is lifted out of the comment stream
 and surfaced in `--debug` mode as the song crosses each anchor::
 
 ```text
@@ -346,7 +369,7 @@ auth), the orchestrator ships an authoring helper that pre-stamps a
 `.cues` skeleton with timed lyric anchors::
 
 ```sh
-Docs/tools/scripts/gen_cues_skeleton.py "Coldplay" "Fix You"
+Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You"
 # -> writes Docs/songs/coldplay-fix-you.cues
 ```
 
@@ -396,6 +419,100 @@ and falls back to Art-Net if the StickC's USB port is already busy
 | `usb` | Writes Enttec Pro frames straight to the StickC over USB | Standalone, no other software needed |
 | `artnet` | Emits ArtDmx packets to `127.0.0.1:6454` | Run alongside QLC+ - your shim picks up either source |
 | `auto` (default) | Try USB; fall back to Art-Net if the port is busy | What you usually want |
+
+`--artnet-universe N` selects the Art-Net universe. Default is `1`,
+matching QLC+ (which presents universes 1-indexed in its UI) and the
+shim's own `--universe` default. Don't change this unless you're
+running a multi-universe rig and know what you're doing.
+
+## Co-driving with QLC+ (HTP merge)
+
+The orchestrator and QLC+ can drive the same StickC at the same time
+- orchestrator runs the cue-driven show; QLC+ supplies live manual
+overrides (e.g. an LD pushes a button to fire a pulse, or holds a
+brighter wash for a chorus). The shim's `--merge htp` flag does the
+combining: per-channel **Highest-Takes-Precedence** across every
+producer currently sending. The "channel monitor" view in the shim
+also starts updating, since traffic now flows through it instead of
+straight to the Stick's USB port.
+
+### What HTP gives you, and what it doesn't
+
+HTP keeps it boring: for each of the 512 DMX channels the shim
+publishes whichever live source has the highest current value. That
+maps cleanly onto **additive overrides**:
+
+- QLC+ can **add** light: bump a pulse trigger, raise wash brightness,
+  fire a strobe on top of the running show.
+- QLC+ **cannot dim** what the orchestrator is doing. If the
+  orchestrator is sending `master = 255` and QLC+ sends `master = 100`,
+  the merge keeps 255. For full creative takeover mid-song, stop the
+  orchestrator and let QLC+ drive alone.
+
+A producer that stops sending falls out of the merge automatically
+after 500 ms - so closing QLC+ or killing a button cleanly hands the
+universe back to whoever's still alive. No ghost frames.
+
+### Wiring it up
+
+The shim becomes the only writer on the StickC's USB port. Both
+producers send Art-Net to localhost on universe 1.
+
+Terminal 1 - the shim (this is now the merging layer; one process
+owns the StickC):
+
+```sh
+Docs/tools/artnet-to-enttec-pro.py --merge htp
+```
+
+The status panel grows a "Merge" row showing the live source count.
+On startup you'll see `HTP (0 sources live)`; the count climbs as
+each producer starts streaming.
+
+Terminal 2 - the orchestrator (forced to Art-Net so the shim
+receives it instead of grabbing the USB port itself):
+
+```sh
+Docs/tools/nowplaying-orchestrator.py --output artnet
+```
+
+QLC+ - configure the Art-Net output plugin to Universe 1 and patch
+your StickC fixture against the universe (the same setup as the
+[QLC+ guide](qlc-plus-beginners-guide.md), but with a universe value
+of 1 rather than 0).
+
+### Authoring a "manual pulse" button
+
+A useful starter scene for the Virtual Console:
+
+1. New **Scene** in the Functions tab. Name it e.g. "Manual White Pulse".
+2. Add the StickC fixture. Set:
+   - `Pulse R / G / B` = `255 / 255 / 255` (white)
+   - `Pulse Trigger` = `255`
+   - `Pulse Attack` = `0`, `Pulse Sustain` = `32`, `Pulse Release` = `96` (a snap-then-fade)
+3. Drop a **Flash Button** widget onto the Virtual Console and bind
+   it to this scene. Flash buttons send the scene while held and stop
+   when released - exactly the contract HTP merge expects.
+
+Push the button: the shim sees QLC+ frames with the pulse trigger
+HIGH on top of the orchestrator's `trig = 0` bed; max wins, the Stick
+mapper detects a rising edge, a `LIGHT_PULSE` goes out. Release the
+button: QLC+ stops sending, the orchestrator is the only live source
+again.
+
+The same pattern works for any single-channel override - drop a
+fader on the Virtual Console bound to e.g. `Wash Intensity` and you
+can push the bed brighter live; release and the show resumes at the
+orchestrator's level.
+
+### When to leave merge off
+
+`--merge none` (the default) forwards each incoming Art-Net frame
+straight to the Stick with no per-source tracking. It's the right
+choice when only one producer is running, and it has the same
+performance characteristics it always had. The merge layer is opt-in
+specifically so existing single-producer setups behave identically
+to before.
 
 ## Debug mode
 

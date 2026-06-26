@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """Generate a `.cues` skeleton from lrclib.net synced lyrics.
 
+Step 1 of the Epic 14 authoring flow ("Lyric-first cue authoring
+with optional MIR enrichment"). Pulls synced lyrics from lrclib.net
+(free, no-auth public API) and writes a starter cue file with each
+lyric line emitted as a real ``BodyText:`` cue at its LRC timestamp.
+
+No audio file required. Step 2 (``audio_enrich_cues.py``) optionally
+enriches the resulting file with librosa MIR data (tempo, beats,
+sections) on demand.
+
 Usage::
 
-    Docs/tools/scripts/gen_cues_skeleton.py "Coldplay" "Fix You"
-    Docs/tools/scripts/gen_cues_skeleton.py "Coldplay" "Fix You" --stdout
-    Docs/tools/scripts/gen_cues_skeleton.py "Coldplay" "Fix You" \\
+    Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You"
+    Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You" --stdout
+    Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You" \\
         --output /tmp/draft.cues
 
 Default behaviour writes to `Docs/songs/<slug>.cues`, where slug is
 the same one the orchestrator's track matcher will use. Refuses to
 overwrite by default; pass `--force` to replace.
+
+Renamed from ``gen_cues_skeleton.py`` 2026-06-26 (Epic 14 B1) to
+reflect what the tool actually does + match the Epic vocabulary.
 
 Network: pulls one HTTP GET from https://lrclib.net (free, no auth).
 """
@@ -25,7 +37,8 @@ _TOOLS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_TOOLS_DIR))
 
 from nocturnation_orchestrator.lyrics import (
-    LyricsError, fetch_lrc, parse_lrc, render_skeleton,
+    LyricsError, detect_non_latin_scripts,
+    fetch_lrc, parse_lrc, render_skeleton,
 )
 from nocturnation_orchestrator.matcher import slugify
 
@@ -67,6 +80,14 @@ def main(argv=None):
         "--default-fx-params", default="20 40 80",
         help="@default_fx positional params (default: \"%(default)s\")",
     )
+    parser.add_argument(
+        "--comment-anchors", action="store_true",
+        help=(
+            "Legacy pre-Epic-13 output: emit lyric lines as `# comment` "
+            "anchors instead of real BodyText: cues. Use only if you want "
+            "to hand-author the BodyText cues yourself."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -78,11 +99,32 @@ def main(argv=None):
     if not lines:
         sys.exit("error: lrclib.net returned LRC but it parsed to zero lines")
 
+    # Surface non-Latin script warnings to stderr BEFORE rendering so
+    # the operator sees them prominently. The same warning is also
+    # emitted into the file's comment block by render_skeleton, but
+    # an author piping --stdout to | head wouldn't see that.
+    scripts = detect_non_latin_scripts("\n".join(l.text for l in lines))
+    if scripts:
+        print(
+            "warning: lyrics contain non-Latin script(s): %s"
+            % ", ".join(sorted(scripts)),
+            file=sys.stderr,
+        )
+        print(
+            "         these render as missing-glyph boxes on the Tildagon",
+            file=sys.stderr,
+        )
+        print(
+            "         (font is Latin-only). Romanise BodyText: lines before show.",
+            file=sys.stderr,
+        )
+
     body = render_skeleton(
         args.artist, args.title, lines,
         default_bpm=args.bpm,
         default_fx=args.default_fx,
         default_fx_params=args.default_fx_params,
+        comment_anchors=args.comment_anchors,
     )
 
     if args.stdout:

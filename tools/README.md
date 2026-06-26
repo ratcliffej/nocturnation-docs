@@ -433,9 +433,17 @@ populated dict while a track plays.
 
 ### Authoring helpers
 
-`scripts/gen_cues_skeleton.py "<artist>" "<title>"` fetches synced
-lyrics from [lrclib.net](https://lrclib.net) and emits a starter
-`.cues` file with each lyric line pre-stamped as a comment anchor.
+`scripts/cues_from_lyrics.py "<artist>" "<title>"` (renamed from
+`gen_cues_skeleton.py` 2026-06-26) fetches synced lyrics from
+[lrclib.net](https://lrclib.net) and emits a starter `.cues` file
+with each lyric line pre-stamped as a `BodyText:` cue at the LRC
+timestamp (centisecond precision). Author then adds FX cues
+alongside. Step 1 of the Epic 14 lyric-first authoring flow; see
+[the cue file schema](../manuals/cue-file-schema.md) for the
+output format. Non-Latin lyric warnings go to stderr + into the
+file's comment header so the author knows which lines to romanise
+before show time. Pass `--comment-anchors` to retain the pre-
+Epic-13 `# comment` output instead of real `BodyText:` cues.
 
 `scripts/gen_fx_library.py` regenerates `Docs/fx-library.md` from
 the registered FX classes; run after adding or modifying an FX.
