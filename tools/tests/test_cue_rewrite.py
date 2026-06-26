@@ -1,12 +1,13 @@
-"""Tests for the cue file MIR-enrichment rewriter (Epic 14 B2)."""
+"""Tests for the cue file MIR-enrichment rewriter (Epic 14 B2 + B3)."""
 
 from __future__ import annotations
 
 import pytest
 
 from nocturnation_orchestrator.cue_rewrite import (
-    _fmt_ts, _parse_ts, _pick_section_name, _is_default_name,
-    rewrite_cue_file,
+    _fmt_ts, _nearest_beat, _parse_ts,
+    _pick_section_name, _is_default_name,
+    rewrite_cue_file, snap_cue_timestamps,
 )
 
 
@@ -288,6 +289,152 @@ class TestRewriteIdempotency:
         first  = rewrite_cue_file(existing, analysis)
         second = rewrite_cue_file(first,    analysis)
         assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Beat snapping (Epic 14 B3)
+# ---------------------------------------------------------------------------
+
+
+class TestNearestBeat:
+    def test_target_below_first_beat_returns_first(self):
+        assert _nearest_beat([1.0, 2.0, 3.0], 0.0) == 1.0
+
+    def test_target_above_last_beat_returns_last(self):
+        assert _nearest_beat([1.0, 2.0, 3.0], 5.0) == 3.0
+
+    def test_exact_match(self):
+        assert _nearest_beat([1.0, 2.0, 3.0], 2.0) == 2.0
+
+    def test_closer_to_lower_neighbour(self):
+        assert _nearest_beat([1.0, 2.0, 3.0], 2.4) == 2.0
+
+    def test_closer_to_upper_neighbour(self):
+        assert _nearest_beat([1.0, 2.0, 3.0], 2.6) == 3.0
+
+    def test_equidistant_picks_lower(self):
+        # On a tie, deterministically pick the earlier beat.
+        # Matches the "<=" branch in the implementation.
+        assert _nearest_beat([1.0, 2.0, 3.0], 2.5) == 2.0
+
+
+class TestSnapCueTimestamps:
+    def test_empty_beats_returns_unchanged(self):
+        content = "00:12  pulse\n00:24  stop\n"
+        out, stats = snap_cue_timestamps(content, [])
+        assert out == content
+        assert stats == {
+            "snapped": 0, "kept": 0, "non_cue_lines": 0, "max_delta_ms": 0.0,
+        }
+
+    def test_cue_within_threshold_snaps(self):
+        # Cue at 12.000s; beat at 12.050s (50ms after) -> snap.
+        content = "00:12.00  pulse\n"
+        out, stats = snap_cue_timestamps(content, [12.05])
+        assert "0:12.05  pulse" in out
+        assert stats["snapped"] == 1
+        assert stats["kept"] == 0
+
+    def test_cue_outside_threshold_kept(self):
+        # Cue at 12.000s; nearest beat at 12.500s (500ms away) -> kept.
+        content = "00:12.00  pulse\n"
+        out, stats = snap_cue_timestamps(content, [12.5])
+        # Original timestamp preserved.
+        assert "00:12.00  pulse" in out
+        assert stats["snapped"] == 0
+        assert stats["kept"] == 1
+
+    def test_custom_threshold_honoured(self):
+        # 200ms gap, default threshold 150ms = no snap.
+        content = "00:12.00  pulse\n"
+        out, stats = snap_cue_timestamps(content, [12.2])
+        assert stats["snapped"] == 0
+        # Same gap, threshold 250ms = snap.
+        out2, stats2 = snap_cue_timestamps(content, [12.2], threshold_ms=250)
+        assert stats2["snapped"] == 1
+
+    def test_payload_preserved(self):
+        # Cue line has full FX args after the timestamp; snap should
+        # only touch the timestamp.
+        content = "00:35.00  sparkle_on_beat colour=#ff8800 prob=80 group_size=12\n"
+        out, _ = snap_cue_timestamps(content, [35.05])
+        assert "sparkle_on_beat colour=#ff8800 prob=80 group_size=12" in out
+        assert "0:35.05" in out
+
+    def test_directives_and_comments_untouched(self):
+        content = (
+            "# header comment\n"
+            "@artist Coldplay\n"
+            "@bpm 178\n"
+            "\n"
+            "# body comment\n"
+            "00:12.00  pulse\n"
+        )
+        out, stats = snap_cue_timestamps(content, [12.05])
+        # Header / comments / blanks pass through unchanged.
+        assert "# header comment" in out
+        assert "@artist Coldplay" in out
+        assert "@bpm 178" in out
+        assert "# body comment" in out
+        # Cue line snapped.
+        assert "0:12.05  pulse" in out
+        assert stats["snapped"] == 1
+        # The non-cue line count covers comments, directives, and the
+        # blank separator line.
+        assert stats["non_cue_lines"] == 5
+
+    def test_multiple_cues_mixed(self):
+        # 3 cues; 2 snap, 1 outside threshold.
+        content = (
+            "00:12.00  pulse\n"     # within 50ms of 12.05
+            "00:24.00  stop\n"      # within 100ms of 24.10
+            "00:42.30  sparkle\n"   # 400ms from nearest beat -> kept
+        )
+        beats = [12.05, 24.10, 41.90]
+        out, stats = snap_cue_timestamps(content, beats)
+        assert stats["snapped"] == 2
+        assert stats["kept"] == 1
+        assert "0:12.05  pulse" in out
+        assert "0:24.10  stop" in out
+        assert "00:42.30  sparkle" in out   # untouched
+
+    def test_max_delta_tracked(self):
+        content = (
+            "00:12.00  pulse\n"     # 20ms snap
+            "00:24.00  stop\n"      # 100ms snap
+        )
+        beats = [12.02, 24.10]
+        _, stats = snap_cue_timestamps(content, beats)
+        assert stats["max_delta_ms"] == pytest.approx(100.0, abs=0.1)
+
+    def test_unsorted_beats_handled(self):
+        # Defensive sort - librosa returns sorted but we don't trust callers.
+        content = "00:12.00  pulse\n"
+        out, stats = snap_cue_timestamps(content, [50.0, 12.05, 30.0])
+        assert stats["snapped"] == 1
+        assert "0:12.05  pulse" in out
+
+    def test_trailing_newline_preserved(self):
+        # Input ends in \n.
+        content = "00:12.00  pulse\n"
+        out, _ = snap_cue_timestamps(content, [12.05])
+        assert out.endswith("\n")
+        # Input does NOT end in \n.
+        content2 = "00:12.00  pulse"
+        out2, _ = snap_cue_timestamps(content2, [12.05])
+        assert not out2.endswith("\n")
+
+    def test_idempotent(self):
+        # Snap twice with the same beats - second snap is a no-op
+        # since the cue is already at the beat.
+        content = "00:12.00  pulse\n"
+        once, stats1  = snap_cue_timestamps(content, [12.05])
+        twice, stats2 = snap_cue_timestamps(once,    [12.05])
+        assert once == twice
+        # First call snaps (50ms gap); second call's gap is 0 so still
+        # "snaps" (0ms <= threshold) but to itself.
+        assert stats1["snapped"] == 1
+        assert stats2["snapped"] == 1
 
 
 class TestRewriteSchemaVersion:

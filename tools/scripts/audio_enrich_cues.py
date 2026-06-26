@@ -75,6 +75,23 @@ def main(argv=None):
         "--schema-version", type=int, default=1,
         help="value for @analysis_version (default: 1)",
     )
+    parser.add_argument(
+        "--snap", action="store_true",
+        help=(
+            "Snap existing cue-line timestamps to the nearest detected "
+            "beat (within --snap-threshold-ms). Useful when lyric "
+            "timestamps from lrclib are loose against the beat grid, "
+            "or when hand-typed cues want quantising to the music."
+        ),
+    )
+    parser.add_argument(
+        "--snap-threshold-ms", type=int, default=150, metavar="N",
+        help=(
+            "Max gap to snap a cue to a beat, in milliseconds "
+            "(default: %(default)s). Cues outside this threshold are "
+            "left at their authored time."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cuefile = Path(args.cuefile)
@@ -110,6 +127,25 @@ def main(argv=None):
         ),
         file=sys.stderr,
     )
+
+    # Beat snapping runs FIRST (body cues only); header rewrite runs
+    # AFTER (replaces the header zone). Order: cues_from_lyrics.py
+    # produced a body of BodyText: cues at LRC-derived timestamps -
+    # snap those onto the beat grid, then the header rewrite captures
+    # the result + adds the MIR directives.
+    if args.snap:
+        content, snap_stats = cue_rewrite.snap_cue_timestamps(
+            content, analysis["beats"],
+            threshold_ms=args.snap_threshold_ms,
+        )
+        print(
+            "  snap: %d cues snapped, %d kept outside threshold "
+            "(max delta %.0f ms)" % (
+                snap_stats["snapped"], snap_stats["kept"],
+                snap_stats["max_delta_ms"],
+            ),
+            file=sys.stderr,
+        )
 
     new_content = cue_rewrite.rewrite_cue_file(
         content, analysis, schema_version=args.schema_version,

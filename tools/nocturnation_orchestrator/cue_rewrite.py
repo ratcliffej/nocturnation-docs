@@ -276,3 +276,130 @@ _DEFAULT_NAME_RE = re.compile(r"^section\d+$")
 def _is_default_name(name):
     """True if ``name`` looks like the tool's auto-emitted default."""
     return bool(_DEFAULT_NAME_RE.match(name))
+
+
+# ---------------------------------------------------------------------------
+# Beat snapping (Epic 14 B3, --snap flag)
+# ---------------------------------------------------------------------------
+
+# Match a leading timestamp on a cue line so we can replace it with
+# the snapped value. Captures the timestamp token; the rest of the
+# line (kind + args) is left alone.
+_CUE_LINE_TS_RE = re.compile(
+    r"^(\s*)(\d+:\d+(?::\d+)?(?:\.\d+)?)(\s)"
+)
+
+
+def snap_cue_timestamps(content, beats, *, threshold_ms=150):
+    """Snap cue-line timestamps to the nearest detected beat.
+
+    Walks ``content`` line-by-line. For each line that starts with a
+    timestamp (i.e. a cue line, not a directive or comment), finds
+    the nearest beat in ``beats``. If the gap is within
+    ``threshold_ms``, replaces the timestamp with the snapped beat
+    time (formatted MM:SS.cc per the cue file schema). Otherwise
+    leaves the line alone.
+
+    Cues outside the threshold are left at their authored time -
+    this is deliberate. A cue at 00:42.300 with the nearest beat at
+    00:41.000 (gap 1300 ms) probably wasn't meant for a beat at
+    all (think: a structural cue at the start of a wash, or a
+    BodyText line that lands mid-phrase by design). Yanking it
+    onto a beat would distort the author's intent.
+
+    Args:
+        content (str): cue file content.
+        beats (list[float]): beat positions in seconds, monotonic
+            increasing. Empty list = no-op.
+        threshold_ms (int): max gap to snap, in milliseconds.
+            Default 150 (half a beat at 200 BPM); operator overrides
+            via the CLI ``--snap-threshold-ms`` flag.
+
+    Returns:
+        (new_content, stats) tuple where stats is a dict:
+
+            {
+              "snapped":      int (cues moved to a beat),
+              "kept":         int (cues outside threshold; left alone),
+              "non_cue_lines": int (header / comment / blank lines),
+              "max_delta_ms": float (largest snap that fired),
+            }
+
+        Stats are useful for the CLI's user-facing summary.
+    """
+    if not beats:
+        return content, {
+            "snapped": 0, "kept": 0, "non_cue_lines": 0, "max_delta_ms": 0.0,
+        }
+    # Defensive sort; librosa returns sorted but we don't trust callers.
+    sorted_beats = sorted(beats)
+
+    out_lines = []
+    snapped = 0
+    kept = 0
+    non_cue = 0
+    max_delta = 0.0
+
+    # Preserve trailing newline behaviour: if content ends with "\n",
+    # splitlines() drops it and we re-add at the end.
+    trailing_newline = content.endswith("\n")
+    for line in content.splitlines():
+        match = _CUE_LINE_TS_RE.match(line)
+        if not match:
+            out_lines.append(line)
+            non_cue += 1
+            continue
+        leading_ws, ts_str, sep = match.group(1), match.group(2), match.group(3)
+        try:
+            cue_seconds = _parse_ts(ts_str)
+        except ValueError:
+            out_lines.append(line)
+            non_cue += 1
+            continue
+        nearest = _nearest_beat(sorted_beats, cue_seconds)
+        delta_ms = abs(cue_seconds - nearest) * 1000.0
+        if delta_ms <= threshold_ms:
+            new_ts = _fmt_ts(nearest)
+            new_line = (
+                leading_ws + new_ts + sep + line[match.end():]
+            )
+            out_lines.append(new_line)
+            snapped += 1
+            max_delta = max(max_delta, delta_ms)
+        else:
+            out_lines.append(line)
+            kept += 1
+
+    result = "\n".join(out_lines)
+    if trailing_newline:
+        result += "\n"
+    return result, {
+        "snapped":       snapped,
+        "kept":          kept,
+        "non_cue_lines": non_cue,
+        "max_delta_ms":  max_delta,
+    }
+
+
+def _nearest_beat(sorted_beats, target_s):
+    """Binary search for the beat closest to ``target_s`` in seconds.
+
+    Returns the beat time. Empty list raises - caller guards.
+    """
+    # Manual binary search; bisect.bisect_left is in stdlib but we
+    # save the import.
+    lo, hi = 0, len(sorted_beats) - 1
+    if target_s <= sorted_beats[0]:
+        return sorted_beats[0]
+    if target_s >= sorted_beats[hi]:
+        return sorted_beats[hi]
+    while lo < hi - 1:
+        mid = (lo + hi) // 2
+        if sorted_beats[mid] < target_s:
+            lo = mid
+        else:
+            hi = mid
+    # lo and hi now flank target_s; pick whichever is closer.
+    if target_s - sorted_beats[lo] <= sorted_beats[hi] - target_s:
+        return sorted_beats[lo]
+    return sorted_beats[hi]
