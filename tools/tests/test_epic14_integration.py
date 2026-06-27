@@ -263,18 +263,59 @@ class TestEpic14BackCompat:
         # 4 timed events (2 display + 1 FX + 1 stop).
         assert len(parsed.cues) == 4
 
-    def test_parser_rejects_new_epic14_directives_today(self):
-        # @section / @duration / @key / @mode / @analysis_* aren't
-        # known to the parser yet (B7 lands the additions).
-        # This test pins the current behaviour so B7 has an explicit
-        # before/after.
+    def test_parser_accepts_new_epic14_directives(self):
+        # @section / @duration / @key / @mode / @analysis_* now parse
+        # cleanly (extended 2026-06-27, was B7 originally; promoted
+        # after a bench user hit "unknown directive '@time_sig'" on a
+        # MIR-enriched coldplay-viva-la-vida.cues). Captured as
+        # CueFile fields for future B7 @during automation.
         from nocturnation_orchestrator import cues as cues_mod
         from nocturnation_orchestrator.fx.registry import fx_registry
         from nocturnation_orchestrator.fx import library   # noqa: F401
 
         snippet_with_new = (
             "@artist X\n@title Y\n@bpm 178\n"
+            "@time_sig 4\n"
+            "@key A#\n@mode major\n"
+            "@duration 3:31.50\n"
+            "@analysis_synced 2026-06-27T20:00:00Z\n"
+            "@analysis_version 1\n"
+            "@analysis_tool librosa\n"
             "@section section1 0:00.00 0:11.50 tempo=178.0 loudness=-14.2\n"
+            "@section verse1   0:11.50 0:35.00 tempo=178.0 loudness=-10.7\n"
         )
-        with pytest.raises(Exception):
-            cues_mod.parse_cues(snippet_with_new, registry=fx_registry)
+        parsed = cues_mod.parse_cues(snippet_with_new, registry=fx_registry)
+        # Fields captured.
+        assert parsed.time_sig == 4
+        assert parsed.key == "A#"
+        assert parsed.mode == "major"
+        assert parsed.duration_ms == 211_500
+        assert parsed.analysis_synced == "2026-06-27T20:00:00Z"
+        assert parsed.analysis_version == 1
+        assert parsed.analysis_tool == "librosa"
+        # Sections parsed into a list of dicts with extras.
+        assert len(parsed.sections) == 2
+        assert parsed.sections[0]["name"] == "section1"
+        assert parsed.sections[0]["start_ms"] == 0
+        assert parsed.sections[0]["end_ms"]   == 11_500
+        assert parsed.sections[1]["name"] == "verse1"
+        assert parsed.sections[1]["extras"]["tempo"] == "178.0"
+
+    def test_parser_skips_garbled_section_lines_gracefully(self):
+        # An authoring-tool bug shouldn't poison the cue file -
+        # @section directives with missing / unparseable fields
+        # are silently skipped, not fatal.
+        from nocturnation_orchestrator import cues as cues_mod
+        from nocturnation_orchestrator.fx.registry import fx_registry
+        from nocturnation_orchestrator.fx import library   # noqa: F401
+
+        snippet = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section bad_no_times\n"                        # too few tokens
+            "@section bad_bogus_ts not:a:ts also:bad\n"      # bad timestamps
+            "@section good 0:00.00 0:11.50\n"                # actually parseable
+        )
+        parsed = cues_mod.parse_cues(snippet, registry=fx_registry)
+        # Only the good one captured.
+        names = [s["name"] for s in parsed.sections]
+        assert "good" in names

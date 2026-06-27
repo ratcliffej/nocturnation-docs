@@ -180,6 +180,19 @@ class CueFile:
     show_song_info: bool = False
     show_bitmap: bool = False
 
+    # Epic 14 MIR-enrichment metadata. Set by audio_enrich_cues.py.
+    # Captured for diagnostics + future use (see B7); the orchestrator
+    # doesn't act on these at runtime today. Empty strings / 0 / None
+    # when the file hasn't been MIR-enriched yet.
+    time_sig: int = 0
+    key: str = ""
+    mode: str = ""
+    duration_ms: int = 0
+    sections: list = field(default_factory=list)
+    analysis_synced: str = ""
+    analysis_version: int = 0
+    analysis_tool: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -236,9 +249,25 @@ def _parse_int(token: str, line_no: int, what: str = "integer") -> int:
 
 
 def _strip_comment(line: str) -> str:
-    """Drop everything from the first '#' onwards."""
-    i = line.find("#")
-    return line if i < 0 else line[:i]
+    """Drop everything from the first comment-starting '#'.
+
+    A '#' counts as a comment marker only when:
+      * It's the first character on the line (after any leading
+        whitespace via the caller's .strip()), OR
+      * It's preceded by whitespace (so '... # seed' style trailing
+        comments on cue lines are stripped).
+
+    A '#' embedded in a token is treated as a literal character.
+    This is what makes 'A#' / 'C#' / 'F#' parse correctly as sharp
+    key names in @key directives, and what would let '#ff8800'
+    survive as a hex colour kwarg if anyone ever uses them.
+    """
+    for i, ch in enumerate(line):
+        if ch != "#":
+            continue
+        if i == 0 or line[i - 1].isspace():
+            return line[:i]
+    return line
 
 
 def _maybe_parse_lyric_comment(raw_line: str, line_no: int):
@@ -319,6 +348,11 @@ _KNOWN_DIRECTIVES = (
     "@bpm", "@default_fx", "@artist", "@title", "@offset",
     # Epic 13 display directives.
     "@ShowSongInfo", "@ShowBitmap",
+    # Epic 14 MIR-enrichment directives (B7 - parser acceptance).
+    # Captured into CueFile fields for diagnostics + future use;
+    # the orchestrator doesn't yet act on them at runtime.
+    "@time_sig", "@key", "@mode", "@duration", "@section",
+    "@analysis_synced", "@analysis_version", "@analysis_tool",
 )
 _FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
@@ -386,6 +420,60 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
     elif directive == "@ShowBitmap":
         val = tokens[1].lower() if len(tokens) >= 2 else "true"
         file.show_bitmap = val in ("true", "on", "1", "yes")
+    elif directive == "@time_sig":
+        # Epic 14 MIR-enrichment metadata. Captured for diagnostics;
+        # the orchestrator doesn't act on time_sig at runtime today.
+        # Tolerant of garbage: parse as int with fallback to 0.
+        try:
+            file.time_sig = int(tokens[1])
+        except (ValueError, IndexError):
+            file.time_sig = 0
+    elif directive == "@key":
+        # Free-text key name ("A#", "Cm", etc.). Captured as-is.
+        file.key = tokens[1] if len(tokens) >= 2 else ""
+    elif directive == "@mode":
+        # "major" / "minor" / free text. Captured as-is.
+        file.mode = tokens[1] if len(tokens) >= 2 else ""
+    elif directive == "@duration":
+        # Track duration timestamp (MM:SS.cc). Captured as ms for
+        # consistency with the rest of CueFile's int-ms convention.
+        if len(tokens) >= 2:
+            try:
+                file.duration_ms = _parse_time(tokens[1], line_no)
+            except CueParseError:
+                file.duration_ms = 0
+    elif directive == "@section":
+        # @section <name> <start_ts> <end_ts> [key=value ...]
+        # Captured as a list of dicts for future B7 @during automation.
+        # Parse defensively - garbled @section lines are skipped, not
+        # fatal (so an authoring-tool bug can't poison the cue file).
+        if len(tokens) >= 4:
+            try:
+                name      = tokens[1]
+                start_ms  = _parse_time(tokens[2], line_no)
+                end_ms    = _parse_time(tokens[3], line_no)
+                kvs = {}
+                for kv in tokens[4:]:
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        kvs[k] = v
+                file.sections.append({
+                    "name":     name,
+                    "start_ms": start_ms,
+                    "end_ms":   end_ms,
+                    "extras":   kvs,
+                })
+            except CueParseError:
+                pass
+    elif directive == "@analysis_synced":
+        file.analysis_synced = tokens[1] if len(tokens) >= 2 else ""
+    elif directive == "@analysis_version":
+        try:
+            file.analysis_version = int(tokens[1])
+        except (ValueError, IndexError):
+            file.analysis_version = 0
+    elif directive == "@analysis_tool":
+        file.analysis_tool = tokens[1] if len(tokens) >= 2 else ""
 
 
 def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
