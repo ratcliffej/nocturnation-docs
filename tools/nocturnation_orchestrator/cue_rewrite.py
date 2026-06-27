@@ -566,6 +566,72 @@ def _next_beat_after(target_s, beats):
     return target_s + 0.05
 
 
+# ---------------------------------------------------------------------------
+# Audio file auto-discovery + cue file backups (Epic 14 B6, --update flag)
+# ---------------------------------------------------------------------------
+
+
+# Extensions tried in priority order. FLAC first because it's the
+# preferred MIR input (lossless = sharper beat/onset detection).
+# WAV second for the same reason. The lossy formats lag.
+_AUDIO_EXTENSIONS = (".flac", ".wav", ".aiff", ".aif", ".m4a", ".mp3", ".ogg")
+
+
+def discover_audio(cuefile_path):
+    """Look for an audio file alongside a `.cues` file.
+
+    Tries the same directory as ``cuefile_path``, with the same
+    base name, against the supported audio extensions. Returns the
+    Path of the first match (in extension-priority order), or None
+    if nothing matches.
+
+    Args:
+        cuefile_path: Path or str pointing at a `.cues` file. Doesn't
+            need to exist - we're just deriving the base name + dir.
+
+    Returns:
+        Path or None.
+
+    Example::
+
+        Docs/songs/coldplay-fix-you.cues          (input)
+        Docs/songs/coldplay-fix-you.flac          (found - returned)
+        Docs/songs/coldplay-fix-you.mp3           (also exists, but flac wins)
+    """
+    # Importing pathlib here keeps the module's top-level imports
+    # tight; this function isn't called from the hot path.
+    from pathlib import Path
+
+    cue = Path(cuefile_path)
+    base = cue.with_suffix("")    # strips '.cues' suffix
+    for ext in _AUDIO_EXTENSIONS:
+        candidate = base.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def make_backup(cuefile_path):
+    """Copy a cue file to ``<cuefile_path>.bak``.
+
+    Used before `--update` rewrites so a corrupted re-enrichment
+    doesn't lose hand-edits. Idempotent: re-running overwrites the
+    prior backup. Silently no-op if the source doesn't exist
+    (first-time enrichment has nothing to back up).
+
+    Returns:
+        Path of the backup file, or None if no source.
+    """
+    from pathlib import Path
+
+    cue = Path(cuefile_path)
+    if not cue.exists():
+        return None
+    bak = cue.with_suffix(cue.suffix + ".bak")
+    bak.write_bytes(cue.read_bytes())
+    return bak
+
+
 def _key_palette(key, mode):
     """4-tuple RGB palette derived from the track's key + mode.
 

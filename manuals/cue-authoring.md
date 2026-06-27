@@ -65,12 +65,21 @@ The `--comment-anchors` flag retains the pre-Epic-13 output: lyrics as `#` comme
 ## Step 2: MIR enrichment
 
 ```bash
+# Explicit --audio path:
 .venv/bin/python scripts/audio_enrich_cues.py \
     ../songs/coldplay-higher-power.cues \
     --audio /path/to/coldplay-higher-power.flac
+
+# Or drop the audio file alongside the .cues file and let auto-
+# discovery find it (matches .flac > .wav > .aiff > .m4a > .mp3 > .ogg):
+cp /path/to/coldplay-higher-power.flac ../songs/
+.venv/bin/python scripts/audio_enrich_cues.py \
+    ../songs/coldplay-higher-power.cues
 ```
 
-This rewrites the cue file's header with detected `@bpm`, `@time_sig`, `@key`, `@mode`, `@duration`, and a `@section section1..N` block (one per acoustic section). Hand-edited body cues are preserved verbatim; the `@analysis_synced` timestamp records when MIR last ran.
+This rewrites the cue file's header with detected `@bpm`, `@time_sig`, `@key`, `@mode`, `@duration`, and a `@section section1..N` block (one per acoustic section). Hand-edited body cues are preserved verbatim; the `@analysis_synced` timestamp records when MIR last ran. A `<cuefile>.bak` backup is written automatically before any rewrite — `--no-backup` skips it.
+
+**Re-syncing**: re-run the same command. The tool detects existing `@analysis_*` directives in the header and replaces them with the fresh analysis. Author-renamed sections are preserved by boundary-overlap matching (`section3` renamed to `chorus2` survives a re-sync as long as the new section boundaries are within ~2 s of the old). The `--update` flag is an explicit "yes I know I'm re-syncing" marker — currently behavioural-no-op, kept for documentary purposes.
 
 A sidecar `<cuefile>.analysis.json` (gitignored) holds the full librosa dump — beats, onsets, chroma, full sections array. Used by `--snap` and `--seed` below; the orchestrator never reads it at runtime.
 

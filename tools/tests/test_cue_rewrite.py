@@ -7,6 +7,7 @@ import pytest
 from nocturnation_orchestrator.cue_rewrite import (
     _fmt_ts, _key_palette, _nearest_beat, _parse_ts,
     _pick_section_name, _is_default_name,
+    discover_audio, make_backup,
     rewrite_cue_file, seed_fx_cues, snap_cue_timestamps,
 )
 
@@ -608,6 +609,89 @@ def _extract_first_wash_rgb(content):
             idx = parts.index("quiet_wash")
             return (int(parts[idx + 1]), int(parts[idx + 2]), int(parts[idx + 3]))
     raise AssertionError("no seeded quiet_wash line found in:\n%s" % content)
+
+
+# ---------------------------------------------------------------------------
+# Audio auto-discovery + backups (Epic 14 B6)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverAudio:
+    def test_finds_flac_alongside_cue(self, tmp_path):
+        cue = tmp_path / "song.cues"
+        cue.write_text("# placeholder\n")
+        (tmp_path / "song.flac").write_bytes(b"")
+        assert discover_audio(cue) == tmp_path / "song.flac"
+
+    def test_finds_mp3_when_no_flac(self, tmp_path):
+        cue = tmp_path / "song.cues"
+        cue.write_text("# placeholder\n")
+        (tmp_path / "song.mp3").write_bytes(b"")
+        assert discover_audio(cue) == tmp_path / "song.mp3"
+
+    def test_flac_wins_over_mp3(self, tmp_path):
+        # Both exist - FLAC wins (lossless = better MIR).
+        cue = tmp_path / "song.cues"
+        cue.write_text("# placeholder\n")
+        (tmp_path / "song.flac").write_bytes(b"")
+        (tmp_path / "song.mp3").write_bytes(b"")
+        assert discover_audio(cue).suffix == ".flac"
+
+    def test_priority_order(self, tmp_path):
+        # FLAC > WAV > AIFF > M4A > MP3 > OGG per extension list.
+        cue = tmp_path / "song.cues"
+        cue.write_text("# placeholder\n")
+        (tmp_path / "song.ogg").write_bytes(b"")
+        (tmp_path / "song.m4a").write_bytes(b"")
+        # M4A should win over OGG.
+        assert discover_audio(cue).suffix == ".m4a"
+
+    def test_returns_none_when_no_match(self, tmp_path):
+        cue = tmp_path / "song.cues"
+        cue.write_text("# placeholder\n")
+        # No audio file alongside.
+        assert discover_audio(cue) is None
+
+    def test_works_with_cue_that_doesnt_exist_yet(self, tmp_path):
+        # The cue file itself doesn't need to exist - we're just
+        # deriving a base name + directory.
+        cue = tmp_path / "future-song.cues"
+        (tmp_path / "future-song.wav").write_bytes(b"")
+        assert discover_audio(cue) == tmp_path / "future-song.wav"
+
+    def test_handles_hyphens_and_special_chars_in_basename(self, tmp_path):
+        # Real cue files have hyphens, dots in artist names, etc.
+        cue = tmp_path / "coldplay-x-bts-my-universe.cues"
+        cue.write_text("# placeholder\n")
+        (tmp_path / "coldplay-x-bts-my-universe.flac").write_bytes(b"")
+        assert discover_audio(cue) is not None
+        assert "my-universe" in discover_audio(cue).name
+
+
+class TestMakeBackup:
+    def test_creates_bak_copy(self, tmp_path):
+        cue = tmp_path / "song.cues"
+        cue.write_text("@artist X\n@title Y\n")
+        bak = make_backup(cue)
+        assert bak == cue.with_suffix(".cues.bak")
+        assert bak.exists()
+        assert bak.read_text() == cue.read_text()
+
+    def test_no_op_if_source_missing(self, tmp_path):
+        cue = tmp_path / "doesnt-exist.cues"
+        bak = make_backup(cue)
+        assert bak is None
+
+    def test_overwrites_existing_backup(self, tmp_path):
+        cue = tmp_path / "song.cues"
+        cue.write_text("v1 content\n")
+        first  = make_backup(cue)
+        # Mutate the cue file + back up again.
+        cue.write_text("v2 content\n")
+        second = make_backup(cue)
+        # Same path, but the backup tracks the latest cue file.
+        assert first == second
+        assert second.read_text() == "v2 content\n"
 
 
 class TestRewriteSchemaVersion:

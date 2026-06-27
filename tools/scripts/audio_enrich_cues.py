@@ -60,8 +60,25 @@ def main(argv=None):
     )
     parser.add_argument("cuefile", help="path to the .cues file to enrich")
     parser.add_argument(
-        "--audio", required=True,
-        help="path to the audio file (mp3 / wav / flac / m4a / ogg)",
+        "--audio", default=None,
+        help=(
+            "path to the audio file (flac / wav / mp3 / m4a / ogg). "
+            "Optional: if omitted, the tool looks for a file with the "
+            "same base name as the cue file in the same directory "
+            "(flac preferred over mp3 etc. for MIR quality)."
+        ),
+    )
+    parser.add_argument(
+        "--update", action="store_true",
+        help=(
+            "Mark this run as a re-sync. Behaviour is currently the "
+            "same as a first-time enrichment (auto-discover audio + "
+            "make .bak backup); the flag exists for discoverability."
+        ),
+    )
+    parser.add_argument(
+        "--no-backup", action="store_true",
+        help="Skip the .cues.bak backup before rewriting.",
     )
     parser.add_argument(
         "--stdout", action="store_true",
@@ -104,10 +121,24 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     cuefile = Path(args.cuefile)
-    audio = Path(args.audio)
 
-    if not audio.exists():
-        sys.exit("error: audio file not found: %s" % audio)
+    if args.audio:
+        audio = Path(args.audio)
+        if not audio.exists():
+            sys.exit("error: audio file not found: %s" % audio)
+    else:
+        # Auto-discover: look in the cue file's directory for an
+        # audio file with the same base name.
+        discovered = cue_rewrite.discover_audio(cuefile)
+        if discovered is None:
+            sys.exit(
+                "error: no --audio supplied and auto-discovery found no "
+                "audio file alongside %s "
+                "(tried .flac/.wav/.aiff/.aif/.m4a/.mp3/.ogg). "
+                "Pass --audio <path> explicitly." % cuefile
+            )
+        audio = discovered
+        print("auto-discovered audio: %s" % audio, file=sys.stderr)
 
     # Read the existing cue file if it exists; treat absence as "empty
     # input" so the tool can also do first-time enrichment of a track
@@ -178,6 +209,14 @@ def main(argv=None):
     if args.stdout:
         sys.stdout.write(new_content)
         return
+
+    # Make a .bak backup before rewriting so a corrupted run can't
+    # eat the operator's hand-edits. No-op if the cue file doesn't
+    # exist yet (first-time enrichment); skip on --no-backup.
+    if not args.no_backup:
+        backup_path = cue_rewrite.make_backup(cuefile)
+        if backup_path is not None:
+            print("backup: %s" % backup_path, file=sys.stderr)
 
     # Write the cue file atomically.
     cuefile.parent.mkdir(parents=True, exist_ok=True)
