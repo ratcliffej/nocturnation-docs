@@ -193,6 +193,17 @@ class CueFile:
     analysis_version: int = 0
     analysis_tool: str = ""
 
+    # Epic 14 B7 authoring shortcuts:
+    #   palettes: name -> [(r, g, b), ...] colour sets declared via
+    #     @palette. Parser captures; expansion in body cue args is
+    #     deferred (would require per-FX colour-arg awareness).
+    #     Future tool support can resolve `:palette_name` references.
+    #   pending_during: collected during parse; resolved against
+    #     `sections` at the end of parse_cues() into real cues. Empty
+    #     after parse completes; only here for the parse-time pass.
+    palettes: dict = field(default_factory=dict)
+    pending_during: list = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -248,24 +259,73 @@ def _parse_int(token: str, line_no: int, what: str = "integer") -> int:
     return int(token)
 
 
+def _parse_hex_colour(token: str):
+    """Parse '#RRGGBB' (or 'RRGGBB') into an (r, g, b) tuple.
+
+    Returns None on malformed input - palette declarations are
+    forgiving (one typo shouldn't break the file; the broken entry
+    just doesn't make it into the palette). Used by the @palette
+    directive handler.
+    """
+    if not token:
+        return None
+    s = token[1:] if token.startswith("#") else token
+    if len(s) != 6:
+        return None
+    try:
+        r = int(s[0:2], 16)
+        g = int(s[2:4], 16)
+        b = int(s[4:6], 16)
+        return (r, g, b)
+    except ValueError:
+        return None
+
+
 def _strip_comment(line: str) -> str:
     """Drop everything from the first comment-starting '#'.
 
-    A '#' counts as a comment marker only when:
-      * It's the first character on the line (after any leading
-        whitespace via the caller's .strip()), OR
-      * It's preceded by whitespace (so '... # seed' style trailing
-        comments on cue lines are stripped).
+    A '#' counts as a comment marker when EITHER:
+      * It's the first non-whitespace character on the line, OR
+      * It's mid-line AND preceded by whitespace AND followed by
+        whitespace (or end-of-line).
 
-    A '#' embedded in a token is treated as a literal character.
-    This is what makes 'A#' / 'C#' / 'F#' parse correctly as sharp
-    key names in @key directives, and what would let '#ff8800'
-    survive as a hex colour kwarg if anyone ever uses them.
+    Otherwise '#' is treated as a literal character (key names like
+    'A#', hex colour values like '#FF0000', kwargs like 'colour=#F8').
+
+    Stripped (treated as comments):
+      # foo                  start-of-line # then space
+      #foo                   start-of-line # then non-space (matches
+                              the `#00:45 cue_line_here` "comment out"
+                              authoring convention)
+      ... # seed             mid-line # surrounded by whitespace
+      #                      lone # at start of line
+
+    Preserved (treated as literal):
+      A#                     mid-line # preceded by non-whitespace
+      @palette x #FF0000     mid-line # NOT followed by whitespace
+      colour=#FF8800         neither neighbouring char is whitespace
     """
+    n = len(line)
+    # Find the index of the first non-whitespace character. -1 if the
+    # line is entirely whitespace.
+    first_non_ws = -1
+    for j, c in enumerate(line):
+        if not c.isspace():
+            first_non_ws = j
+            break
+
     for i, ch in enumerate(line):
         if ch != "#":
             continue
-        if i == 0 or line[i - 1].isspace():
+        # Case 1: # is the first non-whitespace char of the line.
+        # Strip from here - matches the `#00:45 ...` "comment-out a
+        # cue line" convention used throughout existing files.
+        if i == first_non_ws:
+            return line[:i]
+        # Case 2: mid-line # bracketed by whitespace.
+        prev_ws = line[i - 1].isspace()
+        next_ws = (i + 1 >= n) or line[i + 1].isspace()
+        if prev_ws and next_ws:
             return line[:i]
     return line
 
@@ -353,6 +413,12 @@ _KNOWN_DIRECTIVES = (
     # the orchestrator doesn't yet act on them at runtime.
     "@time_sig", "@key", "@mode", "@duration", "@section",
     "@analysis_synced", "@analysis_version", "@analysis_tool",
+    # Epic 14 B7-rest authoring shortcuts.
+    # @during expands to a real cue at parse-end (deferred until all
+    # @section directives have been seen). @palette captures named
+    # colour lists but doesn't yet auto-expand references in body
+    # cue args (deferred to a future per-FX colour-arg pass).
+    "@during", "@palette",
 )
 _FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
@@ -474,6 +540,58 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
             file.analysis_version = 0
     elif directive == "@analysis_tool":
         file.analysis_tool = tokens[1] if len(tokens) >= 2 else ""
+    elif directive == "@during":
+        # @during <section_name> <fx_kind> [args...]
+        # Stored for post-parse resolution because the @section
+        # directive defining the named section may appear later in
+        # the file. Resolved in parse_cues() after all directives
+        # have been collected.
+        if len(tokens) < 3:
+            raise CueParseError(
+                "@during needs at least a section name and FX name",
+                line_no,
+            )
+        section_name = tokens[1]
+        fx_name      = tokens[2]
+        # Validate the FX name immediately so authoring-time typos
+        # surface on parse. Param parsing also happens now (the
+        # parsed FX class is required); the cue object is built at
+        # resolution time when we know the section's start_ms.
+        fx_id  = _resolve_fx_by_name(fx_name, line_no, registry)
+        fx_cls = registry.get(fx_id)
+        positional = tokens[3:]
+        params_u8, params_raw = _build_params_tuple(fx_cls, positional, line_no)
+        file.pending_during.append({
+            "section_name": section_name,
+            "fx_id":        fx_id,
+            "params":       params_u8,
+            "params_raw":   params_raw,
+            "line_no":      line_no,
+        })
+    elif directive == "@palette":
+        # @palette <name> <hex>[,<hex>...]
+        # Stores name -> [(r, g, b), ...] in file.palettes. Multiple
+        # @palette directives with the same name overwrite (last
+        # wins). Hex values must be #RRGGBB; malformed entries skip
+        # silently to avoid breaking the file over a typo.
+        if len(tokens) < 3:
+            raise CueParseError(
+                "@palette needs a name and at least one #RRGGBB colour",
+                line_no,
+            )
+        name = tokens[1]
+        # Join all remaining tokens, split on commas; tolerates
+        # `@palette stage_d #ff0000,#ff8800` AND
+        # `@palette stage_d #ff0000, #ff8800` (whitespace between
+        # commas).
+        joined = ",".join(tokens[2:])
+        colours = []
+        for raw in joined.split(","):
+            colour = _parse_hex_colour(raw.strip())
+            if colour is not None:
+                colours.append(colour)
+        if colours:
+            file.palettes[name] = colours
 
 
 def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
@@ -582,6 +700,38 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
             _parse_directive(tokens, raw_line_no, file, registry)
         else:
             file.cues.append(_parse_cue(tokens, raw_line_no, registry))
+
+    # Resolve `@during <section_name> <fx> ...` directives now that
+    # all @section directives have been collected. For each, find
+    # the section by name; emit a cue at the section's start_ms.
+    # Unknown section names print a warning to stderr (parsing
+    # continues - one typo shouldn't kill the rest of the show).
+    if file.pending_during:
+        sections_by_name = {s["name"]: s for s in file.sections}
+        for p in file.pending_during:
+            sec = sections_by_name.get(p["section_name"])
+            if sec is None:
+                import sys
+                print(
+                    "warning: @during line %d references unknown section "
+                    "%r (known: %s)" % (
+                        p["line_no"], p["section_name"],
+                        ", ".join(sorted(sections_by_name.keys())) or "(none)",
+                    ),
+                    file=sys.stderr,
+                )
+                continue
+            file.cues.append(Cue(
+                kind="fx",
+                time_ms=sec["start_ms"],
+                fx_id=p["fx_id"],
+                params=p["params"],
+                params_raw=p["params_raw"],
+                line_no=p["line_no"],
+            ))
+        # Clear pending_during after resolution so the field reflects
+        # the post-parse state ("nothing pending").
+        file.pending_during = []
 
     # Apply the file-level offset to every cue and lyric. Doing it
     # post-parse means @offset can sit ANYWHERE in the file (header

@@ -174,6 +174,37 @@ Reserved for future FX cue extensions like `@during <section_name> <fx>` (Epic 1
 @analysis_tool librosa
 ```
 
+### `@during <section_name> <fx_kind> [args...]`
+**Optional. New in Epic 14 (B7).** Expands at parse time into a real cue at the named section's `start_ms`. Lets the author think in sections rather than timestamps. The referenced section must be declared via `@section` somewhere in the same file; ordering doesn't matter (resolution happens after all directives are parsed).
+
+```
+@section verse1   0:11.50  0:35.00
+@section chorus1  0:35.00  0:55.70
+
+@during verse1   quiet_wash 80 40 20
+@during chorus1  sparkle_on_beat 255 100 50 80 0
+```
+
+The above is equivalent to writing:
+```
+00:11.50  quiet_wash 80 40 20
+00:35.00  sparkle_on_beat 255 100 50 80 0
+```
+
+Multiple `@during` directives can target the same section — they all expand. Unknown section names emit a warning to stderr but don't fail the parse (so a typo doesn't kill the whole show).
+
+Doesn't auto-cancel at the section's `end_ms` — the FX runs until the next cue replaces it (just like any other cue). Add an explicit `stop` cue or another `@during` if you want a hard cutoff.
+
+### `@palette <name> <#RRGGBB>[,<#RRGGBB>...]`
+**Optional. New in Epic 14 (B7).** Declares a named colour palette. Captured into `CueFile.palettes` for reference; **no automatic expansion in body cue arguments yet** (deferred to a future per-FX colour-arg pass). Useful for documenting brand palettes per stage / artist alongside the actual FX cues:
+
+```
+@palette stage_d   #FF0000,#FF8800,#FFFF00
+@palette artist_x  #00AAFF, #0044FF, #8800FF
+```
+
+Spaces after the comma separators are tolerated. The leading `#` on each hex value is optional (`FF0000` works the same as `#FF0000`). Malformed entries are silently dropped (one typo doesn't break the palette). Last `@palette` with the same name wins on redefinition.
+
 ---
 
 ## Cue-line kinds

@@ -637,3 +637,188 @@ class TestShippedCueFiles:
                 "%s line %d references unregistered fx_id %d"
                 % (path.name, c.line_no, c.fx_id)
             )
+
+
+# ---------------------------------------------------------------------------
+# Epic 14 B7-rest: @during + @palette directives
+# ---------------------------------------------------------------------------
+
+
+class TestDuringDirective:
+    """`@during <section_name> <fx> [args...]` expands at parse time
+    into a cue at the named section's start_ms."""
+
+    def _parse(self, text):
+        return parse_cues(text, registry=fx_registry)
+
+    def test_during_expands_to_cue_at_section_start(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section verse1 0:11.50 0:35.00\n"
+            "@during verse1 quiet_wash 200 60 130\n"
+        )
+        f = self._parse(text)
+        assert len(f.cues) == 1
+        assert f.cues[0].time_ms == 11_500
+        assert f.cues[0].kind == "fx"
+        # FX is quiet_wash (id 1 in the canonical registry).
+        assert f.cues[0].fx_id == 1
+        # Pending list cleared after resolution.
+        assert f.pending_during == []
+
+    def test_during_resolves_when_directive_appears_before_section(self):
+        # @during BEFORE @section in file order - post-parse resolution
+        # means this still works.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@during chorus1 sparkle_on_beat 255 100 50 80 0\n"
+            "@section chorus1 0:35.00 0:55.70\n"
+        )
+        f = self._parse(text)
+        assert len(f.cues) == 1
+        assert f.cues[0].time_ms == 35_000
+
+    def test_during_unknown_section_warns_but_continues(self, capsys):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section verse1 0:00 0:30\n"
+            "@during chorus1 quiet_wash 200 60 130\n"   # typo / no such section
+        )
+        f = self._parse(text)
+        # No cue emitted for the unknown section.
+        assert f.cues == []
+        # Warning went to stderr.
+        err = capsys.readouterr().err
+        assert "chorus1" in err
+        assert "verse1" in err   # known sections listed for the operator
+
+    def test_multiple_during_per_section(self):
+        # Multiple @during directives all expand. Two FX at the same
+        # time_ms is fine - the scheduler walks them in order; the
+        # later one wins per the runner's "most recent FX" policy.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section verse1 0:11.50 0:35.00\n"
+            "@during verse1 quiet_wash 200 60 130\n"
+            "@during verse1 sparkle_on_beat 100 200 50 70 0\n"
+        )
+        f = self._parse(text)
+        assert len(f.cues) == 2
+        assert all(c.time_ms == 11_500 for c in f.cues)
+
+    def test_during_too_few_tokens_raises(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section verse1 0:00 0:30\n"
+            "@during verse1\n"   # missing FX name
+        )
+        with pytest.raises(Exception):
+            self._parse(text)
+
+    def test_during_unknown_fx_raises(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@section verse1 0:00 0:30\n"
+            "@during verse1 not_an_fx 1 2 3\n"
+        )
+        with pytest.raises(Exception):
+            self._parse(text)
+
+
+class TestPaletteDirective:
+    """`@palette <name> #RRGGBB,#RRGGBB,...` captures named colour
+    lists in `file.palettes`. No automatic expansion in body cues
+    yet (deferred); just the data capture is tested here."""
+
+    def _parse(self, text):
+        return parse_cues(text, registry=fx_registry)
+
+    def test_simple_palette(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d #FF0000,#FF8800,#FFFF00\n"
+        )
+        f = self._parse(text)
+        assert "stage_d" in f.palettes
+        assert f.palettes["stage_d"] == [
+            (0xFF, 0x00, 0x00),
+            (0xFF, 0x88, 0x00),
+            (0xFF, 0xFF, 0x00),
+        ]
+
+    def test_palette_with_spaces_after_commas(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d #FF0000, #FF8800, #FFFF00\n"
+        )
+        f = self._parse(text)
+        assert f.palettes["stage_d"] == [
+            (0xFF, 0x00, 0x00),
+            (0xFF, 0x88, 0x00),
+            (0xFF, 0xFF, 0x00),
+        ]
+
+    def test_palette_without_hash_prefix(self):
+        # `RRGGBB` (no leading #) is tolerated.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d FF0000,FF8800\n"
+        )
+        f = self._parse(text)
+        assert f.palettes["stage_d"] == [
+            (0xFF, 0x00, 0x00),
+            (0xFF, 0x88, 0x00),
+        ]
+
+    def test_palette_with_garbled_entries_skipped(self):
+        # One bad entry doesn't kill the palette - just that entry
+        # gets dropped.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d #FF0000,notahex,#FFFF00\n"
+        )
+        f = self._parse(text)
+        # 'notahex' filtered out.
+        assert f.palettes["stage_d"] == [
+            (0xFF, 0x00, 0x00),
+            (0xFF, 0xFF, 0x00),
+        ]
+
+    def test_palette_redefinition_overwrites(self):
+        # Last @palette with the same name wins.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d #FF0000\n"
+            "@palette stage_d #00FF00,#0000FF\n"
+        )
+        f = self._parse(text)
+        assert f.palettes["stage_d"] == [
+            (0x00, 0xFF, 0x00),
+            (0x00, 0x00, 0xFF),
+        ]
+
+    def test_multiple_palettes(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d #FF0000\n"
+            "@palette artist_x #00FF00\n"
+        )
+        f = self._parse(text)
+        assert set(f.palettes.keys()) == {"stage_d", "artist_x"}
+
+    def test_palette_too_few_tokens_raises(self):
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette\n"   # missing name AND colours
+        )
+        with pytest.raises(Exception):
+            self._parse(text)
+
+    def test_palette_only_garbled_entries_drops_the_palette(self):
+        # If NONE of the entries parse, the palette name isn't stored.
+        text = (
+            "@artist X\n@title Y\n@bpm 178\n"
+            "@palette stage_d notahex,alsobad\n"
+        )
+        f = self._parse(text)
+        assert "stage_d" not in f.palettes
