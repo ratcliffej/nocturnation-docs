@@ -349,9 +349,25 @@ encoder.
 
 ## Lyric anchors
 
-A comment line starting with a timestamp - the format
-`cues_from_lyrics.py` emits - is lifted out of the comment stream
-and surfaced in `--debug` mode as the song crosses each anchor::
+There are two ways lyrics show up in a cue file:
+
+**(Default, post-Epic-14)** — `cues_from_lyrics.py` emits real
+`BodyText:` cues which are dispatched as TEXT_DISPLAY frames to
+any Lume with `Capability::DisplayText` (StickC LCD + Tildagon
+LCD). Operators see the lyrics scroll on the badge as the song
+plays:
+
+```text
+00:13.40  BodyText: When you try your best
+00:13.50  sparkle_on_beat 80 200 200 100
+00:20.20  BodyText: But you don't succeed
+```
+
+**(Legacy, opt-in via `--comment-anchors`)** — Pre-Epic-13
+behaviour. A comment line starting with a timestamp is lifted
+from the comment stream and surfaced **only in `--debug`** mode
+as the song crosses each anchor. Useful as authoring scaffolding
+if you don't want lyrics displayed on the Lumes:
 
 ```text
 # 00:13.40  When you try your best
@@ -387,7 +403,10 @@ section directives — plus optional beat-snapping of existing cue
 timestamps + a first-pass FX seed:
 
 ```sh
-# Step 2: tempo / sections / key / mode from librosa
+# Step 2: tempo / sections / key / mode from librosa.
+# --audio is optional - if you've put the audio file alongside the
+# .cues file (same basename, see priority order below), it'll be
+# auto-discovered.
 Docs/tools/scripts/audio_enrich_cues.py \
     Docs/songs/coldplay-fix-you.cues \
     --audio /path/to/coldplay-fix-you.flac \
@@ -399,6 +418,26 @@ This adds new directives to the cue file (`@bpm`, `@time_sig`,
 optional `# seed`-tagged FX cues at each section boundary. Hand-
 edited body cues are preserved verbatim across re-runs; renamed
 sections survive boundary-overlap matching.
+
+**Flags:**
+
+| Flag | What it does |
+|---|---|
+| `--snap` | Beat-snap existing cue timestamps to the nearest librosa-detected beat (±150 ms window). |
+| `--seed` | Emit `# seed`-tagged starter FX cues at each section boundary, based on the section's key + mode. |
+| `--update` | Idempotent re-run mode — re-rewrites the header with fresh analysis even if `@analysis_synced` is up to date. Use when you've reauthored sections or want to refresh tempo / loudness after a track replacement. |
+| `--no-backup` | Suppresses the `<name>.cues.bak` rotation. Default is to write a `.bak` before every rewrite (cheap; one file deep). |
+| `--stdout` | Prints the rewritten cue file to stdout instead of overwriting the source file. Useful for diff'ing changes before committing them. |
+| `--no-sidecar` | Skips writing `<name>.cues.analysis.json`. Default behaviour is to write this gitignored sidecar so the analysis can be cached across re-runs without re-loading the audio file. |
+| `--audio <path>` | Explicit audio-file path. Optional — see auto-discovery below. |
+
+**Audio-file auto-discovery.** If you omit `--audio`, the tool looks
+for a sibling file next to the `.cues` file (same basename) in this
+priority order: `.flac` → `.wav` → `.aiff` → `.aif` → `.m4a` →
+`.mp3` → `.ogg`. So `Docs/songs/coldplay-fix-you.cues` will pick up
+`Docs/songs/coldplay-fix-you.flac` if it exists, falling back to
+`.wav`, `.aiff`, ... in turn. The audio file itself is gitignored;
+keep it locally to your authoring machine.
 
 The new section-based directives let the author write FX intent
 per-section instead of per-timestamp:

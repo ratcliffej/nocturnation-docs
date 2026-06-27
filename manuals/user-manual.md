@@ -236,7 +236,20 @@ The strip responds to the same wash and pulse cues as every other Lume in the fl
 - `12` - groups of 12 LEDs flash together as a unit (a Tildagon-ring-sized block on a longer strip).
 - A group size equal to the chain length - the whole strip flashes or stays dark as one unit (PixMob-bracelet style).
 
-Default group size is 12. Default brightness is **1 percent** — deliberately conservative so a fresh out-of-box device cannot brown out on any power source we ship (battery, USB-CDC laptop, wall charger), regardless of which mode (Pulse / Whiteout test, raw-RGB white, music show) the operator boots into. A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws ~60 mA per pixel = 1.8 A at 100 % brightness, far beyond any reasonable USB or battery supply; 1 percent keeps peak draw under ~20 mA on a 30-pixel chain. The operator dials up via Config > LED Strip when a heavier supply is available. The four levels are tuned for typical power sources: **50 %** for wall-powered Sticks (DMX bridge / stage rig), **25 %** for USB-CDC laptop or healthy battery, **10 %** any-supply safe, **1 %** ambient hint / fresh-device default. 100 percent was retired 2026-06-23 after bench-confirmed brownout reboots; the 1 percent default was set 2026-06-24 after Pulse / Whiteout tests showed brownouts at 10 percent (root cause: the strip render path ignored the persisted brightness in every mode except Lume — now centralised in `DAL::apply_persisted_strip_settings()` so every mode honours the Config-menu cap).
+Default group size is 12. Default brightness is **1 percent** — deliberately conservative so a fresh out-of-box device cannot brown out on any power source we ship (battery, USB-CDC laptop, wall charger), regardless of which mode (Pulse / Whiteout test, raw-RGB white, music show) the operator boots into. A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws ~60 mA per pixel = 1.8 A at 100 % brightness, far beyond any reasonable USB or battery supply; 1 percent keeps peak draw under ~20 mA on a 30-pixel chain.
+
+The operator dials up via Config > LED Strip when a heavier supply is available. The four levels are tuned for typical power sources:
+
+| Brightness | Suitable for |
+|---|---|
+| **50 %** | Wall-powered Sticks (DMX bridge / stage rig) |
+| **25 %** | USB-CDC laptop or healthy battery |
+| **10 %** | Any-supply safe |
+| **1 %** | Ambient hint / fresh-device default |
+
+100 percent was retired 2026-06-23 after bench-confirmed brownout reboots.
+
+**Brightness applies in every mode**: the strip honours the persisted Config-menu cap whether the Stick is running a Lume render, Test patterns, Director output, or the DMX bridge. Prior to 2026-06-24 the brightness setting was only consulted by the Lume render path, so Test mode patterns at full white could brown out a Stick even with the Config menu set to 10 %. Now centralised in `DAL::apply_persisted_strip_settings()`; every mode honours the cap.
 
 **Wiring**: the strip plugs into the Grove port via its bundled HY2.0-4P pigtail. Per-host data-line GPIOs are:
 
@@ -436,6 +449,17 @@ Some legacy keys are migrated on first boot after a firmware upgrade. The `slv_i
 
 When two or more NocturNation Directors broadcast on the same channel (typical at a festival with parallel stages on channel 11), each Director is identified by a unique one-byte source id in the Performance range `0x40..0xFE`. The id is set per device via [Connectivity > ESP-NOW > DirID](#43-connectivity); it's random on first install, sticky across reboots, and operator-settable to a specific value.
 
+**Two source-id ranges exist** to keep planned-event traffic and casual / drop-in traffic apart at the wire level:
+
+| Range | Channel | Use case | Lock prefix |
+|---|---|---|---|
+| **Performance** `0x40..0xFE` | 11 (planned-event channel) | Booked stages, ticketed events, anywhere you want the Director's id to be a stable handle for content tagging (artist logos, stage-keyed lyrics). | `P:nn` |
+| **Community** `0x01..0x3F` | 1 / 6 (pop-up channel) | Drop-in events, personal / friend gatherings, anywhere a Lume might wander between unrelated Directors and you don't want a random Performance Director to take over the bracelet. | `C:nn` |
+
+A Lume **only locks** to source ids that match its channel's range: on channel 11 it locks to Performance ids (`0x40..0xFE`); on channel 1 / 6 it locks to Community ids (`0x01..0x3F`). A Community Director accidentally broadcasting on channel 11 is dropped at the lock stage (and vice versa). This makes the channel choice itself a deployment-policy lever: setting channel 11 keeps your fleet away from pop-up traffic; channel 1 / 6 keeps your bracelets away from a Performance Director two stages over.
+
+The source-id `0xFF` (broadcast / wildcard) is reserved and **never** lockable. A Lume that sees `0xFF` in a frame's source field drops the frame; only identified Directors are admissible peers.
+
 **How the partitioning works:**
 
 - Every frame a Director broadcasts carries its source id in the header.
@@ -527,11 +551,18 @@ The FFT-driven show from Epic 4.7. Maps spectral centroid to hue (warm to cool a
 
 The Dynamic show's `groups` property is the most useful setting to know about: leave it at 1 for ordinary deployments where bracelet groups have not been controlled; raise it to 3 if you have manually distributed bracelets across groups 1, 2, and 3 and want to see the kick-snare-hihat split.
 
+**Conductor Show v1 (Tildagon-side)**. The Tildagon badge can act as a lightweight Director in its own right, running the operator-driven **Conductor Show**: an IMU-tap input surface where the wearer taps the badge to fire pulses out to the fleet. No microphone, no audio analysis — the operator's hand IS the beat detector. Useful as a third-act / interactive segment where you want the audience-conductor to drive the lights directly. Lives on the Tildagon firmware (v3), not on the Stick. Co-exists with a Stick Director on a different channel; a Lume locks to whichever Director it sees first.
+
 ### 5.4 Lume mode
 
 The Lume does very little. It listens on its configured channel (or auto-scans), accepts light commands whose target class and group match its configured filter, and fires them through its local infra-red transmitter. The screen shows a small status pip (solid when receiving, hollow when idle) and a sequence-loss signal-quality strip across the top. If no traffic arrives for three seconds, the strip clears and the screen reads NO SIGNAL.
 
-The Lume does not improvise on Director loss. It does not promote itself to Director. It does not run any audio analyser locally.
+The Lume does not promote itself to Director on Director loss, and does not run any audio analyser locally — show authorship stays with the laptop. But it does synthesise a **signal-loss fallback wash** so the bracelets and strips don't go dark mid-event:
+
+- **10 s of silence** → the Lume locally emits a muted blue → purple cycle (slow, low intensity). Visible cue to the audience that the Director's gone away, without breaking the visual.
+- **40 s of silence** → fades to black over a few seconds. After that the Lume sits dark until traffic resumes.
+
+The fallback is a locally-synthesised `LIGHT_WASH` frame, so it routes through the same render path as Director-issued washes. As soon as a real frame arrives from a Director, the fallback drops and live rendering resumes immediately (no transition delay).
 
 ### 5.5 Test mode
 
@@ -582,6 +613,8 @@ The Lume has gone three seconds with no traffic. Causes, in rough order of likel
 2. **Channel mismatch**: Director is on channel 1, Lume is locked to channel 11 (or vice versa). Either set both to the same channel, or set the Lume to 0 (auto-scan).
 3. **Director is very quiet**: Director only broadcasts on beats, and heartbeats are at 1 Hz with a skip-if-recent rule. A silent room with no detected beats and no recent fires can briefly trip the NO SIGNAL threshold; this is benign and resolves as soon as music plays.
 4. **Radio range exceeded**: try moving the Lume closer. If the Lume starts working at half the distance, you have a range issue. Solutions: orient the Lume for a clearer line of sight to the Director; enable `Lume Repeat` on an intermediate Lume; reduce concrete walls in the path.
+
+**Note on the signal-loss fallback wash**: after about 10 s of silence the Lume **stops showing NO SIGNAL on its strips and starts emitting a muted blue/purple cycle** locally (see §5.4). NO SIGNAL still reads on the Stick's LCD as a diagnostic, but the strips + bracelets light up — that's by design (the audience never sees dead hardware mid-event). Don't mistake the blue/purple cycle for a working Director; check the LCD pip + signal-quality strip first.
 
 ### 6.3 Wrong show running
 
