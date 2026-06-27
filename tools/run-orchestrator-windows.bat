@@ -1,9 +1,11 @@
 @echo off
-REM NocturNation Art-Net to Enttec Pro shim - Windows wrapper.
+REM NocturNation now-playing orchestrator - Windows wrapper.
 REM
-REM First run: installs pyserial + rich into a local venv under tools\.venv.
-REM Subsequent runs: just activates the venv and starts the shim.
-REM Forwards all CLI args to the shim.
+REM First run: installs pyserial + rich + winsdk into a local venv under
+REM tools\.venv (shared with the Art-Net shim wrapper, run-windows.bat,
+REM with winsdk added for SMTC now-playing access).
+REM Subsequent runs: activates the venv and starts the orchestrator.
+REM Forwards all CLI args to the orchestrator.
 REM
 REM Requires Python 3.9+ on PATH. Install from python.org if absent (tick
 REM "Add Python to PATH" during installer).
@@ -27,11 +29,12 @@ if exist "%VENV%" if not exist "%VENV%\Scripts\python.exe" (
 )
 
 if not exist "%VENV%" (
-    echo Creating local venv at tools\.venv ^(one-off, ~10 seconds^).
+    echo Creating local venv at tools\.venv ^(one-off, ~15 seconds^).
     python -m venv "%VENV%"
     "%VENV%\Scripts\pip.exe" install --quiet --upgrade pip
     "%VENV%\Scripts\pip.exe" install --quiet -r "%HERE%requirements.txt"
+    "%VENV%\Scripts\pip.exe" install --quiet winsdk
     echo Venv ready.
 )
 
-"%VENV%\Scripts\python.exe" "%HERE%artnet-to-enttec-pro.py" %*
+"%VENV%\Scripts\python.exe" "%HERE%nowplaying-orchestrator.py" %*

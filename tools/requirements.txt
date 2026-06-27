@@ -1,2 +1,10 @@
 pyserial>=3.5
 rich>=13.0
+
+# Authoring-time only (Epic 14 B2): librosa for cue-file MIR enrichment
+# via `scripts/audio_enrich_cues.py`. The orchestrator does NOT need
+# librosa at showtime; it's used only to refresh cue file headers
+# offline from an audio file. Pillow ships with the same authoring
+# toolchain (Epic 13 image-template generator).
+librosa>=0.10
+Pillow>=10.0

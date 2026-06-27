@@ -1,0 +1,192 @@
+# Coldplay - Viva La Vida
+#
+# Epic 14.9 showcase. Demonstrates every shipped FX paired with the
+# new @palette / @during / bars-notation surface. Use this as a
+# learn-by-example reference; trim down to a real performance file
+# by deleting whatever doesn't suit the venue.
+#
+# Sections renamed from section1..section12 to musical labels. The
+# rewriter's boundary-overlap matching will preserve these renames
+# across future `audio_enrich_cues.py --update` runs.
+
+@artist     Coldplay
+@title      viva la vida
+@default_fx quiet_wash 20 40 80
+
+@bpm        140
+@time_sig   4
+@key        G#
+@mode       major
+@duration   4:03.27
+@analysis_synced  2026-06-26T23:59:32Z
+@analysis_version 1
+@analysis_tool    librosa
+
+# --- Palettes ---------------------------------------------------------
+# Declared once, referenced anywhere via @name[idx]. Edit a hex value
+# here and every cue that uses it shifts.
+
+# Coldplay's Viva-era stage palette: warm orange / amber / cool red.
+@palette warm     #C84020, #C8A030, #802010
+
+# Cool counter-palette for verses + bridges.
+@palette cool     #102060, #2050A0, #503080
+
+# Royal accent for the chorus drops.
+@palette royal    #A02060, #FFC840, #20A0C8
+
+# Single deep-purple for the bridge.
+@palette bridge   #501060
+
+# --- Sections (renamed from librosa defaults) -------------------------
+
+@section silence_in  0:00.00  0:01.18  tempo=139.7 loudness=-60.0
+@section intro       0:01.18  0:36.83  tempo=139.7 loudness=-16.6
+@section verse1      0:36.83  1:10.58  tempo=139.7 loudness=-15.2
+@section chorus1     1:10.58  1:37.80  tempo=139.7 loudness=-11.4
+@section verse2      1:37.80  2:04.19  tempo=139.7 loudness=-15.2
+@section chorus2     2:04.19  2:48.30  tempo=139.7 loudness=-11.6
+@section bridge      2:48.30  3:00.95  tempo=139.7 loudness=-16.9
+@section chorus3     3:00.95  3:38.06  tempo=139.7 loudness=-10.7
+@section outro_a     3:38.06  3:43.18  tempo=139.7 loudness=-15.6
+@section outro_b     3:43.18  3:56.37  tempo=139.7 loudness=-29.0
+@section fade        3:56.37  3:59.77  tempo=139.7 loudness=-45.6
+@section silence_out 3:59.77  4:03.27  tempo=139.7 loudness=-60.0
+
+0:01    HeaderText: Coldplay
+0:01    BodyText: Viva La Vida
+0:08    HeaderText: 
+0:08    BodyText: 
+
+0:12.95  BodyText: I used to rule the world
+0:16.83  BodyText: Seas would rise when I gave the word
+00:19.23 BodyText: Now in the morning, I sleep alone
+00:23.55 BodyText: Sweep the streets I used to own
+00:40.54 BodyText: I used to roll the dice
+0:44.69  BodyText: Feel the fear in my enemy's eyes
+0:47.73  BodyText: Listened as the crowd would sing
+0:51.63  BodyText: "Now the old king is dead, long live the king"
+0:54.66  BodyText: One minute I held the key
+0:58.57  BodyText: Next, the walls were closed on me
+1:01.16  BodyText: And I discovered that my castles stand
+1:05.53  BodyText: Upon pillars of salt and pillars of sand
+01:09.23 BodyText: I hear Jerusalem bells a-ringing
+01:13.11 BodyText: Roman cavalry choirs are singing
+01:16.57 BodyText: Be my mirror, my sword and shield
+01:19.69 BodyText: My missionaries in a foreign field
+1:23.36  BodyText: For some reason, I can't explain
+1:26.82  BodyText: Once you'd gone, there was never
+1:29.45  BodyText: Never an honest word
+1:33.36  BodyText: And that was when I ruled the world
+1:49.88  BodyText: It was a wicked and wild wind
+01:54.05 BodyText: Blew down the doors to let me in
+1:56.83  BodyText: Shattered windows and the sound of drums
+2:01.17  BodyText: People couldn't believe what I'd become
+2:04.22  BodyText: Revolutionaries wait
+2:08.14  BodyText: For my head on a silver plate
+02:10.58 BodyText: Just a puppet on a lonely string
+2:15.11  BodyText: Oh, who would ever want to be king?
+2:19.01  BodyText: I hear Jerusalem bells a-ringing
+2:22.45  BodyText: Roman cavalry choirs are singing
+2:25.91  BodyText: Be my mirror, my sword and shield
+2:29.43  BodyText: My missionaries in a foreign field
+2:32.94  BodyText: For some reason, I can't explain
+2:36.35  BodyText: I know Saint Peter won't call my name
+02:39.64 BodyText: Never an honest word
+02:42.71 BodyText: But that was when I ruled the world
+3:15.09  BodyText: Hear Jerusalem bells a-ringing
+3:18.10  BodyText: Roman cavalry choirs are singing
+3:21.54  BodyText: Be my mirror, my sword and shield
+3:25.09  BodyText: My missionaries in a foreign field
+3:28.57  BodyText: For some reason, I can't explain
+03:32.04 BodyText: I know Saint Peter won't call my name
+3:35.32  BodyText: Never an honest word
+3:38.38  BodyText: But that was when I ruled the world
+
+
+# =====================================================================
+# FX showcase (Epic 14.9). One representative cue per shipped FX,
+# with comments explaining what each one does + which Block 14.9
+# feature it demonstrates. Mix of @during (section-anchored) and
+# timestamp-driven cues so you can see both flows.
+# =====================================================================
+
+# --- intro --------------------------------------------------------- #
+# drift_wash with bars-notation cycle. Slowly cross-fades cool[0]
+# anchor A to cool[1] anchor B over 4 bars (= 4 * 4 * 60000/140 / 100
+# = ~69 = ~6.86 s). Setting the FX at section start = ambient bed
+# for the whole intro until verse1 replaces it.
+@during intro   drift_wash @cool[0] @cool[1] 4b
+
+# --- verse1 -------------------------------------------------------- #
+# Two FX stack at the section start (different channel surfaces, so
+# they coexist):
+#   quiet_wash     - low-intensity ambient bed
+#   pulse_per_bar  - one pulse per bar on group 0 (broadcast) for a
+#                    subtle "1, 2, 3, 4" downbeat anchor
+@during verse1  quiet_wash      @cool[0] 100 255 0
+@during verse1  pulse_per_bar   @warm[1] 100 4 0
+
+# --- chorus1 ------------------------------------------------------- #
+# wash_with_sparkle is the layered "wash A <-> wash B + sparkle on
+# top" FX. Single cue replaces both quiet_wash + sparkle_on_beat
+# pair. Bars notation on the cycle (= 2 bars = ~3.4 s).
+@during chorus1 wash_with_sparkle  @warm[0] @warm[1] 2b @royal[2] 80 0
+
+# --- verse2 -------------------------------------------------------- #
+# Second verse: drift between two cool tones, slower cycle (8 bars).
+# Forward-references chorus[0] for variation - palettes can be
+# mixed freely.
+@during verse2  drift_wash @cool[2] @warm[2] 8b
+
+# --- chorus2 ------------------------------------------------------- #
+# Bigger chorus: sparkle_on_beat at 100% probability (every beat
+# fires) for energy. Layered with quiet_wash underneath as a colour
+# bed. Group split: wash broadcast (group 0), sparkle restricted to
+# group 1 so a multi-zone fleet has tiered visual depth.
+@during chorus2 quiet_wash       @royal[1] 80 255 0
+@during chorus2 sparkle_on_beat  @royal[2] 100 1
+
+# Halfway through chorus2: group_cascade sweeps the warm[0] colour
+# across 3 Lume groups one after the other. Timestamped (not @during)
+# because section-start would clash with the sparkle bed above.
+2:25       group_cascade @warm[0] 100 3
+
+# --- bridge -------------------------------------------------------- #
+# Bridge: deep purple bed + a one-shot pulse on each lyric anchor.
+# Demonstrates timestamp cues for lyric-aligned hits + the pulse FX.
+# pulse args: r g b attack(1/10 s) sustain(1/10 s) decay(1/10 s) probability
+@during bridge  quiet_wash @bridge[0] 120 255 0
+2:48.30    pulse @royal[1] 0 2 5 100 0   # "Revolutionaries wait"
+2:54.30    pulse @royal[2] 0 2 5 100 0   # "Just a puppet on a lonely string"
+
+# --- chorus3 (the big one) ----------------------------------------- #
+# Build energy INTO the final chorus with linear_buildup over 4 bars
+# from start_master 64 to full master at probability 100%. The
+# --buildup flag is in seconds and is independent of the FX param
+# surface; here 7 s = roughly 4 bars at 140 BPM.
+2:55       linear_buildup @royal[1] 100 64 0 --buildup 7
+
+# Drop: strobe_burst for one bar (= ~1.71 s) at max rate. Used
+# sparingly - the 4 Hz cap on the FX prevents Harding-unsafe rates.
+3:00.95    strobe_burst 1b 255 0
+
+# Then the actual chorus3 bed: sparkle_on_beat at high prob.
+3:01.5     wash_with_sparkle @warm[0] @royal[0] 2b @royal[1] 100 0
+
+# Mid-chorus3: brief group_cascade accent on the lyric "Be my mirror"
+3:21.54    group_cascade @royal[2] 100 3
+
+# --- outro_a ------------------------------------------------------- #
+# Final wash on the closing line. quiet_wash with reduced intensity.
+@during outro_a  quiet_wash @warm[2] 60 200 0
+
+# --- outro_b ------------------------------------------------------- #
+# Fade out over 8 seconds. fade_to_black ramps the master from
+# current value to 0 over the --buildup window.
+3:43.18    fade_to_black 255 0 --buildup 8
+
+# --- silence_out --------------------------------------------------- #
+# Explicit blackout to end the song. `stop` is the parser alias for
+# blackout - writes 0 to every channel for one tick.
+3:59.77    stop

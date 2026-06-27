@@ -9,7 +9,7 @@ sync_direction: bidirectional
 
 # NocturNation HAL design
 
-This document defines the interface contract for the Hardware Abstraction Layer (HAL). Each supported host (M5StickC Plus2, Tildagon, generic ESP32 dev kits, future microcontrollers) provides one HAL backend that implements this contract. Layers above the HAL never call vendor SDKs directly.
+This document defines the interface contract for the Hardware Abstraction Layer (HAL). Each supported host (M5StickC Plus2, M5StickS3, M5Atom Lite, Tildagon, generic ESP32 dev kits, future microcontrollers) provides one HAL backend that implements this contract. Layers above the HAL never call vendor SDKs directly.
 
 The interface lands in Epic 2 of the architecture refactor. The first concrete backend - M5StickC Plus2 - lands in the same Epic. ESP-NOW interface stubs are defined here, but the StickC Plus2 backend does not declare the `esp-now` capability until Epic 4 ships the actual implementation.
 
@@ -41,6 +41,7 @@ enum class Capability : uint8_t {
     Buttons,    // discrete buttons with click/long-press semantics
     IMU,        // 3- or 6-axis accelerometer/gyro
     Battery,    // battery level + voltage + charge state
+    LedStrip,   // addressable one-wire LED strip (SK6812 / WS2812; Epic 12)
 };
 
 }
@@ -70,6 +71,7 @@ public:
     static class Buttons*  buttons();
     static class IMU*      imu();
     static class Battery*  battery();
+    static class LedStrip* led_strip();
 };
 }
 ```
@@ -314,6 +316,32 @@ public:
 };
 ```
 
+### 3.9 LedStrip (Epic 12)
+
+A flat, fixed-size pixel buffer pushed to a one-wire addressable LED strip (SK6812 / WS2812 family). The HAL exposes the strip as opaque pixel indices; pixel 0 is wherever the backend says pixel 0 is. On a host with both an onboard LED and a Grove-connected external strip (Atom Lite), the backend exposes them as one contiguous logical strip - onboard pixel first - so policy stays out of the driver.
+
+```cpp
+class LedStrip {
+public:
+    virtual ~LedStrip() = default;
+
+    virtual void begin() = 0;
+    virtual size_t pixel_count() const = 0;
+    virtual void set_pixel(size_t i, uint8_t r, uint8_t g, uint8_t b) = 0;
+    virtual void clear() = 0;
+    virtual void show() = 0;
+
+    // Resize the underlying pixel buffer at runtime. Backends that
+    // wrap Adafruit_NeoPixel forward to NeoPixel::updateLength() so
+    // show() time scales with the actual configured length, not the
+    // construction-time max. Default no-op for backends without
+    // dynamic length.
+    virtual void set_pixel_count(size_t /*n*/) {}
+};
+```
+
+The wash and pulse rendering policy (drift envelope, per-pixel CHANCE rolls, device-brightness scalar, signal-state pixel-0 overlay) all live in `LedStripDriver` at the DAL layer; the HAL surface stays minimal.
+
 ---
 
 ## 4. Initialisation lifecycle
@@ -351,21 +379,39 @@ This means orchestration must not block in its frame handler. Heavy work (e.g. e
 
 ## 6. StickC Plus2 backend specifics
 
-The Plus2 backend declares: `Mic`, `IRTx`, `Display`, `Buttons`, `IMU`, `Battery`.
-The Plus2 backend does **not** declare in Epic 2: `IRRx` (hardware exists but not used yet), `ESPNow` (Epic 4).
+The Plus2 backend declares: `Mic`, `IRTx`, `Display`, `Buttons`, `IMU`, `Battery`, `ESPNow`, `DmxInput`, `LedStrip`.
 
 Pin and peripheral assignments per the M5Stack Plus2 documentation. Backend constructor pins these; layers above never see GPIO numbers.
 
 | Capability | Implementation hint |
 | --- | --- |
 | `Mic` | PDM mic via I2S, 16 kHz / 512-sample window. FFT via `kosme/arduinoFFT` (already a project dep). Emits frames at ~31 Hz. |
-| `IRTx` | GPIO 19 (built-in IR LED) via `crankyoldgit/IRremoteESP8266`'s `IRsend::sendRaw`. |
-| `Display` | 1.14" 240×135 ST7789V2 via LovyanGFX (bundled with M5Unified). |
-| `Buttons` | `count() == 3`. Mapping: `Btn1` = front button (GPIO 37, the primary/main button you push to fire), `Btn2` = side button (GPIO 39), `Btn3` = power button (read via AXP/PEK chip). Backend does its own debounce. |
+| `IRTx` | GPIO 19 (built-in IR LED) via `crankyoldgit/IRremoteESP8266`'s `IRsend::sendRaw`. Optional second emitter on GPIO 26 via the same library. |
+| `Display` | 1.14" 240x135 ST7789V2 via LovyanGFX (bundled with M5Unified). |
+| `Buttons` | `count() == 2`. Mapping: `Btn1` = front button, `Btn2` = side button. The power button is owned by the AXP192 PMIC at hardware level and deliberately not surfaced (cross-host UI consistency with the S3, whose PMIC owns the equivalent button too). Backend does its own debounce. |
 | `IMU` | MPU6886 over I2C. |
 | `Battery` | AXP192 ADC for voltage; charge state from AXP status register. |
+| `ESPNow` | WiFi-radio broadcast/peer. begin() is NOT called from HAL::begin(); orchestration brings the radio up on entering a mode that needs it. |
+| `DmxInput` | USB-CDC at 460 800 baud; Enttec Pro framing. |
+| `LedStrip` | Grove-connected SK6812 / WS2812 strip on GPIO 32. Adafruit_NeoPixel-backed; runtime-resizable via `set_pixel_count()`. |
 
 The Plus2 backend may use M5Unified internally (it's already a dep, and saves boilerplate), but exposes nothing of M5Unified's API to layers above. The capability accessors return pointers to plain C++ objects; the abstraction is sealed at the HAL boundary.
+
+## 6a. M5StickS3 backend specifics
+
+The S3 backend declares the same set as the Plus2 with two differences: it adds `IRRx` (hardware exists and is wired through), and the `LedStrip` Grove pin is GPIO 9 instead of GPIO 32. The IR transmitter is on GPIO 46, and the second-emitter accessor returns `nullptr` (no external IR header).
+
+## 6b. M5Atom Lite backend specifics
+
+The Atom Lite is the lightest host the project supports. Backend declares only: `Buttons`, `LedStrip`, `ESPNow`. No display, no microphone, no IR, no IMU, no battery accessor (the optional 200 mAh base is read by USB-charge logic only).
+
+| Capability | Implementation hint |
+| --- | --- |
+| `Buttons` | `count() == 1`. One programmable button on GPIO 39, active-low. Software debounce + long-press timer in the backend. |
+| `LedStrip` | One contiguous logical strip: pixel 0 is the onboard SK6812 (GPIO 27), pixels 1..N are the Grove-connected external strip (GPIO 26). Both wrapped in separate Adafruit_NeoPixel instances; show() pushes onboard first, then Grove. |
+| `ESPNow` | Same generic Arduino-ESP32 + ESP-IDF calls as the StickC backends. WiFi STA, no AP connect, channel pinned per the Lume's preference. |
+
+The Atom is **Lume-only** by host capability set - no microphone means no beat detection, no IR transmitter means no PixMob driving. LumeMode is the only mode that runs end-to-end on it; the Director / Test / Config modes are unreachable because the Atom has no display to render their UI.
 
 ---
 

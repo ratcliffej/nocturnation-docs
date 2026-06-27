@@ -1,0 +1,768 @@
+# Music orchestrator guide
+
+The NocturNation **music orchestrator** is a laptop-side daemon that
+listens to whatever the operating system says is playing, looks up the
+track in a per-song `.cues` file, and emits DMX universe state to the
+NocturNation StickC for onward fanout to the Lume fleet. Each song
+gets its own choreography; the orchestrator follows the music timeline
+and fires FX cues at the right moments.
+
+It is the alternative to driving a NocturNation show from QLC+ by hand
+(see [`qlc-plus-beginners-guide.md`](qlc-plus-beginners-guide.md)). Both
+producers speak the same DMX surface to the StickC, so you can hand
+the show off between them mid-set if you want.
+
+## When to use which
+
+| You want to | Use |
+|---|---|
+| Programmed show synchronised to a specific playlist | Music orchestrator |
+| Live operator control with faders, dials, cue stacks | DMX/ArtNet/QLC+ (optional) |
+| Ambient wash for a venue, no audio | Either (both expose the same `quiet_wash` / `drift_wash` surface) |
+| One co-running, one as backup | Both - the orchestrator falls back to Art-Net producer mode if it sees the QLC+ shim already holding the USB port |
+
+## What it needs
+
+| Layer | Requirement |
+|---|---|
+| Audio source | Any application that registers with the host's media-key API. macOS: Apple Music, Spotify, browsers via Media Session, etc. |
+| Now-playing detection | macOS: `nowplaying-cli` (`brew install nowplaying-cli`). Windows: `pip install winsdk`. Linux: `pip install pydbus` plus the GObject runtime. |
+| Hardware | One StickC (Plus2 or S3) running in **DMX Bridge** mode, USB-connected. Lume devices on the same ESP-NOW channel. |
+
+## Quick start
+
+From a terminal in the repo root::
+
+```sh
+# macOS
+brew install nowplaying-cli
+./Docs/tools/run-orchestrator-macos.sh
+
+# Windows
+Docs\tools\run-orchestrator-windows.bat
+```
+
+The wrapper creates a local Python venv on first run, installs the
+dependencies, and exec's the orchestrator. Subsequent runs start
+immediately.
+
+Start a song in any audio app. The orchestrator's stdout shows the
+match path::
+
+```text
+orchestrator: started (songs_dir=.../songs, default_bpm=120, output=usb, debug=off)
+matcher: coldplay-fix-you -> coldplay-fix-you.cues
+```
+
+If no matching cue file exists, the matcher falls back to
+`_default.cues`, which ships with a soft blue wash.
+
+## File-naming convention
+
+The matcher slugifies the track's artist and title into a single
+hyphen-separated lower-case token and looks for a matching file in
+`Docs/songs/`. The transformation is unicode-fold, ASCII-strip,
+lower-case, runs of non-alphanumerics collapsed to `-`, leading and
+trailing `-` removed::
+
+| Now playing | Slug | File the matcher looks for |
+|---|---|---|
+| Coldplay - Fix You | `coldplay-fix-you` | `Docs/songs/coldplay-fix-you.cues` |
+| Sigur Rós - Hoppípolla | `sigur-ros-hoppipolla` | `Docs/songs/sigur-ros-hoppipolla.cues` |
+| AC/DC - T.N.T. | `ac-dc-t-n-t` | `Docs/songs/ac-dc-t-n-t.cues` |
+
+The debug log line shows the slug form directly, so you can copy it
+straight from the log to a new filename when programming a new song.
+
+`_default.cues` is the last-resort fallback when nothing else matches.
+
+### Per-genre fallback
+
+Between the per-track and global tiers, the matcher checks for a
+**genre-specific default**: `_default_<genre-slug>.cues`. The genre
+comes from the OS now-playing layer (Apple Music's library tags,
+Spotify's stream metadata, etc.) and is slugified the same way artist
+and title are.
+
+| Now playing | Genre | Lookup order |
+|---|---|---|
+| Coldplay - Fix You | Alternative | `coldplay-fix-you.cues` → `_default_alternative.cues` → `_default.cues` |
+| Unknown band - "Track" | Metal | `unknown-band-track.cues` → `_default_metal.cues` → `_default.cues` |
+| Some band - "Track" | (no genre tag) | `some-band-track.cues` → `_default.cues` |
+
+The per-track tier always wins so an explicitly programmed song
+overrides whatever genre the OS thinks it is. The per-genre tier lets
+you ship a handful of mood-by-genre defaults (`_default_metal.cues`
+with a purple wash + faster sparkle, `_default_ambient.cues` with a
+slow drift, etc.) and have new tracks pick the right mood
+automatically.
+
+Genre slugs use hyphens for multi-word genres: "Alternative Rock"
+becomes `alternative-rock`, file name `_default_alternative-rock.cues`.
+
+The `--debug` log line shows the genre in brackets so you can see
+what tier was hit::
+
+    [00:14.000] poll:  unknown-band-track [genre=Metal] (playing=yes)
+    matcher: unknown-band-track [genre=Metal] -> _default_metal.cues
+
+## Authoring a `.cues` file
+
+A cue file is one event per line, whitespace-separated, with `@`
+directives at the top and `#` comments anywhere. The full spec is in
+[`fx-library.md`](fx-library.md#cue-file-format); the short version::
+
+```text
+# Coldplay - Fix You
+@artist     Coldplay
+@title      Fix You
+@bpm        138
+@default_fx quiet_wash 20 40 80
+
+# --- Intro ---
+00:00     quiet_wash       20 40 80
+# "When you try your best..."
+00:13.40  sparkle_on_beat  80 200 200 100
+00:35.5   sparkle_on_beat  255 0 255 100
+
+# --- Build ---
+01:20     linear_buildup   255 0 0 100 64  --buildup 8
+
+# --- Drop ---
+01:28     strobe_burst     5 255
+01:30.250 sparkle_on_beat  255 255 255 100
+
+# --- Outro ---
+02:55     fade_to_black                       --buildup 4
+03:00     stop
+```
+
+Time supports `MM:SS`, `M:SS`, and `H:MM:SS`, optionally with one to
+three fractional-second digits (`MM:SS.x`, `MM:SS.xx`, `MM:SS.xxx`).
+At 120 BPM each beat is 500 ms, so use centisecond grain
+(`MM:SS.xx`) for beat-aligned cues - it also matches LRC lyric
+timestamps exactly.
+
+`stop` is a parser alias for the `blackout` FX: it writes zero to
+every output channel for one tick, which drives the Lume LIGHT_WASH
+to (0,0,0,intensity=0). Use it to reset the fleet to dark at song
+boundaries (before a fade-in, or at the end of a song). For a
+gradual fade-out, schedule `fade_to_black` before the `stop`.
+
+### Pulse envelope (1/10 s units)
+
+The `pulse` FX takes attack / sustain / decay in 1/10 second units.
+The StickC mapper quantises each to one of 8 discrete buckets the
+Lume firmware understands - so the actual rendered time is the
+*nearest* of:
+
+| Bucket | ms    |
+|--------|-------|
+| 0      | 0     |
+| 1      | 32    |
+| 2      | 96    |
+| 3      | 192   |
+| 4      | 480   |
+| 5      | 960   |
+| 6      | 2400  |
+| 7      | 3840  |
+
+A few example cue conversions:
+
+| You write | Equivalent ms | Bucket |
+|-----------|---------------|--------|
+| `0`       | 0             | T_0_MS |
+| `1`       | 100           | T_96_MS (96 ms, closest) |
+| `2`       | 200           | T_192_MS |
+| `5`       | 500           | T_480_MS |
+| `10`      | 1000          | T_960_MS |
+| `24`      | 2400          | T_2400_MS |
+| `38`      | 3800          | T_3840_MS |
+
+So `pulse 255 100 0 0 1 5 100` is "warm orange pulse: 0 ms attack
+(snap on), ~100 ms sustain, ~500 ms decay, 100% probability". For
+a sharp accent use small numbers (`0 1 2`); for a softer flare go
+longer (`2 5 10`).
+
+### Targeting device groups
+
+Every single-target FX takes an optional **last positional
+parameter** that selects which device group it writes to::
+
+    0       = broadcast (every Lume, regardless of group)  - default
+    1..9    = group N only
+
+So:
+
+```text
+00:00  quiet_wash       100 0 0           # red wash on everyone
+00:30  quiet_wash       0 0 255 0 0 3     # blue wash on group 3 ONLY
+00:30  sparkle_on_beat  255 255 255 100 5 # sparkle on group 5 ONLY
+01:00  stop                               # blackout the whole fleet
+```
+
+The group param is the LAST positional slot on every FX that writes
+a single block. Omit it and you get broadcast. `group_cascade` is
+the exception - it's multi-group by design and uses its own
+`num_groups` slot instead.
+
+This lets you score sections of a venue independently: e.g. a slow
+drift wash on group 1 (the back of the room) while group 2 (the
+front) is sparkling on the beat. Author two cues at the same time
+with different group params - both run in parallel because they
+write non-overlapping universe blocks.
+
+### Mid-track BPM changes
+
+Tracks with tempo changes use the `bpm` cue. Drop it on the
+timeline at the moment the tempo shifts; FX cues at or after that
+point pick up the new value::
+
+```text
+@bpm        90                 # file-level default
+
+00:00  quiet_wash       40 80 120
+00:30  bpm 120                  # tempo jump
+00:30  sparkle_on_beat  255 255 255 100   # picks up 120 BPM
+02:15  bpm 90                   # back to original
+02:15  sparkle_on_beat  255 0 0 100        # 90 BPM again
+```
+
+Same-time tie-break: `bpm` always fires before `fx` at the same
+timestamp, so the FX picks up the new tempo regardless of file
+order. Already-running FXes do NOT re-bind to the new value (they
+captured BPM at admission) - re-fire the FX with a fresh cue at the
+tempo change if you want it to switch.
+
+Backward seeks restore the pre-change BPM correctly: the scheduler
+re-walks the timeline from the start so the default ends up at
+whatever the most-recent `bpm` cue at-or-before the scrubbed
+position says.
+
+The `--debug` log shows BPM changes as a separate event class::
+
+    [00:30.000] bpm:   120
+    [00:30.000] cue:   sparkle_on_beat  255 255 255 255
+
+## Fixing sync drift between releases
+
+The same song can appear with different leading silence depending on
+which release you're listening to. A single may have no padding,
+the album version may have 1.5 seconds of room-tone before the
+audible content, a streaming-platform encode might add another half
+second on top. The OS reports `elapsedTime` from the *file* start,
+not from the audible content, so a `.cues` file authored against one
+release plays late or early on another.
+
+The `@offset` directive corrects this with a single number. It
+shifts every cue and lyric anchor in the file by the given amount,
+in seconds (fractional, signed)::
+
+```text
+# coldplay-fix-you.cues authored against the single (no padding).
+# The album release has ~1.2 s of leading silence; offset
+# compensates so every cue still lands on the audible beat.
+@artist     Coldplay
+@title      Fix You
+@bpm        138
+@offset     1.2                # delay everything by 1.2 s
+
+00:13.40  sparkle_on_beat  80 200 200 100
+00:35.5   sparkle_on_beat  255 0 255 100
+```
+
+Positive values delay (the usual case for album padding). Negative
+values pull cues forward (rare; useful if you ever authored against
+a longer intro than the release you're playing). Centisecond grain
+is enough for any musical purpose - one tick of `@offset 0.05` (50
+ms) is roughly the JND for tempo alignment.
+
+**Calibrating** at the bench:
+
+1. Start the orchestrator with `--debug` against the actual release
+   you'll play at the show.
+2. Watch the `cue:` and `lyric:` lines as you listen. If they're
+   firing N seconds before / after the audible event, set
+   `@offset` to that amount (sign matches whether you need to
+   delay or advance).
+3. Re-run. Cues should now land on the beat.
+
+The debug log shows the offset alongside the cue-file load so you
+can verify it parsed correctly::
+
+```text
+matcher: coldplay-fix-you [genre=Alternative] -> coldplay-fix-you.cues
+loaded: 8 cues, 27 lyric anchors, default_fx_id=1, default_bpm=138 offset=+1.20s
+```
+
+If you ever need a per-release set of files (you're doing a show
+that mixes single and album versions of the same track), use the
+slug naming to disambiguate: `coldplay-fix-you-single.cues` vs
+`coldplay-fix-you-album.cues`. The matcher slugifies whatever
+artist/title the source actually reports.
+
+## Available FX
+
+The current library is generated from the FX classes themselves; the
+authoritative listing lives in [`fx-library.md`](fx-library.md). At
+the time of writing:
+
+| ID | Cue name | Category | What it does |
+|---|---|---|---|
+| 1 | `quiet_wash` | ambient | Sustained single-colour wash. The default ambient bed. |
+| 2 | `drift_wash` | ambient | Two-colour wash that cycles A ↔ B over the cycle time (full RGB on both anchors). |
+| 11 | `sparkle_on_beat` | beat | Fires one pulse per beat at the supplied BPM. |
+| 12 | `pulse_per_bar` | beat | Fires one pulse every N beats (default 4 = one per bar). |
+| 13 | `group_cascade` | beat | Rotates a pulse around groups 1..N, one beat per group. |
+| 14 | `wash_with_sparkle` | beat | Layered drift wash + sparkle-on-beat in a single cue. |
+| 15 | `pulse` | accent | One-shot pulse for accenting specific moments. Attack / sustain / decay take 1/10 s units (quantised to pixmob::Time buckets). |
+| 21 | `linear_buildup` | buildup | Ramps Master and Pulse Probability over `buildup_s` seconds. |
+| 32 | `strobe_burst` | drop | Max strobe rate for a short window, then auto-finish. |
+| 41 | `fade_to_black` | transition | Ramps Master from start value to 0 over `buildup_s` seconds. |
+| 254 | `blackout` | transition | Writes zero to every output channel for one tick. The `stop` cue is an alias. |
+
+Each entry in [`fx-library.md`](fx-library.md) documents its
+parameters, ranges, and defaults.
+
+### Wash on PixMob bracelets is the Director's job, not ours
+
+The orchestrator is "high-level" - it writes wash channels into the
+DMX universe and lets the Director decide what to do with them per
+Lume class. As of Epic 11 (2026-06-18) the StickC's `PixMobIrBinding`
+renders the wash family natively over IR: a periodic `SingleColor`
+refresh at 3000 ms cadence holds the bracelet's colour continuously,
+`LIGHT_WASH_PULSE` maps to a `TwoColors` sparkle-plus-tail composite,
+and `LIGHT_WASH_END` cleanly stops the refresh stream. The encoding
+is documented in [`lume-capabilities-design.md`](lume-capabilities-design.md) §10.
+
+What this means for cue authoring: **you don't need to think about
+PixMob fleets**. The same `quiet_wash` / `drift_wash` / `wash_with_sparkle`
+cue lights both Tildagon Lumes and PixMob bracelets correctly.
+
+What this used to mean: an interim "orchestrator-side `pixmob_refresh.py`
+stopgap" briefly existed (mid-Epic-11) that fired periodic LIGHT_PULSE
+events from each wash FX. That was architecturally wrong - wash
+encoding decisions belong in the binding, not in the orchestrator
+- and has been removed. Cue files written against the stopgap don't
+need any changes; the same cues now route through the Director-side
+encoder.
+
+## Lyric anchors
+
+There are two ways lyrics show up in a cue file:
+
+**(Default, post-Epic-14)** — `cues_from_lyrics.py` emits real
+`BodyText:` cues which are dispatched as TEXT_DISPLAY frames to
+any Lume with `Capability::DisplayText` (StickC LCD + Tildagon
+LCD). Operators see the lyrics scroll on the badge as the song
+plays:
+
+```text
+00:13.40  BodyText: When you try your best
+00:13.50  sparkle_on_beat 80 200 200 100
+00:20.20  BodyText: But you don't succeed
+```
+
+**(Legacy, opt-in via `--comment-anchors`)** — Pre-Epic-13
+behaviour. A comment line starting with a timestamp is lifted
+from the comment stream and surfaced **only in `--debug`** mode
+as the song crosses each anchor. Useful as authoring scaffolding
+if you don't want lyrics displayed on the Lumes:
+
+```text
+# 00:13.40  When you try your best
+00:13.50 sparkle_on_beat 80 200 200 100
+# 00:20.20  But you don't succeed
+```
+
+Skeleton-generator placeholders (`# 00:30  TODO: cue here`) are
+silently dropped so they don't pollute the lyric stream.
+
+## Generating a starter file from lyrics
+
+For songs published on [lrclib.net](https://lrclib.net) (free, no
+auth), the orchestrator ships an authoring helper that pre-stamps a
+`.cues` skeleton with timed lyric anchors. As of Epic 14 (2026-06-27),
+lyrics emit as **real `BodyText:` cues** (centisecond precision,
+visible on Lume LCDs) rather than `#` comment anchors:
+
+```sh
+Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You"
+# -> writes Docs/songs/coldplay-fix-you.cues
+```
+
+Pass `--comment-anchors` to retain the pre-Epic-13 `# MM:SS  text`
+output if you'd rather hand-author the BodyText: cues yourself.
+
+## MIR enrichment + sectional authoring (Epic 14)
+
+`cues_from_lyrics.py` is **step 1** of a two-step authoring flow.
+**Step 2** runs `librosa` on the audio file and rewrites the cue
+file's header with tempo, key, mode, duration, and labelled
+section directives — plus optional beat-snapping of existing cue
+timestamps + a first-pass FX seed:
+
+```sh
+# Step 2: tempo / sections / key / mode from librosa.
+# --audio is optional - if you've put the audio file alongside the
+# .cues file (same basename, see priority order below), it'll be
+# auto-discovered.
+Docs/tools/scripts/audio_enrich_cues.py \
+    Docs/songs/coldplay-fix-you.cues \
+    --audio /path/to/coldplay-fix-you.flac \
+    --snap --seed
+```
+
+This adds new directives to the cue file (`@bpm`, `@time_sig`,
+`@key`, `@mode`, `@duration`, `@section`, `@analysis_*`) plus
+optional `# seed`-tagged FX cues at each section boundary. Hand-
+edited body cues are preserved verbatim across re-runs; renamed
+sections survive boundary-overlap matching.
+
+**Flags:**
+
+| Flag | What it does |
+|---|---|
+| `--snap` | Beat-snap existing cue timestamps to the nearest librosa-detected beat (±150 ms window). |
+| `--seed` | Emit `# seed`-tagged starter FX cues at each section boundary, based on the section's key + mode. |
+| `--update` | Idempotent re-run mode — re-rewrites the header with fresh analysis even if `@analysis_synced` is up to date. Use when you've reauthored sections or want to refresh tempo / loudness after a track replacement. |
+| `--no-backup` | Suppresses the `<name>.cues.bak` rotation. Default is to write a `.bak` before every rewrite (cheap; one file deep). |
+| `--stdout` | Prints the rewritten cue file to stdout instead of overwriting the source file. Useful for diff'ing changes before committing them. |
+| `--no-sidecar` | Skips writing `<name>.cues.analysis.json`. Default behaviour is to write this gitignored sidecar so the analysis can be cached across re-runs without re-loading the audio file. |
+| `--audio <path>` | Explicit audio-file path. Optional — see auto-discovery below. |
+
+**Audio-file auto-discovery.** If you omit `--audio`, the tool looks
+for a sibling file next to the `.cues` file (same basename) in this
+priority order: `.flac` → `.wav` → `.aiff` → `.aif` → `.m4a` →
+`.mp3` → `.ogg`. So `Docs/songs/coldplay-fix-you.cues` will pick up
+`Docs/songs/coldplay-fix-you.flac` if it exists, falling back to
+`.wav`, `.aiff`, ... in turn. The audio file itself is gitignored;
+keep it locally to your authoring machine.
+
+The new section-based directives let the author write FX intent
+per-section instead of per-timestamp:
+
+```
+@section verse1   0:11.50  0:35.00
+@section chorus1  0:35.00  0:55.70
+
+@palette stage_d   #FF0000, #FF8800, #FFFF00
+
+@during verse1   quiet_wash 80 40 20
+@during chorus1  sparkle_on_beat 255 100 50 80 0
+```
+
+For the full authoring workflow + `@offset` measurement procedure +
+audio-file acquisition guidance + common gotchas, see the dedicated
+**[cue-authoring guide](manuals/cue-authoring.md)**.
+
+For the canonical directive + cue-line reference (every directive,
+every FX command, every parameter), see the
+**[cue file schema](manuals/cue-file-schema.md)**.
+
+Install for step 2:
+
+```sh
+pip install librosa     # one-time
+brew install ffmpeg     # macOS; needed for MP3 / M4A decode
+```
+
+FLAC is the preferred MIR input (lossless = sharper beat /
+section detection); MP3 320 kbps works fine; Apple Music
+subscription downloads are FairPlay-DRM-encrypted and not usable
+(see cue-authoring guide for legal-acquisition options).
+
+## Authoring shortcuts (Epic 14.9)
+
+Three small directives + value notations make a hand-edited cue
+file much shorter once a track has been MIR-enriched. Quick
+reference; full spec in
+[`manuals/cue-file-schema.md`](manuals/cue-file-schema.md).
+
+**Named palettes + placeholders.** Declare a colour set once;
+reference by `@name[idx]` anywhere a cue line takes RGB args:
+
+```
+@palette chorus  #504028, #823C20, #C84030
+@palette bridge  #102060
+
+@during verse1   quiet_wash @chorus[0]
+@during chorus1  sparkle_on_beat @chorus[1] 70 0
+@during chorus2  drift_wash @chorus[0] @chorus[2] 4b
+```
+
+Change one palette declaration, every cue that references it shifts.
+
+**Bars-as-duration on time params.** Any cue arg whose FX param is
+declared as `100ms` (drift cycle, fade duration, buildup time, etc.)
+accepts a `Nb` or `N.5b` suffix; the parser converts to the
+equivalent slider using the file's `@bpm` + `@time_sig`:
+
+```
+@bpm 138
+@time_sig 4
+
+# Wash that cycles every 4 bars (= 4 * 4 * 60000/138 = ~6.96 s):
+0:35  drift_wash 100 50 30 50 100 200 4b
+
+# 0.5-bar fade-out:
+2:55  fade_to_black --buildup 0.5b
+```
+
+**Runtime beat-grid sync.** When the track has a
+`<name>.cues.analysis.json` sidecar (written by
+`audio_enrich_cues.py`), the orchestrator loads its `beats` array
+and pins `sparkle_on_beat` / `pulse_per_bar` to the actual MIR
+beats instead of a `bpm × song-start` clock. Eliminates the phase
+drift that affected tracks with pickup silence or rubato. No
+authoring change required — the sidecar IS the switch.
+
+## Hot-reload during authoring
+
+The orchestrator watches the active `.cues` file's modification time.
+Save the file in your editor while the song is playing and within
+~1 second the change takes effect - no need to restart the
+orchestrator or scrub the music.
+
+Behaviour:
+
+- **Past-position cues do NOT re-fire.** The running FX keeps going;
+  only cues at or after the current play position fire when their
+  time comes.
+- **`bpm` cues before the current position ARE applied** so the
+  default BPM matches the most recent `bpm` cue at-or-before the
+  cursor. (This means you can save a tempo-change cue earlier in
+  the file mid-song and the rest of the timeline picks it up
+  correctly without restarting.)
+- **Parse errors are caught** - if the file is malformed (typo,
+  incomplete edit between save events) the orchestrator logs the
+  error and keeps using the previous version. Fix and save again.
+
+A reload event surfaces in the log regardless of `--debug` so you
+know the change landed::
+
+    reload: coldplay-fix-you.cues (8 cues, 27 lyric anchors, applied at 00:42.350)
+
+There's a one-poll-cycle (~1 s) latency between save and reload;
+the orchestrator only polls the OS once a second to avoid spinning
+on file stats.
+
+## Output modes
+
+`--output {auto, usb, artnet}`. The default `auto` tries USB first
+and falls back to Art-Net if the StickC's USB port is already busy
+(typical when the QLC+ shim is running)::
+
+| Mode | What it does | When to use |
+|---|---|---|
+| `usb` | Writes Enttec Pro frames straight to the StickC over USB | Standalone, no other software needed |
+| `artnet` | Emits ArtDmx packets to `127.0.0.1:6454` | Run alongside QLC+ - your shim picks up either source |
+| `auto` (default) | Try USB; fall back to Art-Net if the port is busy | What you usually want |
+
+`--artnet-universe N` selects the Art-Net universe. Default is `1`,
+matching QLC+ (which presents universes 1-indexed in its UI) and the
+shim's own `--universe` default. Don't change this unless you're
+running a multi-universe rig and know what you're doing.
+
+## Co-driving with QLC+ (HTP merge)
+
+The orchestrator and QLC+ can drive the same StickC at the same time
+- orchestrator runs the cue-driven show; QLC+ supplies live manual
+overrides (e.g. an LD pushes a button to fire a pulse, or holds a
+brighter wash for a chorus). The shim's `--merge htp` flag does the
+combining: per-channel **Highest-Takes-Precedence** across every
+producer currently sending. The "channel monitor" view in the shim
+also starts updating, since traffic now flows through it instead of
+straight to the Stick's USB port.
+
+### What HTP gives you, and what it doesn't
+
+HTP keeps it boring: for each of the 512 DMX channels the shim
+publishes whichever live source has the highest current value. That
+maps cleanly onto **additive overrides**:
+
+- QLC+ can **add** light: bump a pulse trigger, raise wash brightness,
+  fire a strobe on top of the running show.
+- QLC+ **cannot dim** what the orchestrator is doing. If the
+  orchestrator is sending `master = 255` and QLC+ sends `master = 100`,
+  the merge keeps 255. For full creative takeover mid-song, stop the
+  orchestrator and let QLC+ drive alone.
+
+A producer that stops sending falls out of the merge automatically
+after 500 ms - so closing QLC+ or killing a button cleanly hands the
+universe back to whoever's still alive. No ghost frames.
+
+### Wiring it up
+
+The shim becomes the only writer on the StickC's USB port. Both
+producers send Art-Net to localhost on universe 1.
+
+Terminal 1 - the shim (this is now the merging layer; one process
+owns the StickC):
+
+```sh
+Docs/tools/artnet-to-enttec-pro.py --merge htp
+```
+
+The status panel grows a "Merge" row showing the live source count.
+On startup you'll see `HTP (0 sources live)`; the count climbs as
+each producer starts streaming.
+
+Terminal 2 - the orchestrator (forced to Art-Net so the shim
+receives it instead of grabbing the USB port itself):
+
+```sh
+Docs/tools/nowplaying-orchestrator.py --output artnet
+```
+
+QLC+ - configure the Art-Net output plugin to Universe 1 and patch
+your StickC fixture against the universe (the same setup as the
+[QLC+ guide](qlc-plus-beginners-guide.md), but with a universe value
+of 1 rather than 0).
+
+### Authoring a "manual pulse" button
+
+A useful starter scene for the Virtual Console:
+
+1. New **Scene** in the Functions tab. Name it e.g. "Manual White Pulse".
+2. Add the StickC fixture. Set:
+   - `Pulse R / G / B` = `255 / 255 / 255` (white)
+   - `Pulse Trigger` = `255`
+   - `Pulse Attack` = `0`, `Pulse Sustain` = `32`, `Pulse Release` = `96` (a snap-then-fade)
+3. Drop a **Flash Button** widget onto the Virtual Console and bind
+   it to this scene. Flash buttons send the scene while held and stop
+   when released - exactly the contract HTP merge expects.
+
+Push the button: the shim sees QLC+ frames with the pulse trigger
+HIGH on top of the orchestrator's `trig = 0` bed; max wins, the Stick
+mapper detects a rising edge, a `LIGHT_PULSE` goes out. Release the
+button: QLC+ stops sending, the orchestrator is the only live source
+again.
+
+The same pattern works for any single-channel override - drop a
+fader on the Virtual Console bound to e.g. `Wash Intensity` and you
+can push the bed brighter live; release and the show resumes at the
+orchestrator's level.
+
+### When to leave merge off
+
+`--merge none` (the default) forwards each incoming Art-Net frame
+straight to the Stick with no per-source tracking. It's the right
+choice when only one producer is running, and it has the same
+performance characteristics it always had. The merge layer is opt-in
+specifically so existing single-producer setups behave identically
+to before.
+
+## Debug mode
+
+`--debug` adds one log line per:
+
+- now-playing poll (with the live position and play state)
+- cue file load (cue count, lyric-anchor count, default FX, default BPM)
+- cue admission (cue name, params, BPM and buildup overrides)
+- lyric anchor crossed
+
+Example::
+
+```text
+orchestrator: started (songs_dir=.../songs, default_bpm=120, output=usb, debug=on)
+[00:14.000] poll:  coldplay-fix-you [genre=Alternative] (playing=yes)
+matcher: coldplay-fix-you [genre=Alternative] -> coldplay-fix-you.cues
+loaded: 8 cues, 27 lyric anchors, default_fx_id=1, default_bpm=138
+[00:14.000] cue:   sparkle_on_beat  80 200 200 255
+[00:14.000] lyric: When you try your best
+```
+
+The position shown is the orchestrator's interpolated estimate;
+`(playing=yes/no)` reflects the host's playback state.
+
+## Troubleshooting
+
+### "Position stays at 00:00.000 even though a track is playing"
+
+You are on an old `nowplaying-cli` build whose per-field `get`
+subcommand returns 0 for `elapsedTime`. The orchestrator works
+around this by calling `get-raw` and parsing JSON; if you still see
+zero positions, run::
+
+```sh
+nowplaying-cli get-raw
+```
+
+and check that `kMRMediaRemoteNowPlayingInfoElapsedTime` advances
+while a track plays. If even `get-raw` returns 0, the audio app
+probably hasn't registered properly with MediaRemote (close and
+reopen the app).
+
+### "StickC LCD shows ACTIVE constantly"
+
+By design - while any FX is loaded the orchestrator writes the
+universe each tick, even if values are stable. The StickC's mapper
+collapses identical inputs into a single LIGHT_WASH on the ESP-NOW
+side, so the Lume sees no extra traffic. From v2 (post-2026-06-14)
+the orchestrator suppresses byte-identical USB sends, so a static
+wash now produces ACTIVE flashes the same way QLC+ does.
+
+### "Lume stays dark on orchestrator startup"
+
+Fixed in dispatch-gating commit. Older builds dispatched an
+all-zero universe at startup which poisoned the StickC mapper's
+wash seed. Pull the latest `feat/epic-10-shared-library` and
+re-run.
+
+### "Frames at unexpected rate on the Lume"
+
+The Lume's frame counter should climb at ~1 Hz on a static wash
+(just the heartbeat). If it climbs faster, the StickC mapper is
+re-emitting LIGHT_WASH frames. Most likely a cue file with a `cycle`
+parameter > 0 (drift wash) or a pulse-trigger FX.
+
+## How it fits together
+
+```text
+    audio app
+       |
+       v
+   nowplaying-cli / SMTC / MPRIS    (~1 Hz polled)
+       |
+       v
+   matcher  --slugify-->  Docs/songs/<slug>.cues
+       |
+       v
+   cue scheduler  --advance-->  FX engine
+                                 |
+                                 v
+                            DMX universe (512 bytes)
+                                 |
+                                 v
+            ___________________________________________
+           |                                           |
+           v                                           v
+   USB Enttec Pro                              Art-Net UDP 6454
+           |                                           |
+           v                                           v
+       StickC (DMX Bridge mode)                 artnet-to-enttec-pro shim
+           |                                           |
+           v                                           v
+       mapper -> LIGHT_WASH / LIGHT_PULSE         StickC (DMX Bridge mode)
+           |
+           v
+       ESP-NOW broadcast
+           |
+           v
+       Lume fleet
+```
+
+The FX engine writes a 512-byte DMX universe; the StickC's
+`DmxChannelMapper` translates changes on channels 1-20 (and groups
+1-9 at offsets 41-360) into LIGHT_WASH and LIGHT_PULSE wire frames
+for the Lume fleet. Lume firmware is unchanged from the QLC+ path -
+the orchestrator is just a different producer pointing at the same
+input surface.
+
+## See also
+
+- [`fx-library.md`](fx-library.md) - authoritative FX listing, parameter reference, full cue file format spec.
+- [`qlc-plus-beginners-guide.md`](qlc-plus-beginners-guide.md) - the alternative path for live operator control.
+- [`manuals/user-manual.md`](manuals/user-manual.md) - the broader NocturNation operator manual.
+- `Docs/tools/README.md` - tool-level reference for the orchestrator and the shim.

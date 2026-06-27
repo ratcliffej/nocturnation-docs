@@ -13,7 +13,9 @@ sync_direction: bidirectional
 > A practical guide to running NocturNation at a venue: what it is, how it works, how to set it up, how to configure it, and what to do when it misbehaves.
 
 **Firmware version covered**: v0.6 (`include/firmware_version.h`).
-**Reference hardware**: M5StickC Plus2 and M5StickS3 (the Sticks); PixMob Aurora bracelets.
+**Reference hardware**: M5StickC Plus2, M5StickS3 (the Sticks); M5Atom Lite; M5Stack SK6812 RGB flex strip (optional); PixMob Aurora bracelets.
+
+The boot flow is the same on every host but defaults to Lume on power-up, so a freshly-flashed device joins an existing fleet immediately. To run a device as a Director, tap any button during the 3-second boot splash to open the mode menu, then pick **Director Mode**. On the Atom Lite, where there is no display and no boot splash, the device boots straight to Lume; the front button doubles as the LED-strip brightness control once a Director is locked (see [section 2.5](#25-m5atom-lite) and [section 2.6](#26-led-strip)).
 
 ---
 
@@ -154,7 +156,9 @@ NocturNation runs on two M5Stack form-factor boards. They share the same firmwar
 | IR transmitter | GPIO 19 | GPIO 46 |
 | IR receiver | None | GPIO 42 |
 | Bluetooth | BLE 4.2 | BLE 5.0 |
-| PSRAM | None | 8 MB |
+| On-chip SRAM | 520 KB | 512 KB + 16 KB RTC |
+| Embedded PSRAM | 2 MB | 8 MB |
+| Embedded Flash | 8 MB | 8 MB |
 | Form factor | 24 x 48 x 14 mm | 24 x 48 x 14 mm |
 | Status | First-class (legacy hardware) | First-class (current reference) |
 
@@ -191,6 +195,74 @@ The Sticks transmit Wi-Fi (and hence ESP-NOW) via a small ceramic patch antenna 
 
 A Lume with the Lume-as-repeater toggle enabled retransmits every accepted frame. Chained repeaters extend radio range significantly at the cost of additional radio latency per hop (around five milliseconds per hop). The default is no repeating; turn it on only when you have measured a coverage gap.
 
+### 2.5 M5Atom Lite
+
+The Atom Lite is a sugar-cube-sized ESP32 board (the same ESP32-PICO family as the Plus2). It has one programmable button, one onboard SK6812 RGB LED, a Grove HY2.0-4P expansion port, and an optional 200 mAh battery base. It has no display, no microphone, no infra-red transmitter, no IMU.
+
+| Property | M5Atom Lite |
+|---|---|
+| MCU | ESP32-PICO-D4 |
+| Display | None |
+| Onboard LED | One SK6812 (GPIO 27) |
+| Button | One programmable, front face (GPIO 39) |
+| Grove port | HY2.0-4P, data on GPIO 26 |
+| Optional battery | 200 mAh base |
+| Form factor | 24 x 24 x 14 mm |
+| Status | First-class Lume; not viable as a Director |
+
+The Atom is a **Lume-only** host. With no microphone it cannot run beat detection; with no infra-red transmitter it cannot drive PixMob bracelets directly. What it can do is render incoming light commands on its onboard LED and on an LED strip plugged into its Grove port (see [section 2.6](#26-led-strip)).
+
+The single onboard LED doubles as the **status indicator** in place of the LCD pip the Sticks have:
+
+- **Pulsing green** at 1 Hz - the Atom is alive but has not received any frames from a Director yet. The auto-channel scan is running.
+- **Solid green for a second** - first frames just arrived. Lock acquired.
+- **Wash / pulse colours** - after the lock window, the LED takes part in the show like any other pixel on the strip.
+
+Short-pressing the front button while in Lume mode cycles the LED-strip brightness. The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+
+**Atom Lite brightness is hardware-capped at 10 percent**, enforced by the firmware regardless of menu input. The Atom's 200 mAh battery base plus typical 500 mA USB-hub limit cannot sustain a 30-pixel SK6812 strip at 25 percent or higher without brownout-rebooting the chip. The cap is declared in `hal::HAL::max_strip_brightness_percent()` in the Atom's HAL backend; `LedStripDriver::set_brightness_percent()` clamps any operator-driven raise to that ceiling. So the Atom-side Btn1 cycle is effectively {10, 1} (operator presses cycle through 50/25/10/1 internally but anything above 10 is silently clamped). Plus2 and S3 have no firmware cap - operator-driven cycling through 50 / 25 / 10 / 1 is fully exposed.
+
+The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
+
+**Configuring the Atom's strip**: because the Atom has no Config menu, the only way to set chain size and group size is via `platformio.ini` build flags. The `[env:m5stack-atomlite]` block holds four `-DNOCT_DEFAULT_STRIP_*` macros - edit them to match the deployment, reflash, and the values land in NVS authoritatively. See [section 3.5](#35-strip-configuration-build-flags).
+
+### 2.6 LED strip
+
+The firmware drives any SK6812 / WS2812-family addressable LED strip wired to the Grove port. M5Stack sell SK6812 flex strips in five lengths: 10 cm (15 LEDs), 20 cm (29 LEDs), 50 cm (72 LEDs), 1 m (144 LEDs), and 2 m (288 LEDs). All five are supported. The Atom Lite, the Plus2 and the S3 can all drive a strip; the Atom adds its onboard LED to the chain so the show extends seamlessly across the device and the strip.
+
+The strip responds to the same wash and pulse cues as every other Lume in the fleet: a `quiet_wash` cue paints the strip a colour; a `LIGHT_PULSE` cue sparkles a fraction of the pixels per the cue's `CHANCE` probability field. The configurable **group size** (see [section 4.3](#43-connectivity)) controls how the sparkle is distributed across the strip:
+
+- `1` - every LED rolls its own probability die (matches the Tildagon perimeter ring's per-LED sparkle).
+- `12` - groups of 12 LEDs flash together as a unit (a Tildagon-ring-sized block on a longer strip).
+- A group size equal to the chain length - the whole strip flashes or stays dark as one unit (PixMob-bracelet style).
+
+Default group size is 12. Default brightness is **1 percent** — deliberately conservative so a fresh out-of-box device cannot brown out on any power source we ship (battery, USB-CDC laptop, wall charger), regardless of which mode (Pulse / Whiteout test, raw-RGB white, music show) the operator boots into. A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws ~60 mA per pixel = 1.8 A at 100 % brightness, far beyond any reasonable USB or battery supply; 1 percent keeps peak draw under ~20 mA on a 30-pixel chain.
+
+The operator dials up via Config > LED Strip when a heavier supply is available. The four levels are tuned for typical power sources:
+
+| Brightness | Suitable for |
+|---|---|
+| **50 %** | Wall-powered Sticks (DMX bridge / stage rig) |
+| **25 %** | USB-CDC laptop or healthy battery |
+| **10 %** | Any-supply safe |
+| **1 %** | Ambient hint / fresh-device default |
+
+100 percent was retired 2026-06-23 after bench-confirmed brownout reboots.
+
+**Brightness applies in every mode**: the strip honours the persisted Config-menu cap whether the Stick is running a Lume render, Test patterns, Director output, or the DMX bridge. Prior to 2026-06-24 the brightness setting was only consulted by the Lume render path, so Test mode patterns at full white could brown out a Stick even with the Config menu set to 10 %. Now centralised in `DAL::apply_persisted_strip_settings()`; every mode honours the cap.
+
+**Wiring**: the strip plugs into the Grove port via its bundled HY2.0-4P pigtail. Per-host data-line GPIOs are:
+
+| Host | Grove data pin |
+|---|---|
+| M5StickC Plus2 | GPIO 32 |
+| M5StickS3 | GPIO 9 |
+| M5Atom Lite | GPIO 26 (Grove) and GPIO 27 (onboard) |
+
+The strip's white-PCB end is the input; chain extra strips off the black-PCB end. The driver allocates buffer space for up to 288 pixels at boot, so changing the chain size in Config takes effect immediately without re-flashing.
+
+On hosts without a Config menu (the Atom Lite), the strip is configured at build time via `platformio.ini` - see [section 3.5](#35-strip-configuration-build-flags).
+
 ---
 
 ## 3. Installing the firmware
@@ -200,16 +272,17 @@ A Lume with the Lume-as-repeater toggle enabled retransmits every accepted frame
 - A USB-C cable that supports data (cheap charging-only cables will not work).
 - A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-stickc`.
 - [PlatformIO](https://platformio.org/) installed. The project assumes the CLI tool is reachable; on macOS the executable is typically at `~/.platformio/penv/bin/pio`.
-- An M5StickC Plus2 or M5StickS3.
+- An M5StickC Plus2, M5StickS3, or M5Atom Lite.
 
 ### 3.2 Building
 
-The project ships two PlatformIO environments, one per Stick:
+The project ships three PlatformIO environments, one per supported board:
 
 | Environment | Target |
 |---|---|
 | `m5stack-stickcplus2` | M5StickC Plus2 |
 | `m5stack-stickcs3` | M5StickS3 |
+| `m5stack-atomlite` | M5Atom Lite (Lume only) |
 
 Build:
 
@@ -248,6 +321,45 @@ Press `Ctrl-C` to exit.
 If you flash bad firmware and the Stick will not respond, hold the lower side button (BtnA on the Plus2, ButtonA on the S3) for ten seconds with the USB cable disconnected; this triggers a hard reset. If that fails, plug in USB while holding the lower button to force the ROM bootloader, then re-flash.
 
 The firmware never writes to flash regions outside of its own partition table. Bricking the bootloader itself is not possible from a normal `pio run -t upload`.
+
+### 3.5 Strip configuration build flags
+
+The LED-strip settings (enable, brightness, group size, chain size) are first-boot defaults baked into the firmware at compile time. On a Stick they're only the fallback - the Config menu writes NVS at runtime and the menu's value wins on every subsequent boot. On the Atom Lite, where there is no Config menu, the build flags ARE the configuration: change them, reflash, the device runs with the new values.
+
+Each environment in `platformio.ini` carries four `-DNOCT_DEFAULT_STRIP_*` macros:
+
+```ini
+[env:m5stack-atomlite]
+build_flags =
+    ${env:firmware-base.build_flags}
+    -DNOCT_DEFAULT_STRIP_ENABLED=1
+    -DNOCT_DEFAULT_STRIP_BRIGHTNESS=10
+    -DNOCT_DEFAULT_STRIP_GROUP_SIZE=12
+    -DNOCT_DEFAULT_STRIP_CHAIN_SIZE=29
+    -DNOCT_STRIP_FORCE_DEFAULTS=1
+```
+
+| Macro | Range | Meaning |
+|---|---|---|
+| `NOCT_DEFAULT_STRIP_ENABLED` | 0 / 1 | Master enable for the strip render path |
+| `NOCT_DEFAULT_STRIP_BRIGHTNESS` | 0..100 | Per-cent device brightness (cycled by Btn1 in Lume mode) |
+| `NOCT_DEFAULT_STRIP_GROUP_SIZE` | 1..255 | Pixels per CHANCE-roll group |
+| `NOCT_DEFAULT_STRIP_CHAIN_SIZE` | 1..288 | Physical strip length in LEDs |
+| `NOCT_STRIP_FORCE_DEFAULTS` | absent / 1 | When set, treat this build's values as authoritative on flash |
+
+**`NOCT_STRIP_FORCE_DEFAULTS`** is the override flag. Without it set, the macros only matter when NVS is empty (a fresh device or post-factory-reset); after that the operator's Config-menu changes persist. With it set, the firmware compares its embedded build tag (`__DATE__ __TIME__`) to the tag stored in NVS on each boot - if they differ, it writes all four defaults to NVS and updates the tag. This makes every reflash authoritative: whatever the operator had configured at runtime gets replaced by the build's values, exactly once per fresh build.
+
+Per-env defaults shipped today:
+
+| Environment | `FORCE_DEFAULTS` | Rationale |
+|---|---|---|
+| `m5stack-stickcplus2` | off | Stick has a Config menu; runtime operator wins |
+| `m5stack-stickcs3` | off | Same |
+| `m5stack-atomlite` | **on** | No Config menu; reflash is the only configuration surface |
+
+To configure an Atom for a deployment, edit the four `-DNOCT_DEFAULT_STRIP_*` values in `[env:m5stack-atomlite]`, run `pio run -e m5stack-atomlite -t upload`, and the device boots with the new values in NVS. Repeat per Atom in the batch.
+
+To use the override flag on a Stick for a deployment-time reset (e.g. "every Stick in the batch must start with chain = 29"), uncomment the `-DNOCT_STRIP_FORCE_DEFAULTS=1` line in the Stick env, flash, then optionally remove the line and re-flash to allow runtime overrides again.
 
 ---
 
@@ -294,6 +406,7 @@ A picker leading to four sub-menus:
 
 **ESP-NOW** (active):
 - `Director Channel` - selects 1, 6, or 11. NVS key `mst_chan`, default 1.
+- `DirID` - this Director's Performance-range source id (one byte in `0x40..0xFE`). Shown as `P:nn`. Random on first install, persisted to NVS (key `mst_pid`), sticky across reboots. A-click drills into a hex editor with three cursor positions cycled by Btn2: high nibble (cycles `4..F`), low nibble (cycles `0..F` skipping the reserved `0xFF` slot), and `Re-roll` (rolls + persists a new random). B-hold exits. New value applies at the next Director start. The byte identifies *this* Director on the wire so Lumes can lock to it; the value is broadcast on every frame and is what the Lume's TOFU lock pins onto. Upstream show logic (Tildagon shows, the orchestrator) can pattern-match on the locked Director's ID to choose content (e.g. a stage-D logo when locked to `0xD0`, an artist QR code when locked to `0xA1`). The id matters *because* it's stable and operator-settable; pin a known value per stage / per artist when content depends on it. See [section 4.7](#47-multi-show-partitioning).
 - `Lume Channel` - 0 (auto-scan), 1, 6, or 11. NVS key `slv_chan`, default 0.
 - `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off.
 
@@ -302,6 +415,12 @@ A picker leading to four sub-menus:
 
 **DMX** (stub, reserved for Epic 7):
 - Carrier, Universe ID, Channel mapping. Not functional in v0.6.
+
+**LED Strip** (active on hosts with a strip wired in - Atom Lite, Plus2, S3):
+- `Enable` - master gate on the LED-strip render path. NVS key `strip_en`, default on. When off, the driver drops all events; nothing reaches the strip.
+- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 50 / 25 / 10 / 1 percent. NVS key `strip_bri`, default **1** (deliberately conservative; see [section 2.6](#26-led-strip)). The same control is also available via a short-press of Button 1 in Lume mode (the Atom Lite's only adjustment surface).
+- `Group size` - pixels per CHANCE-roll group. Cycles 1 / 6 / 12 / 24. NVS key `strip_grp`, default 12. See [section 2.6](#26-led-strip) for the operator-meaningful values.
+- `Chain size` - physical strip length plugged in. Cycles 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288). NVS key `strip_cnt`, default 29.
 
 ### 4.4 Utilities
 
@@ -325,6 +444,68 @@ A picker leading to two sub-menus:
 All configuration lives in a single non-volatile-storage namespace called `noct`. Power-cycling preserves every setting. The `System > Factory Reset` action erases the namespace; the firmware then comes up with the defaults shown in the tables above.
 
 Some legacy keys are migrated on first boot after a firmware upgrade. The `slv_ir_grp` key from before Epic 4.65 is dropped (its function moved to the Lume's `slv_group` filter); the legacy visualisation id keys (`active_vis` with values "beat-pulse" or "spectrum-bars") are migrated to the new `active_show` key with value "simple-beat".
+
+### 4.7 Multi-show partitioning
+
+When two or more NocturNation Directors broadcast on the same channel (typical at a festival with parallel stages on channel 11), each Director is identified by a unique one-byte source id in the Performance range `0x40..0xFE`. The id is set per device via [Connectivity > ESP-NOW > DirID](#43-connectivity); it's random on first install, sticky across reboots, and operator-settable to a specific value.
+
+**Two source-id ranges exist** to keep planned-event traffic and casual / drop-in traffic apart at the wire level:
+
+| Range | Channel | Use case | Lock prefix |
+|---|---|---|---|
+| **Performance** `0x40..0xFE` | 11 (planned-event channel) | Booked stages, ticketed events, anywhere you want the Director's id to be a stable handle for content tagging (artist logos, stage-keyed lyrics). | `P:nn` |
+| **Community** `0x01..0x3F` | 1 / 6 (pop-up channel) | Drop-in events, personal / friend gatherings, anywhere a Lume might wander between unrelated Directors and you don't want a random Performance Director to take over the bracelet. | `C:nn` |
+
+A Lume **only locks** to source ids that match its channel's range: on channel 11 it locks to Performance ids (`0x40..0xFE`); on channel 1 / 6 it locks to Community ids (`0x01..0x3F`). A Community Director accidentally broadcasting on channel 11 is dropped at the lock stage (and vice versa). This makes the channel choice itself a deployment-policy lever: setting channel 11 keeps your fleet away from pop-up traffic; channel 1 / 6 keeps your bracelets away from a Performance Director two stages over.
+
+The source-id `0xFF` (broadcast / wildcard) is reserved and **never** lockable. A Lume that sees `0xFF` in a frame's source field drops the frame; only identified Directors are admissible peers.
+
+**How the partitioning works:**
+
+- Every frame a Director broadcasts carries its source id in the header.
+- A Lume locks (TOFU - Trust-On-First-Use) to the source id of the first valid frame it sees on its current channel after scan or rescan.
+- All subsequent frames from any *other* source id are silently dropped at the Lume.
+- The lock expires after 10 seconds of silence from the locked source; the next inbound frame re-locks.
+
+So at a multi-stage venue, two Lumes can be physically next to each other and render two different shows depending on which Director each happens to lock to. The split is statistically even if both Directors are equally loud.
+
+**Display content (lyrics, bitmaps) follows the same partitioning.** The Director Stick re-stamps the source id of orchestrator-bridged display frames so they carry the Director's id rather than the broadcast slot. A Lume locked to Director A then drops Director B's lyric overlays cleanly.
+
+**The DirID as upstream tagging hook.** The id is a *value* that upstream show logic (Tildagon shows, the orchestrator) can pattern-match on to choose content:
+
+- A Tildagon show can render a stage-D logo on the LCD background when its TOFU lock reports `0xD0`.
+- A different show can render an artist-specific logo when locked to `0xA1`.
+- The orchestrator can pick cue files keyed by Director id.
+
+This only works when the id is *stable and knowable*. The operator pins it via the Config menu's hex editor at the start of a deployment and (in the conventional case) leaves it alone. Conventions like "stage D = `0xD0`", "stage M = `0xMD` shape" etc. are deployment-local choices; the firmware doesn't enforce any particular mapping.
+
+**Operator workflow on a fresh device:**
+
+1. Flash the firmware. The DirID is rolled randomly on first boot and persisted.
+2. If the deployment expects a specific value (e.g. for content-tagging), open `Config > ESP-NOW > DirID` and use the hex editor to set it. Random re-roll is also one click away inside that screen.
+3. Note the value (it's shown in the menu as `P:nn`) and pass it to whatever upstream consumer needs it.
+4. Reboot, or exit and re-enter Director mode, for the new id to take effect on the wire.
+
+**Tildagon LCD background images (Phase 2A).** A Tildagon Lume renders a per-Director image on the LCD background using the Tildagon's documented `ctx.image()` API. Storage convention:
+
+| Path on the badge | Used when |
+|---|---|
+| `nocturnation/images/dirid_<hex>.jpg` | Lume's TOFU lock matches that DirID (e.g. `dirid_e0.jpg` when locked to `0xE0`) |
+| `nocturnation/images/default.jpg` | Locked to a Director that has no specific file |
+| (no file matches) | Falls through to the pre-existing wash/pulse render — LCD pulses to music as before |
+
+**Authoring**: any image editor. Resize to 240×240, save as JPG, drop into the firmware tree, redeploy. The badge's Ctx graphics library handles JPG decode + internal caching automatically; no firmware-side conversion needed. On macOS the one-liner is:
+
+```bash
+sips -z 240 240 -s format jpeg <your-logo>.png \
+     --out Nocturnation-Tildagon/nocturnation/images/dirid_<hex>.jpg
+```
+
+**Designer template**: `Docs/tools/tildagon-display-template.png` is a 240×240 guide layer showing the panel-edge circle (radius 120) and the recommended safe-zone circle (radius 110). Import as a layer in any image editor; build the logo on top; export as JPG.
+
+**LCD vs. LEDs when an image is present.** When a DirID-matching image is loaded, the LCD renders the image as a static background — it does NOT pulse to music. The perimeter LED ring, the LED strip on hosts that have one, and the PixMob bracelets all continue to pulse normally; only the LCD layer is overridden. When NO image matches (or no images are present at all), the LCD reverts to its pre-Epic-13 wash render and pulses to music just like every other surface.
+
+**Out of scope for the in-show image layer**: QR codes. A white scannable panel on every audience badge would tear focus from the stage and break the dark-venue immersion. The QR library bundled with the Tildagon firmware (`uQR.py`) remains in place for operator-facing utilities (help screen) but is not used in the show-content layer.
 
 ---
 
@@ -370,11 +551,18 @@ The FFT-driven show from Epic 4.7. Maps spectral centroid to hue (warm to cool a
 
 The Dynamic show's `groups` property is the most useful setting to know about: leave it at 1 for ordinary deployments where bracelet groups have not been controlled; raise it to 3 if you have manually distributed bracelets across groups 1, 2, and 3 and want to see the kick-snare-hihat split.
 
+**Conductor Show v1 (Tildagon-side)**. The Tildagon badge can act as a lightweight Director in its own right, running the operator-driven **Conductor Show**: an IMU-tap input surface where the wearer taps the badge to fire pulses out to the fleet. No microphone, no audio analysis — the operator's hand IS the beat detector. Useful as a third-act / interactive segment where you want the audience-conductor to drive the lights directly. Lives on the Tildagon firmware (v3), not on the Stick. Co-exists with a Stick Director on a different channel; a Lume locks to whichever Director it sees first.
+
 ### 5.4 Lume mode
 
 The Lume does very little. It listens on its configured channel (or auto-scans), accepts light commands whose target class and group match its configured filter, and fires them through its local infra-red transmitter. The screen shows a small status pip (solid when receiving, hollow when idle) and a sequence-loss signal-quality strip across the top. If no traffic arrives for three seconds, the strip clears and the screen reads NO SIGNAL.
 
-The Lume does not improvise on Director loss. It does not promote itself to Director. It does not run any audio analyser locally.
+The Lume does not promote itself to Director on Director loss, and does not run any audio analyser locally — show authorship stays with the laptop. But it does synthesise a **signal-loss fallback wash** so the bracelets and strips don't go dark mid-event:
+
+- **10 s of silence** → the Lume locally emits a muted blue → purple cycle (slow, low intensity). Visible cue to the audience that the Director's gone away, without breaking the visual.
+- **40 s of silence** → fades to black over a few seconds. After that the Lume sits dark until traffic resumes.
+
+The fallback is a locally-synthesised `LIGHT_WASH` frame, so it routes through the same render path as Director-issued washes. As soon as a real frame arrives from a Director, the fallback drops and live rendering resumes immediately (no transition delay).
 
 ### 5.5 Test mode
 
@@ -425,6 +613,8 @@ The Lume has gone three seconds with no traffic. Causes, in rough order of likel
 2. **Channel mismatch**: Director is on channel 1, Lume is locked to channel 11 (or vice versa). Either set both to the same channel, or set the Lume to 0 (auto-scan).
 3. **Director is very quiet**: Director only broadcasts on beats, and heartbeats are at 1 Hz with a skip-if-recent rule. A silent room with no detected beats and no recent fires can briefly trip the NO SIGNAL threshold; this is benign and resolves as soon as music plays.
 4. **Radio range exceeded**: try moving the Lume closer. If the Lume starts working at half the distance, you have a range issue. Solutions: orient the Lume for a clearer line of sight to the Director; enable `Lume Repeat` on an intermediate Lume; reduce concrete walls in the path.
+
+**Note on the signal-loss fallback wash**: after about 10 s of silence the Lume **stops showing NO SIGNAL on its strips and starts emitting a muted blue/purple cycle** locally (see §5.4). NO SIGNAL still reads on the Stick's LCD as a diagnostic, but the strips + bracelets light up — that's by design (the audience never sees dead hardware mid-event). Don't mistake the blue/purple cycle for a working Director; check the LCD pip + signal-quality strip first.
 
 ### 6.3 Wrong show running
 
@@ -480,11 +670,15 @@ If Director is running but no `[espnow TX LIGHT]` lines appear on the serial con
 
 **HSV** - Hue, Saturation, Value colour model. The Dynamic show works in HSV internally and converts to RGB at the wire.
 
+**LED strip** - any SK6812 / WS2812-family addressable strip wired to a host's Grove port. Rendered as a row of independent pixels by the same light commands that drive bracelets and Lume displays. See [section 2.6](#26-led-strip).
+
 **LIGHT_COMMAND** - one of the two active ESP-NOW message types (alongside `HEARTBEAT`). Nine-byte payload: class, group, RGB, attack/sustain/release/chance. See the [protocol manual](protocol-manual.md).
 
-**Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter and screen pulse, so the Director can illuminate nearby bracelets and show a pulse on its own LCD.
+**Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter, screen pulse, and (where wired) LED strip, so the Director can illuminate nearby bracelets and show the cue on its own surfaces.
 
 **Director** - the Stick that listens to audio and decides what lights should do. Runs a Show, fires light commands, and is the default boot mode. Exactly one Director per deployment. See [section 1.1](#11-what-nocturnation-is) and [section 5.3](#53-director-mode).
+
+**M5Atom Lite** - a third reference host alongside the Sticks. ESP32-PICO-D4, sugar-cube form factor, one programmable button, one onboard SK6812 RGB LED, Grove port. Lume-only (no display, no mic, no IR). See [section 2.5](#25-m5atom-lite).
 
 **M5StickC Plus2** - the first-generation reference Stick. ESP32-PICO-V3-02, PDM microphone, omnidirectional IR. End-of-life from M5Stack but fully supported.
 

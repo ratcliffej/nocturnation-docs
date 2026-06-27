@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# NocturNation Art-Net to Enttec Pro shim - macOS wrapper.
+# NocturNation now-playing orchestrator - macOS wrapper.
 #
-# First run: installs pyserial + rich into a local venv under tools/.venv.
-# Subsequent runs: just activates the venv and starts the shim.
-# Forwards all CLI args to the shim.
+# First run: installs pyserial + rich into a local venv under tools/.venv
+# (shared with the Art-Net shim wrapper, run-macos.sh).
+# Subsequent runs: just activates the venv and starts the orchestrator.
+# Forwards all CLI args to the orchestrator.
+#
+# Also requires nowplaying-cli on PATH (`brew install nowplaying-cli`)
+# for the macOS now-playing source.
 #
 # Requires Python 3.9+ (macOS 13+ ships Python 3 by default; install from
 # python.org if not present).
@@ -33,4 +37,10 @@ if [ ! -d "$VENV" ]; then
     echo "Venv ready."
 fi
 
-exec "$VENV/bin/python" "$HERE/artnet-to-enttec-pro.py" "$@"
+if ! command -v nowplaying-cli >/dev/null 2>&1; then
+    echo "warning: nowplaying-cli not found on PATH." >&2
+    echo "  install with: brew install nowplaying-cli" >&2
+    echo "  the orchestrator can't read what's playing without it." >&2
+fi
+
+exec "$VENV/bin/python" "$HERE/nowplaying-orchestrator.py" "$@"

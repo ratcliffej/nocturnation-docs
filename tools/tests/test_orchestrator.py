@@ -1,0 +1,1398 @@
+"""Orchestrator tests (Epic 10 B5).
+
+Covers the testable pieces:
+- nowplaying.macos output parsing (no subprocess, injected runner)
+- output.artnet packet framing
+- matcher slug + fallback
+- scheduler position tracking + seek handling
+- main.run smoke (synthetic backend, capture dispatch)
+
+The hardware-dependent edges (real serial port, real nowplaying-cli)
+are validated at the bench, not in pytest.
+"""
+
+import socket
+import threading
+
+import pytest
+
+from nocturnation_orchestrator.cues import parse_cues
+from nocturnation_orchestrator.fx import library  # noqa: F401  side-effects
+from nocturnation_orchestrator.main import run
+from nocturnation_orchestrator.matcher import find_cue_path, slugify
+from nocturnation_orchestrator.nowplaying import NowPlaying
+from nocturnation_orchestrator.nowplaying.macos import (
+    MacOSBackend, _parse_raw_output,
+)
+from nocturnation_orchestrator.output.artnet import (
+    ArtnetDispatcher, build_artdmx_packet,
+)
+from nocturnation_orchestrator.scheduler import (
+    CueScheduler, PositionTracker,
+)
+
+
+# ---------------------------------------------------------------------------
+# Now-playing: macOS output parser
+# ---------------------------------------------------------------------------
+
+_SAMPLE_RAW = """
+{
+  "kMRMediaRemoteNowPlayingInfoTitle" : "Fix You",
+  "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
+  "kMRMediaRemoteNowPlayingInfoElapsedTime" : 30.5,
+  "kMRMediaRemoteNowPlayingInfoDuration" : 295,
+  "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1.0
+}
+"""
+
+
+class TestMacOSParseRawOutput:
+    def test_basic_playing(self):
+        np = _parse_raw_output(_SAMPLE_RAW)
+        assert np is not None
+        assert np.is_playing
+        assert np.artist == "Coldplay"
+        assert np.title == "Fix You"
+        assert np.position_ms == 30_500
+        assert np.duration_ms == 295_000
+
+    def test_paused_track(self):
+        raw = _SAMPLE_RAW.replace(
+            '"kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1.0',
+            '"kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0',
+        )
+        np = _parse_raw_output(raw)
+        assert np is not None
+        assert np.is_playing is False
+
+    def test_no_source_empty_stdout(self):
+        assert _parse_raw_output("") is None
+        assert _parse_raw_output("   \n") is None
+
+    def test_no_source_empty_object(self):
+        assert _parse_raw_output("{}") is None
+
+    def test_malformed_json(self):
+        # Defensive: a busted nowplaying-cli build shouldn't crash the loop.
+        assert _parse_raw_output("not json") is None
+
+    def test_real_world_sample(self):
+        # Real MediaRemote output captured at the bench:
+        # Coldplay / A Sky Full of Stars, paused at 52.97 s, 268 s total.
+        raw = """
+        {
+          "kMRMediaRemoteNowPlayingInfoTitle" : "A Sky Full of Stars",
+          "kMRMediaRemoteNowPlayingInfoArtist" : "Coldplay",
+          "kMRMediaRemoteNowPlayingInfoAlbum" : "Ghost Stories",
+          "kMRMediaRemoteNowPlayingInfoGenre" : "Alternative",
+          "kMRMediaRemoteNowPlayingInfoElapsedTime" : 52.966817133,
+          "kMRMediaRemoteNowPlayingInfoDuration" : 268,
+          "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 0,
+          "kMRMediaRemoteNowPlayingInfoTrackNumber" : 8
+        }
+        """
+        np = _parse_raw_output(raw)
+        assert np is not None
+        assert np.title == "A Sky Full of Stars"
+        assert np.artist == "Coldplay"
+        assert np.position_ms == 52_967
+        assert np.duration_ms == 268_000
+        assert np.genre == "Alternative"
+        assert not np.is_playing
+
+    def test_missing_genre_is_empty_string(self):
+        # Older tracks / streaming sources may omit the genre key.
+        # We should default to "" so the matcher's genre fallback
+        # tier silently skips.
+        raw = """
+        {
+          "kMRMediaRemoteNowPlayingInfoTitle" : "T",
+          "kMRMediaRemoteNowPlayingInfoArtist" : "A",
+          "kMRMediaRemoteNowPlayingInfoElapsedTime" : 0,
+          "kMRMediaRemoteNowPlayingInfoDuration" : 100,
+          "kMRMediaRemoteNowPlayingInfoPlaybackRate" : 1
+        }
+        """
+        np = _parse_raw_output(raw)
+        assert np.genre == ""
+
+
+class TestMacOSBackendInjection:
+    def test_poll_uses_injected_runner(self):
+        captured_args = []
+
+        def runner(args, timeout):
+            captured_args.append(args)
+            return _SAMPLE_RAW, 0
+
+        backend = MacOSBackend(runner=runner)
+        np = backend.poll()
+        assert np is not None
+        assert np.title == "Fix You"
+        # The runner was invoked with the get-raw subcommand
+        # (the workaround for the buggy per-field 'get').
+        assert captured_args[0][1] == "get-raw"
+        assert len(captured_args[0]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Output: Art-Net packet framing
+# ---------------------------------------------------------------------------
+
+class TestArtdmxPacket:
+    def test_header_layout(self):
+        u = bytearray(512)
+        u[0] = 0xAA
+        u[511] = 0xBB
+        pkt = build_artdmx_packet(u, sub_uni=3, net=1, sequence=7, physical=2)
+        assert pkt[:8] == b"Art-Net\0"
+        # opcode 0x5000 is little-endian on wire: 0x00, 0x50
+        assert pkt[8] == 0x00
+        assert pkt[9] == 0x50
+        # protocol version 14, big-endian
+        assert pkt[10] == 0x00
+        assert pkt[11] == 0x0E
+        assert pkt[12] == 7         # sequence
+        assert pkt[13] == 2         # physical
+        assert pkt[14] == 3         # sub_uni
+        assert pkt[15] == 1         # net
+        # length 512, big-endian
+        assert pkt[16] == 0x02
+        assert pkt[17] == 0x00
+        # DMX data follows
+        assert pkt[18] == 0xAA
+        assert pkt[18 + 511] == 0xBB
+        assert len(pkt) == 18 + 512
+
+    def test_universe_size_validated(self):
+        with pytest.raises(ValueError):
+            build_artdmx_packet(bytearray(256))
+
+    def test_dispatcher_sends_to_target(self):
+        """Open a real UDP listener and send one universe; verify the
+        bytes match."""
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        host, port = recv_sock.getsockname()
+        recv_sock.settimeout(1.0)
+
+        d = ArtnetDispatcher.open(host=host, port=port)
+        try:
+            u = bytearray(512)
+            u[5] = 0xFF
+            d.send(u)
+            data, _addr = recv_sock.recvfrom(2048)
+            assert data[:8] == b"Art-Net\0"
+            assert data[18 + 5] == 0xFF
+            # Default universe MUST be 1 - QLC+ uses 1-indexed universes
+            # in its UI and the shim defaults to universe 1. The
+            # default-on-default path needs no flags from the operator.
+            assert data[14] == 1   # sub_uni
+            assert data[15] == 0   # net
+        finally:
+            d.close()
+            recv_sock.close()
+
+    def test_dispatcher_universe_override(self):
+        """Operator can target an arbitrary universe via the constructor.
+        Verifies sub_uni / net split for a value above 255."""
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        host, port = recv_sock.getsockname()
+        recv_sock.settimeout(1.0)
+
+        # Universe 258 = sub_uni=2, net=1 (0x0102).
+        d = ArtnetDispatcher.open(host=host, port=port, universe=258)
+        try:
+            d.send(bytearray(512))
+            data, _addr = recv_sock.recvfrom(2048)
+            assert data[14] == 2   # sub_uni
+            assert data[15] == 1   # net
+        finally:
+            d.close()
+            recv_sock.close()
+
+
+# ---------------------------------------------------------------------------
+# Matcher
+# ---------------------------------------------------------------------------
+
+class TestSlugify:
+    def test_basic(self):
+        assert slugify("Coldplay", "Fix You") == "coldplay-fix-you"
+
+    def test_punctuation_collapsed(self):
+        assert slugify("AC/DC", "T.N.T.") == "ac-dc-t-n-t"
+
+    def test_unicode_folded(self):
+        assert slugify("Sigur Rós", "Hoppípolla") == "sigur-ros-hoppipolla"
+
+    def test_empty_parts_skipped(self):
+        assert slugify("", "Fix You") == "fix-you"
+        assert slugify("Coldplay", "") == "coldplay"
+        assert slugify("", "") == ""
+
+
+class TestFindCuePath:
+    def test_per_track_match(self, tmp_path):
+        (tmp_path / "coldplay-fix-you.cues").write_text("@bpm 120\n")
+        p = find_cue_path(tmp_path, "Coldplay", "Fix You")
+        assert p == tmp_path / "coldplay-fix-you.cues"
+
+    def test_falls_back_to_default(self, tmp_path):
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        p = find_cue_path(tmp_path, "Unknown", "Track")
+        assert p.name == "_default.cues"
+
+    def test_returns_none_when_nothing(self, tmp_path):
+        assert find_cue_path(tmp_path, "Anyone", "Anything") is None
+
+    def test_unicode_artist(self, tmp_path):
+        (tmp_path / "sigur-ros-hoppipolla.cues").write_text("@bpm 120\n")
+        p = find_cue_path(tmp_path, "Sigur Rós", "Hoppípolla")
+        assert p is not None and p.name == "sigur-ros-hoppipolla.cues"
+
+    def test_per_genre_fallback(self, tmp_path):
+        (tmp_path / "_default_metal.cues").write_text("@bpm 140\n")
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        # Unknown track + Metal genre -> the genre file wins over the
+        # global default.
+        p = find_cue_path(tmp_path, "Some Band", "Some Track", genre="Metal")
+        assert p.name == "_default_metal.cues"
+
+    def test_per_track_beats_per_genre(self, tmp_path):
+        # A per-track file always wins over per-genre, even if both
+        # exist - explicit programming overrides genre inference.
+        (tmp_path / "some-band-some-track.cues").write_text("@bpm 120\n")
+        (tmp_path / "_default_metal.cues").write_text("@bpm 140\n")
+        p = find_cue_path(tmp_path, "Some Band", "Some Track", genre="Metal")
+        assert p.name == "some-band-some-track.cues"
+
+    def test_genre_falls_through_to_default(self, tmp_path):
+        # Genre supplied but no per-genre file -> global default.
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        p = find_cue_path(
+            tmp_path, "Unknown", "Track", genre="Synthwave",
+        )
+        assert p.name == "_default.cues"
+
+    def test_multi_word_genre_slugified(self, tmp_path):
+        # "Alternative Rock" -> "alternative-rock" -> file name uses
+        # the hyphenated slug after the underscore prefix.
+        (tmp_path / "_default_alternative-rock.cues").write_text("@bpm 120\n")
+        p = find_cue_path(
+            tmp_path, "Some Band", "Track", genre="Alternative Rock",
+        )
+        assert p.name == "_default_alternative-rock.cues"
+
+    def test_empty_genre_skips_per_genre_tier(self, tmp_path):
+        # The orchestrator never looks for `_default_.cues`.
+        (tmp_path / "_default.cues").write_text("@bpm 120\n")
+        p = find_cue_path(tmp_path, "Unknown", "Track", genre="")
+        assert p.name == "_default.cues"
+
+
+# ---------------------------------------------------------------------------
+# Scheduler: position tracker
+# ---------------------------------------------------------------------------
+
+class TestPositionTracker:
+    def test_interpolates_while_playing(self):
+        t = PositionTracker()
+        np = NowPlaying(True, "A", "B", position_ms=10_000, duration_ms=120_000)
+        t.update_from_poll(np, now_ms=1_000)
+        assert t.current_position(now_ms=1_500) == 10_500
+
+    def test_does_not_advance_when_paused(self):
+        t = PositionTracker()
+        np = NowPlaying(False, "A", "B", position_ms=10_000, duration_ms=0)
+        t.update_from_poll(np, now_ms=1_000)
+        assert t.current_position(now_ms=10_000) == 10_000
+
+    def test_clear_resets_play_state(self):
+        t = PositionTracker()
+        np = NowPlaying(True, "A", "B", position_ms=10_000, duration_ms=0)
+        t.update_from_poll(np, now_ms=0)
+        t.clear()
+        assert not t.is_playing
+
+    def test_stale_cache_does_not_reset_anchor(self):
+        # MediaRemote sometimes returns the SAME elapsedTime on every
+        # poll even while playing (it only refreshes the cached value
+        # on state changes). The tracker must NOT re-anchor on a
+        # no-change position, or wall-clock advancement gets pinned to
+        # zero forever.
+        t = PositionTracker()
+        np = NowPlaying(True, "A", "B", position_ms=0, duration_ms=120_000)
+        t.update_from_poll(np, now_ms=0)
+        # 1 s later, OS still reports position=0. Tracker should keep
+        # extrapolating from the original anchor instead of
+        # resetting.
+        t.update_from_poll(np, now_ms=1_000)
+        assert t.current_position(now_ms=1_000) == 1_000
+        # Another second.
+        t.update_from_poll(np, now_ms=2_000)
+        assert t.current_position(now_ms=2_000) == 2_000
+
+    def test_genuine_position_change_reanchors(self):
+        # When the OS reports a fresh position, absorb it (handles
+        # seeks and well-behaved music apps).
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=0),
+            now_ms=0,
+        )
+        # 3 s later: OS catches up to ~3 s. Re-anchor.
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=3_000, duration_ms=0),
+            now_ms=3_000,
+        )
+        assert t.current_position(now_ms=3_500) == 3_500
+        # User scrubs forward to 30 s.
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=30_000, duration_ms=0),
+            now_ms=5_000,
+        )
+        assert t.current_position(now_ms=5_500) == 30_500
+
+    def test_play_pause_reanchors(self):
+        # Pausing should freeze the position at whatever the OS reports
+        # at that moment, not at wall-clock projection of the previous
+        # anchor.
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=0),
+            now_ms=0,
+        )
+        # 10 s of wall clock, OS still says 0 (stale): we'd predict 10.
+        # User then pauses; OS reports position=10000 (it finally
+        # updated). Tracker should absorb the pause state and the
+        # position.
+        t.update_from_poll(
+            NowPlaying(False, "A", "B", position_ms=10_000, duration_ms=0),
+            now_ms=10_000,
+        )
+        assert not t.is_playing
+        assert t.current_position(now_ms=20_000) == 10_000
+
+    def test_track_change_reanchors(self):
+        t = PositionTracker()
+        t.update_from_poll(
+            NowPlaying(True, "A", "Song 1", position_ms=60_000, duration_ms=0),
+            now_ms=0,
+        )
+        # New track starts at position 0.
+        t.update_from_poll(
+            NowPlaying(True, "A", "Song 2", position_ms=0, duration_ms=0),
+            now_ms=1_000,
+        )
+        assert t.current_position(now_ms=1_500) == 500
+
+
+# ---------------------------------------------------------------------------
+# Scheduler: cue cursor
+# ---------------------------------------------------------------------------
+
+class FakeRunner:
+    """Recording double for FxRunner used by scheduler tests."""
+
+    def __init__(self):
+        self.calls = []
+        self.cancels = []
+        self.beat_sets = []   # Epic 14.9 Block B: scheduler.set_beats() audit trail
+
+    def start(self, fx_id, *, bpm=0, buildup_s=0, params=(0,)*6,
+              position_ms=0, now_ms, replace_running=False):
+        self.calls.append({
+            "fx_id": fx_id, "bpm": bpm, "buildup_s": buildup_s,
+            "params": params, "position_ms": position_ms, "now_ms": now_ms,
+            "replace_running": replace_running,
+        })
+
+    def cancel(self, now_ms):
+        self.cancels.append(now_ms)
+
+    def set_beats(self, beats_ms):
+        # Epic 14.9 Block B. Scheduler pushes the MIR sidecar's beats
+        # list into the runner whenever the cue file changes. Tests
+        # that care about beat-grid propagation read this list back.
+        self.beat_sets.append(list(beats_ms or []))
+
+
+def _coldplay_cues():
+    text = """
+        @bpm 138
+        @default_fx quiet_wash 20 40 80
+        00:00 quiet_wash 20 40 80
+        00:10 sparkle_on_beat 80 200 200 100
+        00:20 sparkle_on_beat 255 0 255 100
+        00:30 fade_to_black --buildup 4
+        00:35 stop
+    """
+    return parse_cues(text)
+
+
+class TestCueScheduler:
+    def test_default_fx_fires_on_set(self):
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        # Default FX should have started.
+        assert runner.calls[-1]["fx_id"] == 1  # quiet_wash
+        assert runner.cancels  # cancel was called as part of set
+
+    def test_set_cue_file_propagates_beats_to_runner(self):
+        # Epic 14.9 Block B. The scheduler hands the cue file's
+        # beats_ms (loaded from the analysis sidecar at parse time)
+        # to the runner before starting any FX.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        cue_file = _coldplay_cues()
+        cue_file.beats_ms = [1210, 1640, 2070, 2500]
+        sched.set_cue_file(cue_file, now_ms=0)
+        # Most recent beat update should equal the file's list.
+        assert runner.beat_sets[-1] == [1210, 1640, 2070, 2500]
+
+    def test_set_cue_file_none_clears_beats(self):
+        # Calling set_cue_file(None) means "no track playing"; the
+        # runner's beats grid should be cleared so any next-loaded
+        # file's grid takes over cleanly.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        first = _coldplay_cues()
+        first.beats_ms = [500, 1000]
+        sched.set_cue_file(first, now_ms=0)
+        sched.set_cue_file(None, now_ms=10)
+        assert runner.beat_sets[-1] == []
+
+    def test_monotonic_advance_fires_each_cue(self):
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        starts_before = len(runner.calls)
+        sched.advance(0, now_ms=10)        # 00:00 cue (quiet_wash)
+        sched.advance(10_000, now_ms=20)   # 00:10 cue (sparkle_on_beat)
+        sched.advance(20_000, now_ms=30)   # 00:20 cue (sparkle_on_beat)
+        fired_fx_ids = [c["fx_id"] for c in runner.calls[starts_before:]]
+        assert fired_fx_ids == [1, 11, 11]
+
+    def test_forward_seek_collapses_to_most_recent_cue(self):
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        # Establish a baseline so the next jump is detected as a seek.
+        sched.advance(0, now_ms=10)
+        starts_before = len(runner.calls)
+        # Jump from 0 -> 22 s; SHOULD fire the most recent cue at-or-before
+        # 22 s (00:20 sparkle) but NOT the 00:10 sparkle.
+        sched.advance(22_000, now_ms=1000)
+        fired = [c["fx_id"] for c in runner.calls[starts_before:]]
+        assert fired == [11]  # only the 00:20 cue
+
+    def test_backward_seek_re_fires_landing_cue(self):
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        # Play forward through all the cues.
+        sched.advance(0, now_ms=10)
+        sched.advance(10_000, now_ms=20)
+        sched.advance(20_000, now_ms=30)
+        starts_before = len(runner.calls)
+        # User drags back to 12 s. Should re-fire the 00:10 cue.
+        sched.advance(12_000, now_ms=100)
+        fired = [c["fx_id"] for c in runner.calls[starts_before:]]
+        assert fired == [11]
+
+    def test_scheduler_force_restarts_on_every_cue(self):
+        # A sequence of cues with the same fx_id but different params
+        # must each restart the FX. Otherwise the runner's same-fx_id
+        # idempotency rule silently drops all but the first - a
+        # particularly nasty source of "transition didn't take over"
+        # bugs in authored cue files.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            00:00 sparkle_on_beat 255 0 0 100
+            00:15 sparkle_on_beat 0 0 255 100
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(15_000, now_ms=15_000)
+        sparkles = [c for c in runner.calls if c["fx_id"] == 11]
+        assert len(sparkles) == 2
+        # Both fires pass replace_running=True so the runner doesn't
+        # short-circuit on same fx_id.
+        assert all(c["replace_running"] for c in sparkles)
+        # The second sparkle carries the new (blue) RGB.
+        assert sparkles[-1]["params"][:3] == (0, 0, 255)
+
+    def test_stop_cue_admits_blackout(self):
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        sched.advance(35_000, now_ms=10_000)
+        # The `stop` cue is a parser alias for Blackout (id 254).
+        # Scheduler admits Blackout via the normal runner.start path
+        # so the dispatcher gets one final all-zero universe frame
+        # before the runner goes idle.
+        from nocturnation_orchestrator.fx.library.blackout import Blackout
+        ids = [c["fx_id"] for c in runner.calls]
+        assert Blackout.id in ids
+
+    def test_on_cue_fire_callback_invoked(self):
+        # The debug observer should be called for every cue admission.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_cue_fire=lambda cue, pos: observed.append((cue.fx_id, pos)),
+        )
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(10_000, now_ms=20)
+        ids = [fx for fx, _pos in observed]
+        # The 00:00 cue and 00:10 cue both fire; default_fx start does
+        # NOT go through on_cue_fire (it's part of set_cue_file, not a
+        # cue admission).
+        assert 1 in ids and 11 in ids
+
+
+class TestCueSchedulerLyrics:
+    def test_lyric_callback_fires_in_time_order(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append((lyric.text, pos)),
+        )
+        text = """
+            @bpm 138
+            # 00:10  First line
+            # 00:20  Second line
+            # 00:30  Third line
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(10_000, now_ms=20)
+        sched.advance(20_000, now_ms=30)
+        sched.advance(30_000, now_ms=40)
+        texts = [t for t, _pos in observed]
+        assert texts == ["First line", "Second line", "Third line"]
+
+    def test_forward_seek_collapses_lyrics(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:10  A
+            # 00:20  B
+            # 00:30  C
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        observed.clear()
+        # Big forward seek (>2 s threshold) to 25 s -> only C is fired.
+        # Wait, 25 s is between B and C, so most-recent-at-or-before is B.
+        sched.advance(25_000, now_ms=1000)
+        assert observed == ["B"]
+
+    def test_late_join_collapses_lyrics(self):
+        # Operator presses play mid-song (or wall-clock interpolation
+        # has already crossed several lyrics by the time the runner
+        # gets ticked). The first advance() should fire only the most-
+        # recent lyric, not dump every prior one in a burst.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:16  First
+            # 00:24  Second
+            # 00:32  Third
+            # 00:55  Future
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        # First advance is at 53 s - we joined mid-song; collapse to
+        # the most recent prior anchor (Third), don't fire First /
+        # Second too.
+        sched.advance(53_000, now_ms=100)
+        assert observed == ["Third"]
+
+    def test_late_join_collapses_cues(self):
+        # Same as above but for cues - the audible analogue of the
+        # 5-lyrics-at-once dump was 5-cues-at-once.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        sched.set_cue_file(_coldplay_cues(), now_ms=0)
+        # _coldplay_cues has cues at 0, 10s, 20s, 30s, 35s. Default fx
+        # fires on set_cue_file. After that the runner has been called
+        # once (the default_fx start). Joining at 25 s should add only
+        # the cue at 20 s (most-recent prior).
+        calls_before = len(runner.calls)
+        sched.advance(25_000, now_ms=100)
+        added = runner.calls[calls_before:]
+        # Exactly one cue fires (the 20 s sparkle), not three.
+        assert len(added) == 1
+        assert added[0]["fx_id"] == 11   # sparkle_on_beat
+
+    def test_late_join_at_zero_still_fires_zero_cue(self):
+        # A genuine song-start (position 0 on first advance) is not a
+        # late-join - we want the file's 00:00 cue to fire normally,
+        # not be skipped.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:00  At the very start
+            # 00:10  Later
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        # Both the cue cursor and lyric cursor land on the 00:00
+        # anchor - that's normal monotonic behaviour, not a seek.
+        assert observed == ["At the very start"]
+
+    def test_bpm_cue_mutates_file_default_and_callback_fires(self):
+        runner = FakeRunner()
+        bpm_changes = []
+        sched = CueScheduler(
+            runner,
+            on_bpm_change=lambda cue, pos: bpm_changes.append((cue.bpm, pos)),
+        )
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:00 bpm 140
+            00:10 sparkle_on_beat 255 0 0 100
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # At 0 ms: the bpm cue fires. file.default_bpm becomes 140.
+        sched.advance(0, now_ms=10)
+        assert f.default_bpm == 140
+        assert bpm_changes == [(140, 0)]
+        # At 10 s: the sparkle cue picks up the new default.
+        sched.advance(10_000, now_ms=20)
+        fired = [c for c in runner.calls if c["fx_id"] == 11]
+        assert fired and fired[-1]["bpm"] == 140
+
+    def test_bpm_then_fx_at_same_time(self):
+        # User authors a tempo change paired with a fresh FX at the
+        # same beat. The FX must see the new BPM.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:15 sparkle_on_beat 100 100 100 100
+            00:15 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        sched.advance(15_000, now_ms=100)
+        sparkle = [c for c in runner.calls if c["fx_id"] == 11][-1]
+        assert sparkle["bpm"] == 140
+
+    def test_backward_seek_restores_original_bpm(self):
+        # File starts at 100 BPM, ramps to 140 at 00:30.  Seeking
+        # back to 00:10 must restore the bpm to 100 - otherwise the
+        # leftover 140 lingers.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:30 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # Play past the bpm change.
+        sched.advance(35_000, now_ms=10)
+        assert f.default_bpm == 140
+        # Scrub back to 10 s.
+        sched.advance(10_000, now_ms=1000)
+        assert f.default_bpm == 100
+
+    def test_reload_swaps_file_without_disturbing_running_fx(self):
+        # Hot-reload model: scheduler.reload_cue_file() swaps the cue
+        # file, advances cursors past the current position so already-
+        # elapsed cues don't re-fire, applies past bpm cues so
+        # default_bpm matches expected state, and DOES NOT call into
+        # the runner (the currently-running FX keeps writing).
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        # Initial file: quiet_wash on default at 00:00, then nothing.
+        f1 = parse_cues("""
+            @bpm 100
+            @default_fx quiet_wash 40 80 120
+        """)
+        sched.set_cue_file(f1, now_ms=0)
+        # Play to 30 s.
+        sched.advance(30_000, now_ms=30_000)
+        calls_before = list(runner.calls)
+        cancels_before = list(runner.cancels)
+
+        # Author the file: add a bpm change at 10 s, a cue at 20 s, and
+        # a future cue at 60 s. Reload at the current position (30 s).
+        f2 = parse_cues("""
+            @bpm 100
+            @default_fx quiet_wash 40 80 120
+            00:10 bpm 138
+            00:20 sparkle_on_beat 255 0 0 100
+            01:00 sparkle_on_beat 0 0 255 100
+        """)
+        sched.reload_cue_file(f2, now_ms=30_000, position_ms=30_000)
+        # Runner state untouched.
+        assert runner.calls == calls_before
+        assert runner.cancels == cancels_before
+        # Past bpm cue applied to the new file's default_bpm.
+        assert f2.default_bpm == 138
+        # Subsequent advance should fire the 01:00 cue when we get
+        # there; the 00:20 cue should NOT re-fire.
+        sched.advance(60_500, now_ms=60_500)
+        added = runner.calls[len(calls_before):]
+        added_ids = [c["fx_id"] for c in added]
+        assert added_ids == [11]   # only the 60 s sparkle, not 20 s
+        # The 60 s cue picked up the new BPM (138).
+        assert added[0]["bpm"] == 138
+
+    def test_reload_lyric_cursor_skips_past_anchors(self):
+        # Same idea for lyric anchors: past-position lyrics don't
+        # surface again on reload.
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues("# 00:10 A\n"), now_ms=0)
+        sched.advance(15_000, now_ms=15_000)
+        # Reload with a file that adds a past anchor and a future one.
+        f2 = parse_cues("""
+            # 00:05 PAST
+            # 00:10 A
+            # 00:20 FUTURE
+        """)
+        observed.clear()
+        sched.reload_cue_file(f2, now_ms=15_000, position_ms=15_000)
+        # No replays yet.
+        assert observed == []
+        # Advance to 20 s: only FUTURE fires.
+        sched.advance(20_500, now_ms=20_500)
+        assert observed == ["FUTURE"]
+
+    def test_backward_seek_reapplies_intermediate_bpm(self):
+        # Two bpm changes on the same timeline; seek back to a point
+        # AFTER the first but BEFORE the second should leave the
+        # default at the first value.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        from nocturnation_orchestrator.cues import parse_cues
+        f = parse_cues("""
+            @bpm 100
+            00:10 bpm 120
+            00:30 bpm 140
+        """)
+        sched.set_cue_file(f, now_ms=0)
+        # Play through both.
+        sched.advance(40_000, now_ms=10)
+        assert f.default_bpm == 140
+        # Scrub back to 20 s (between the two cues).
+        sched.advance(20_000, now_ms=1000)
+        assert f.default_bpm == 120
+
+    def test_backward_seek_replays_landing_lyric(self):
+        runner = FakeRunner()
+        observed = []
+        sched = CueScheduler(
+            runner,
+            on_lyric=lambda lyric, pos: observed.append(lyric.text),
+        )
+        text = """
+            # 00:10  A
+            # 00:20  B
+            # 00:30  C
+        """
+        from nocturnation_orchestrator.cues import parse_cues
+        sched.set_cue_file(parse_cues(text), now_ms=0)
+        sched.advance(0, now_ms=10)
+        sched.advance(35_000, now_ms=40)
+        observed.clear()
+        # Scrub back to 12 s -> re-fire landing lyric (A).
+        sched.advance(12_000, now_ms=1000)
+        assert observed == ["A"]
+
+
+# ---------------------------------------------------------------------------
+# Main loop smoke
+# ---------------------------------------------------------------------------
+
+class FakeBackend:
+    def __init__(self, sequence):
+        # sequence is a list of NowPlaying | None. Each poll pops the
+        # head; once exhausted, subsequent polls keep returning the
+        # last value. Matches real backends (Apple Music / SMTC /
+        # MPRIS keep reporting the current track until it actually
+        # changes), and decouples tests from the orchestrator's poll
+        # rate.
+        self._sequence = list(sequence)
+        self._last = None
+
+    def poll(self):
+        if self._sequence:
+            self._last = self._sequence.pop(0)
+        return self._last
+
+
+class CaptureDispatcher:
+    name = "capture"
+
+    def __init__(self):
+        self.sends = []
+        self.espnow_frames = []
+        self.closed = False
+
+    def send(self, universe):
+        # Take a snapshot - the universe is the same buffer on every tick.
+        self.sends.append(bytes(universe))
+
+    def send_espnow_frame(self, frame):
+        # Epic 13: ESP-NOW passthrough capture.
+        self.espnow_frames.append(bytes(frame))
+        return True
+
+    def close(self):
+        self.closed = True
+
+
+class TestMainLoopSmoke:
+    def test_loop_skips_send_when_no_fx(self, tmp_path):
+        # No songs dir, no source - the matcher returns None and the
+        # scheduler stays stopped. The runner has no FX so we MUST
+        # NOT dispatch the universe; sending an all-zero universe at
+        # startup poisons the StickC mapper's wash seed.
+        backend = FakeBackend([None])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += int(seconds * 1000) or 20
+        run(
+            nowplaying_backend=backend,
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep,
+            now_ms=now_ms,
+            iteration_budget=5,
+        )
+        assert disp.closed
+        # No FX was ever admitted - so no dispatch.
+        assert disp.sends == []
+
+    def test_static_wash_dispatches_only_once(self, tmp_path):
+        # A static default_fx (QuietWash with constant params) should
+        # produce exactly ONE USB dispatch across many ticks. Without
+        # this suppression a long-running orchestrator floods USB at
+        # 50 Hz with byte-identical frames. (Epic 11 B0 rollback
+        # restored this behaviour after the mid-Epic-11 orchestrator-
+        # side pixmob_refresh stopgap was removed - wash encoding
+        # decisions belong in the Director's binding, not here.)
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 100 100\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=200,
+        )
+        # Exactly one dispatch despite 200 ticks. The dispatched
+        # universe carries the QuietWash wash anchors.
+        assert len(disp.sends) == 1
+        sent = disp.sends[0]
+        assert sent[0] == 255    # ch 1 master
+        assert sent[10] == 100   # ch 11 wash A R
+        assert sent[11] == 100   # ch 12 wash A G
+        assert sent[12] == 100   # ch 13 wash A B
+
+    def test_changing_universe_dispatches_each_change(self, tmp_path):
+        # SparkleOnBeat toggles the pulse-trigger channel between
+        # 255 (on-beat tick) and 0 (re-arm tick), so the universe
+        # changes twice per beat. Each change must produce one
+        # dispatch even though most ticks are still suppressed.
+        (tmp_path / "_default.cues").write_text(
+            "@bpm 120\n"
+            "@default_fx sparkle_on_beat 255 0 0 100\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=100,  # ~2 s of wall-clock at 20 ms ticks
+        )
+        # At 120 BPM = 2 beats/s, over 2 seconds that's 4 beats
+        # = roughly 8 dispatches (rising + falling per beat) plus the
+        # initial dispatch. Should be far fewer than the 100 ticks
+        # but more than 1.
+        n = len(disp.sends)
+        assert 4 <= n <= 20, "expected ~8 dispatches, got %d" % n
+
+    def test_main_loop_reloads_cue_file_on_mtime_change(self, tmp_path):
+        # Author flow: orchestrator running, song playing, LD saves a
+        # change to the .cues file. Within one poll cycle the new
+        # cues should take effect. We exercise this from inside a
+        # single run() by mutating the file from the test-injected
+        # sleep() callback at a known wall-clock moment.
+        import os
+        cue_path = tmp_path / "x-track.cues"
+        cue_path.write_text(
+            "@bpm 100\n"
+            "@default_fx quiet_wash 40 80 120\n"
+        )
+        original_mtime = cue_path.stat().st_mtime
+
+        # Keep returning the same playing snapshot indefinitely so
+        # the orchestrator polls many times.
+        class RepeatingBackend:
+            def poll(self):
+                return NowPlaying(
+                    True, "X", "Track",
+                    position_ms=0, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        modified = [False]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+            # Once the simulated clock has passed 1500 ms, rewrite
+            # the cue file with an added cue and bump mtime so the
+            # next poll detects the change.
+            if not modified[0] and clock[0] >= 1500:
+                cue_path.write_text(
+                    "@bpm 100\n"
+                    "@default_fx quiet_wash 40 80 120\n"
+                    "01:00 sparkle_on_beat 255 0 0 100\n"
+                )
+                os.utime(cue_path, (original_mtime + 5, original_mtime + 5))
+                modified[0] = True
+
+        run(
+            nowplaying_backend=RepeatingBackend(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=False,
+            sleep=sleep,
+            now_ms=now_ms,
+            iteration_budget=200,  # enough to cross multiple polls
+        )
+
+        joined = "\n".join(lines)
+        # The original file was loaded.
+        assert "matcher: x-track" in joined
+        # The reload was detected and applied.
+        assert "reload: x-track" in joined
+
+    def test_debug_poll_log_throttles_when_state_steady(self, tmp_path):
+        # At 1 Hz polling, --debug used to emit a poll line every
+        # second. Once a song is steady that's just noise. Now:
+        # log every poll if the state changed, otherwise no more
+        # than once per ~10 s.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        # 20 consecutive identical snapshots (same track, playing).
+        class Steady:
+            def poll(self):
+                return NowPlaying(
+                    True, "X", "Track",
+                    position_ms=0, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+
+        run(
+            nowplaying_backend=Steady(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=1500,  # ~30 s simulated time
+        )
+        poll_lines = [l for l in lines if l.startswith("[") and "poll:" in l]
+        # ~30 s window. With state-steady throttling at 10 s, expect
+        # somewhere around 3-5 lines (kickoff + 3 quiet pings).
+        # Without throttling we'd see ~30.
+        assert 1 <= len(poll_lines) <= 6, (
+            "expected throttled poll log, got %d lines:\n%s"
+            % (len(poll_lines), "\n".join(poll_lines))
+        )
+
+    def test_debug_poll_log_fires_on_state_change(self, tmp_path):
+        # State changes (play / pause / track switch) must log
+        # immediately, not wait for the 10 s quiet timer.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        class Toggling:
+            def __init__(self):
+                self._tick = 0
+            def poll(self):
+                # alternate playing / paused on each call
+                self._tick += 1
+                return NowPlaying(
+                    self._tick % 2 == 1,
+                    "X", "Track",
+                    position_ms=self._tick * 1000, duration_ms=120_000,
+                )
+
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+
+        run(
+            nowplaying_backend=Toggling(),
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=400,  # ~8 polls
+        )
+        poll_lines = [l for l in lines if l.startswith("[") and "poll:" in l]
+        # Every poll flipped state, so every one should log even
+        # though the 10 s quiet timer hasn't elapsed.
+        assert len(poll_lines) >= 4
+
+    def test_debug_output_uses_slug_for_artist_title(self, tmp_path):
+        # The LD reads the orchestrator's log to know what file name
+        # the matcher is hunting for. Showing slug form (the same
+        # transformation the matcher applies) trains the LD on the
+        # expected file naming convention.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 0 0\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "Coldplay", "A Sky Full of Stars",
+                       position_ms=0, duration_ms=295_000),
+        ])
+        disp = CaptureDispatcher()
+        lines = []
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda msg: lines.append(msg),
+            debug=True,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=80,  # enough to cross the 1 s poll boundary
+        )
+        joined = "\n".join(lines)
+        assert "coldplay-a-sky-full-of-stars" in joined
+        # The pre-slug form must NOT appear (we want a single visual
+        # convention so the LD doesn't see two formats).
+        assert "Coldplay / A Sky Full of Stars" not in joined
+        assert "'Coldplay', 'A Sky Full of Stars'" not in joined
+
+    def test_inactive_to_active_clears_dispatch_cache(self, tmp_path):
+        # If the orchestrator stops sending (no FX) and later
+        # re-activates with the same universe bytes, the first frame
+        # after re-activation must still be dispatched so the StickC
+        # doesn't sit on stale state from before the quiet period.
+        (tmp_path / "_default.cues").write_text(
+            "@default_fx quiet_wash 100 100 100\n"
+        )
+        backend = FakeBackend([
+            # First track loads default_fx, sends one wash frame.
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+            # No source - runner goes idle, scheduler stops, no FX.
+            None,
+            None,
+            # Same track again - default_fx reloads, fresh send.
+            NowPlaying(True, "A", "B", position_ms=0, duration_ms=10_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        # Force enough ticks per poll-cycle that all 4 polls fire.
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 500)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=30,
+        )
+        # Two distinct active periods -> at least two dispatches,
+        # even though both carry byte-identical wash universes.
+        assert len(disp.sends) >= 2
+        assert disp.sends[0] == disp.sends[-1]   # same bytes both times
+
+    def test_loop_loads_cue_file_and_dispatches_universe(self, tmp_path):
+        # Default FX establishes the bed; a later cue switches to a
+        # different FX so we can prove the scheduler actually fires
+        # cues (not just the default).
+        (tmp_path / "coldplay-fix-you.cues").write_text(
+            "@bpm 138\n"
+            "@default_fx quiet_wash 100 0 0\n"
+            "00:05 drift_wash 50 100 0 200 220 0 80\n"
+        )
+        backend = FakeBackend([
+            NowPlaying(True, "Coldplay", "Fix You",
+                       position_ms=0, duration_ms=295_000),
+            NowPlaying(True, "Coldplay", "Fix You",
+                       position_ms=5_500, duration_ms=295_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend,
+            dispatcher=disp,
+            songs_dir=str(tmp_path),
+            default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep,
+            now_ms=now_ms,
+            iteration_budget=200,
+        )
+        # By the end, the 00:05 drift_wash cue should be running -
+        # Wash A=(50,100,0,...) Wash B=(200,220,0,...) cycle=80.
+        last = disp.sends[-1]
+        assert last[0] == 255            # ch 1 master (drift_wash sets to 255)
+        assert last[10] == 50            # ch 11 Wash A R
+        assert last[11] == 100           # ch 12 Wash A G
+        assert last[12] == 0             # ch 13 Wash A B
+        assert last[13] == 200           # ch 14 Wash B R
+        assert last[14] == 220           # ch 15 Wash B G
+        assert last[15] == 0             # ch 16 Wash B B
+        assert last[16] == 80            # ch 17 cycle
+
+
+# ---------------------------------------------------------------------------
+# Epic 13 B4: display-content end-to-end via run()
+# ---------------------------------------------------------------------------
+
+
+def _decode_text_display(frame):
+    """Tiny decoder for TEXT_DISPLAY frames the orchestrator emits.
+    Mirrors the C++ wire layout; only the fields tests assert against.
+    """
+    assert frame[0] == 0x4E and frame[1] == 0x4E   # magic
+    assert frame[2] == 0x02                         # protocol_version
+    msg_type = frame[6]
+    payload_len = frame[7]
+    payload = frame[8:8 + payload_len]
+    return {
+        "msg_type": msg_type,
+        "target_group": payload[0],
+        "r": payload[1],
+        "g": payload[2],
+        "b": payload[3],
+        "ttl_ms": payload[4] | (payload[5] << 8),
+        "header": payload[7:7 + payload[6]].decode("utf-8"),
+        "body": payload[8 + payload[6]:8 + payload[6]
+                        + payload[7 + payload[6]]].decode("utf-8"),
+    }
+
+
+def _decode_clear_screen(frame):
+    assert frame[6] == 0x0C
+    payload = frame[8:8 + frame[7]]
+    return {
+        "target_group": payload[0],
+        "clear_text": bool(payload[1]),
+        "clear_bitmap": bool(payload[2]),
+    }
+
+
+class TestDisplayCuesEndToEnd:
+    """Run the orchestrator main loop against a cue file that uses
+    Epic 13 directives; assert the dispatcher captures the expected
+    TEXT_DISPLAY / CLEAR_SCREEN emissions."""
+
+    def _drive(self, tmp_path, cue_text, *, position_ms=0, iterations=20):
+        cue_path = tmp_path / "a-x.cues"
+        cue_path.write_text(cue_text)
+        backend = FakeBackend([
+            NowPlaying(True, "A", "X", position_ms=position_ms,
+                       duration_ms=120_000),
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 20)
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=iterations,
+        )
+        return disp
+
+    def test_header_and_body_text_cue_emits_text_display(self, tmp_path):
+        disp = self._drive(
+            tmp_path,
+            "@bpm 120\n"
+            "00:00 HeaderText: Coldplay\n"
+            "00:00.5 BodyText: Adventure of a Lifetime\n",
+            iterations=100,
+        )
+        # At minimum the two display cues fire (one frame each).
+        assert len(disp.espnow_frames) >= 2
+        first = _decode_text_display(disp.espnow_frames[0])
+        assert first["msg_type"] == 0x09
+        assert first["header"] == "Coldplay"
+        assert first["body"] == ""           # body not yet set
+        second = _decode_text_display(disp.espnow_frames[1])
+        assert second["header"] == "Coldplay"   # carried over from state
+        assert second["body"] == "Adventure of a Lifetime"
+
+    def test_clearscreen_cue_emits_clear_screen(self, tmp_path):
+        disp = self._drive(
+            tmp_path,
+            "00:00 BodyText: Visible\n"
+            "00:00.1 clearscreen\n",
+            iterations=100,
+        )
+        # First emission = text; second emission = clear.
+        text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
+        clear_frames = [f for f in disp.espnow_frames if f[6] == 0x0C]
+        assert len(text_frames) >= 1
+        assert len(clear_frames) >= 1
+        clear = _decode_clear_screen(clear_frames[-1])
+        assert clear["clear_text"] is True
+        assert clear["clear_bitmap"] is True
+
+    def test_show_song_info_emits_card_on_track_start(self, tmp_path):
+        # @ShowSongInfo synthesises HeaderText + BodyText cues at
+        # time_ms=1000 (1 s into the song to dodge the 0:00 cue-fire
+        # burst) and the scheduler fires them when position reaches 1s.
+        # Two cues = two TEXT_DISPLAY frames (header alone, then header
+        # + body); the LAST frame holds the composed final state.
+        # iterations: poll-loop fires every ~13 ticks (250ms interval)
+        # and position needs to advance past 1000ms => need ~70+ ticks
+        # (at 20ms per tick = 1.4 s of wall-clock).
+        disp = self._drive(
+            tmp_path,
+            "@ShowSongInfo\n",
+            iterations=100,
+        )
+        text_frames = [f for f in disp.espnow_frames if f[6] == 0x09]
+        # Expect at least 2 frames: the synth header + the synth body.
+        assert len(text_frames) >= 2
+        last = _decode_text_display(text_frames[-1])
+        # snapshot.artist -> header, snapshot.title -> body.
+        # FakeBackend in _drive uses artist="A" title="X".
+        assert last["header"] == "A"
+        assert last["body"] == "X"
+
+    def test_no_emission_without_show_song_info_or_display_cues(self, tmp_path):
+        # Plain wash-only cue file - no Epic 13 directives, no display
+        # cues - should produce zero ESP-NOW emissions. Back-compat
+        # gate: existing cue files keep working unchanged.
+        disp = self._drive(
+            tmp_path,
+            "@bpm 120\n"
+            "@default_fx quiet_wash 100 100 100\n",
+            iterations=20,
+        )
+        assert disp.espnow_frames == []
+
+    def test_track_change_to_none_emits_clear_screen(self, tmp_path):
+        # Track plays, then the now-playing source goes away.
+        # The orchestrator should emit CLEAR_SCREEN so the previous
+        # track's text doesn't linger on the Lume screens.
+        cue_path = tmp_path / "a-x.cues"
+        cue_path.write_text(
+            "@ShowSongInfo\n"
+            "00:00 HeaderText: My Header\n"
+        )
+        # Sequence: one playing snapshot, then None (source gone).
+        backend = FakeBackend([
+            NowPlaying(True, "A", "X", position_ms=0, duration_ms=10_000),
+            None,
+        ])
+        disp = CaptureDispatcher()
+        clock = [0]
+        def now_ms():
+            return clock[0]
+        def sleep(seconds):
+            clock[0] += max(int(seconds * 1000), 250)  # one poll per "second"
+        run(
+            nowplaying_backend=backend, dispatcher=disp,
+            songs_dir=str(tmp_path), default_bpm=120,
+            log=lambda *a, **kw: None,
+            sleep=sleep, now_ms=now_ms,
+            iteration_budget=40,
+        )
+        # We expect: TEXT_DISPLAY (now-playing) + TEXT_DISPLAY (HeaderText cue)
+        # + CLEAR_SCREEN (source went away).
+        clear_frames = [f for f in disp.espnow_frames if f[6] == 0x0C]
+        assert len(clear_frames) >= 1

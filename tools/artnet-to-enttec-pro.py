@@ -32,9 +32,29 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+# Shared library (Epic 10 B0). Both this shim and the music orchestrator
+# import the framing, port-picker, and USB-write code from here so they
+# stay in lockstep on Plus2 quirks, Tildagon exclusion, and baud rate.
+# Behaviour-preserving refactor: every symbol the shim used to declare
+# inline is now imported.
+from nocturnation_dmx import (
+    DMX_UNIVERSE_BYTES,
+    ENTTEC_BAUD,
+    UsbWriter,
+    describe_port,
+    device_kind_from_port,
+    find_candidate_ports,
+    find_candidate_ports_with_info,
+    interactive_pick_port,
+    open_serial,
+    port_looks_like_tildagon,
+    wrap_enttec_espnow,
+    wrap_enttec_pro,
+)
+
 
 # ============================================================================
-# Constants
+# Constants (shim-local)
 # ============================================================================
 
 VERSION = "0.1.0"
@@ -42,15 +62,20 @@ VERSION = "0.1.0"
 # Art-Net protocol
 ARTNET_HEADER = b"Art-Net\x00"
 ARTNET_OP_OUTPUT = 0x5000
+# Epic 13: NocturNation OpVendorEspNow. Carries a fully-formed
+# NocturNation ESP-NOW frame; the shim unwraps and rewraps as Enttec
+# label 0x10 so the Stick (in DMX bridge mode) broadcasts the inner
+# frame onto the radio. Mirrors the orchestrator's _OPCODE_VENDOR_ESPNOW
+# in nocturnation_orchestrator/output/artnet.py.
+ARTNET_OP_VENDOR_ESPNOW = 0xFB00
 ARTNET_DEFAULT_PORT = 6454
 
-# Enttec DMX USB Pro framing
-ENTTEC_START = 0x7E
-ENTTEC_END = 0xE7
-ENTTEC_LABEL_OUTPUT = 0x06
-ENTTEC_DMX_START_CODE = 0x00
-ENTTEC_BAUD = 921_600
-DMX_UNIVERSE_BYTES = 512
+# HTP merge tuning. A source that hasn't been heard from in this
+# many seconds is dropped from the merge - keeps QLC+ stopping mid-
+# show from pinning its last frame on top of the orchestrator's bed.
+# 500 ms is a comfortable margin over orchestrator's 250 ms poll +
+# the typical Art-Net resend cadence.
+MERGE_STALENESS_S = 0.5
 
 # Channel role labels for the diagnostics view, matching Epic 7 B7
 # layout (23 active channels per block, grouped by lighting concept).
@@ -80,10 +105,46 @@ CHANNEL_ROLES = [
     "Wash Intensity",
     "Wash Attack",
     "Wash Release",
-    "Wash TTL Lo",
-    "Wash TTL Hi",
-    "Wash Pulse Resp",
+    # Channels 21-23 were Wash TTL Lo / Hi and Wash Pulse Response.
+    # Dropped from the LD surface: the DMX bridge always emits
+    # LIGHT_WASH frames with ttl_seconds=0 (30-min lost-WASH_END
+    # failsafe handles stuck washes) and pulse_response=1 (so
+    # sparkle on wash works by default). Wire protocol unchanged.
+    "Reserved 21",
+    "Reserved 22",
+    "Reserved 23",
+    # Channels 24-27 are the EMF stage-team raw-RGB path (added
+    # 2026-06-23): direct LD control of each block as a dumb RGB
+    # fixture, FX engine suppressed when Raw Enable >= 128.
+    "Raw R",
+    "Raw G",
+    "Raw B",
+    "Raw Enable",
 ]
+BLOCK_WIDTH = 40       # universe channels per block
+MAX_UNIVERSE_CHANNEL = 512
+
+
+def channel_to_role_and_group(universe_channel):
+    """Map a 1-indexed universe channel to (group_label, role_label).
+
+    Block 0 (universe 1..40) is broadcast (target_group = 0). Block N
+    (universe (40*N+1)..(40*N+40)) is group N. Within each block the
+    same role layout repeats - so universe channel 44 in group 1 is
+    the same role as channel 4 in broadcast (Pulse G), just addressed
+    to a different fleet subset.
+    """
+    if not (1 <= universe_channel <= MAX_UNIVERSE_CHANNEL):
+        return ("?", "out-of-range")
+    zero_idx = universe_channel - 1
+    block_idx = zero_idx // BLOCK_WIDTH
+    offset = zero_idx % BLOCK_WIDTH
+    group_label = "Broadcast" if block_idx == 0 else f"Group {block_idx}"
+    if offset < len(CHANNEL_ROLES):
+        role = CHANNEL_ROLES[offset]
+    else:
+        role = f"Reserved {offset + 1}"
+    return (group_label, role)
 
 
 # ============================================================================
@@ -124,149 +185,42 @@ def decode_artnet_output(data: bytes) -> Optional[tuple[int, bytes]]:
     return universe, data[18:18 + payload_len]
 
 
-# ============================================================================
-# Enttec Pro framing
-# ============================================================================
+def decode_artnet_vendor_espnow(data: bytes) -> Optional[bytes]:
+    """Validate an OpVendorEspNow packet (Epic 13) and extract the
+    inner NocturNation ESP-NOW frame.
 
-def wrap_enttec_pro(payload: bytes) -> bytes:
-    """Wrap a DMX payload in Enttec DMX USB Pro Output Only framing.
+    Returns None for any packet that isn't a well-formed OpVendorEspNow.
 
-    Pads payload to 512 bytes if shorter; truncates if longer (Art-Net can
-    send 2-512 channels per packet). The length field in the Enttec frame
-    is the payload size INCLUDING the DMX start code byte (513 total).
-
-    Layout:
-      0     0x7E                    start byte
-      1     0x06                    label = Output Only Send DMX Packet
-      2..3  513 (little-endian)     length = start code + 512 channel bytes
-      4     0x00                    DMX start code (standard data, no RDM)
-      5..516 channel values 1..512
-      517   0xE7                    end byte
+    Frame layout:
+      0..7    "Art-Net\\0"
+      8..9    Opcode 0xFB00 (little-endian on wire)
+      10..11  Protocol version (big-endian, 14+)
+      12..13  Inner frame length (big-endian)
+      14..    Inner ESP-NOW frame, length bytes
     """
-    if len(payload) < DMX_UNIVERSE_BYTES:
-        payload = payload + b"\x00" * (DMX_UNIVERSE_BYTES - len(payload))
-    elif len(payload) > DMX_UNIVERSE_BYTES:
-        payload = payload[:DMX_UNIVERSE_BYTES]
-    length = DMX_UNIVERSE_BYTES + 1   # 1 byte start code + 512 channels
-    return bytes((
-        ENTTEC_START,
-        ENTTEC_LABEL_OUTPUT,
-        length & 0xFF,
-        (length >> 8) & 0xFF,
-        ENTTEC_DMX_START_CODE,
-    )) + payload + bytes((ENTTEC_END,))
-
-
-# ============================================================================
-# Serial port handling
-# ============================================================================
-
-def find_candidate_ports() -> list[str]:
-    """List likely NocturNation device serial ports on the current OS.
-
-    Wrapper around find_candidate_ports_with_info() that returns just
-    the device paths - kept for callers that don't need the descriptions.
-    """
-    return [device for device, _desc in find_candidate_ports_with_info()]
-
-
-def find_candidate_ports_with_info() -> list[tuple[str, str]]:
-    """List likely NocturNation device serial ports with a human
-    description of each, used by the interactive picker.
-
-    On macOS, USB-CDC devices appear as /dev/cu.usbmodemNNNN. On Linux,
-    /dev/ttyACMn. On Windows, USB-CDC devices show as COMn with a
-    description containing 'USB Serial' or the device's product string -
-    we just return all COM ports and let the user pick if there's more
-    than one.
-    """
-    candidates = []
-    for port in serial.tools.list_ports.comports():
-        device = port.device
-        if "usbmodem" in device or "ttyACM" in device:
-            candidates.append((device, _describe_port(port)))
-        elif device.upper().startswith("COM"):   # Windows
-            candidates.append((device, _describe_port(port)))
-    return candidates
-
-
-def _device_kind_from_port(port_path: str) -> str:
-    """Identify whether a serial port is a Tildagon or something else,
-    used by --encode auto. Matches on the USB device's manufacturer +
-    product strings (Tildagon shows up as 'Electromagnetic Field
-    TiLDAGON' on macOS).
-    """
-    for port in serial.tools.list_ports.comports():
-        if port.device == port_path:
-            desc = _describe_port(port).lower()
-            if "tildagon" in desc:
-                return "tildagon"
-            break
-    return "other"
-
-
-def _describe_port(port) -> str:
-    """Best-effort human label for a serial.tools.list_ports.ListPortInfo.
-
-    Combines the manufacturer / product strings the OS exposes for the
-    USB device behind the serial port, so the picker can show
-    "M5StickC Plus2" or "Espressif S3" rather than just opaque
-    /dev/cu.usbmodemNNNN paths.
-    """
-    bits = []
-    if getattr(port, "manufacturer", None):
-        bits.append(str(port.manufacturer))
-    if getattr(port, "product", None):
-        bits.append(str(port.product))
-    if not bits and getattr(port, "description", None):
-        bits.append(str(port.description))
-    return " ".join(bits) if bits else "(unknown device)"
-
-
-def interactive_pick_port() -> Optional[str]:
-    """Show the available serial ports and let the operator pick one.
-
-    Returns the chosen device path, or None if the user cancels or
-    there are no candidates. Skips the prompt entirely when there's
-    only one candidate (no choice to make).
-    """
-    candidates = find_candidate_ports_with_info()
-    if not candidates:
-        print("No serial ports detected. Plug in your StickC or "
-              "Tildagon and try again, or pass --port explicitly.",
-              file=sys.stderr)
+    if len(data) < 14:
         return None
-    if len(candidates) == 1:
-        device, desc = candidates[0]
-        print(f"Auto-selecting only available port: {device}  ({desc})")
-        return device
-    print("Multiple serial ports detected. Pick one:")
-    for idx, (device, desc) in enumerate(candidates, start=1):
-        print(f"  [{idx}] {device:30}  {desc}")
-    while True:
-        try:
-            choice = input(
-                f"Enter 1-{len(candidates)} (or q to quit): "
-            ).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return None
-        if choice in ("q", "quit", "exit"):
-            return None
-        try:
-            n = int(choice)
-            if 1 <= n <= len(candidates):
-                return candidates[n - 1][0]
-        except ValueError:
-            pass
-        print("  not a valid choice; try again.")
-
-
-def open_serial(port: str, baud: int) -> Optional[serial.Serial]:
-    """Try to open a serial port; return None on failure (silent)."""
-    try:
-        return serial.Serial(port, baud, timeout=0, write_timeout=0.1)
-    except (serial.SerialException, OSError):
+    if data[:8] != ARTNET_HEADER:
         return None
+    opcode = data[8] | (data[9] << 8)
+    if opcode != ARTNET_OP_VENDOR_ESPNOW:
+        return None
+    frame_len = (data[12] << 8) | data[13]
+    if frame_len == 0 or frame_len > 250:
+        return None
+    if len(data) < 14 + frame_len:
+        return None
+    return data[14:14 + frame_len]
+
+
+# ============================================================================
+# Enttec Pro framing + Serial port handling
+# ============================================================================
+# Both extracted to nocturnation_dmx (Epic 10 B0). The shim imports
+# wrap_enttec_pro, find_candidate_ports*, interactive_pick_port,
+# device_kind_from_port, port_looks_like_tildagon, open_serial, and
+# UsbWriter from the library - one source of truth shared with the
+# music orchestrator.
 
 
 # ============================================================================
@@ -281,6 +235,7 @@ class ShimState:
     bind_addr: str = "0.0.0.0"
     artnet_port: int = ARTNET_DEFAULT_PORT
     universe: int = 1
+    merge_mode: str = "none"      # "none" | "htp"
     frames_received: int = 0
     frames_sent: int = 0
     frames_dropped_wrong_universe: int = 0
@@ -291,6 +246,16 @@ class ShimState:
     fps: float = 0.0
     last_error_msg: str = ""
     _frame_times: list[float] = field(default_factory=list)
+    # HTP merge tracking: live source -> (last payload bytes, last_ts).
+    # Sources stale past MERGE_STALENESS_S drop out of the merge so a
+    # disconnected sender doesn't pin its last frame forever.
+    sources: dict = field(default_factory=dict)
+    # Which universe channels the debug panel should show. None =
+    # default broadcast view (channels 1..23 with no Group column).
+    # Non-empty list = operator-chosen channels via --showchannels, in
+    # the order given, with a Group column so the LD can see at a
+    # glance which fixture block each row belongs to.
+    show_channels: Optional[list] = None
 
     def record_frame(self, payload: bytes) -> None:
         now = time.monotonic()
@@ -367,6 +332,11 @@ def build_status_layout(state: ShimState) -> Layout:
         info.add_row("Serial", "[red]no device detected[/red]")
     info.add_row("Listening on", f"UDP {state.bind_addr}:{state.artnet_port}")
     info.add_row("Universe filter", str(state.universe))
+    if state.merge_mode != "none":
+        live = len(state.sources)
+        info.add_row(
+            "Merge", f"{state.merge_mode.upper()} ({live} source{'s' if live != 1 else ''} live)",
+        )
     info.add_row("", "")
     info.add_row("Art-Net frames in", str(state.frames_received))
     info.add_row("Last frame in", _format_age(state.last_artnet_ts))
@@ -385,27 +355,60 @@ def build_status_layout(state: ShimState) -> Layout:
         info.add_row("Last error", f"[red dim]{state.last_error_msg}[/red dim]")
     layout["info"].update(Panel(info, title="Status", border_style="blue"))
 
-    # Channels panel: 23-row hex view with bar meters (B7 broadcast block).
+    # Channels panel. Two layouts: the default "broadcast block" view
+    # (channels 1..23, no Group column - the LD is patched at base
+    # address 1 and watching the whole block) and the
+    # --showchannels view (operator-chosen channels with a Group
+    # column showing which fixture block each row addresses).
     channels = Table(show_header=True, expand=True, padding=(0, 1))
-    channels.add_column("Ch", style="dim", width=3)
+    channels.add_column("Ch", style="dim", width=4)
+    if state.show_channels is not None:
+        channels.add_column("Group", width=10)
     channels.add_column("Role", width=18)
     channels.add_column("Hex", width=4)
     channels.add_column("Val", width=4)
     channels.add_column("Level", ratio=1)
     payload = state.last_payload or b""
-    for idx, role in enumerate(CHANNEL_ROLES):
-        if idx < len(payload):
-            val = payload[idx]
-            hex_str = f"0x{val:02X}"
-            bar_width = max(1, val // 8)   # 0..32 chars wide
-            bar = "█" * bar_width
-            channels.add_row(
-                f"{idx + 1:02d}", role, hex_str, str(val),
-                f"[green]{bar}[/green]",
-            )
-        else:
-            channels.add_row(f"{idx + 1:02d}", role, "----", "-", "[dim]no data[/dim]")
-    layout["channels"].update(Panel(channels, title="DMX channels (Broadcast block)", border_style="blue"))
+
+    if state.show_channels is not None:
+        # Operator-chosen channels via --showchannels. Each row labels
+        # its block (Broadcast / Group N) so the LD can see at a glance
+        # which fixture each value belongs to.
+        for ch in state.show_channels:
+            group_label, role = channel_to_role_and_group(ch)
+            idx = ch - 1
+            if 0 <= idx < len(payload):
+                val = payload[idx]
+                hex_str = f"0x{val:02X}"
+                bar = "█" * max(1, val // 8)
+                channels.add_row(
+                    f"{ch:03d}", group_label, role, hex_str, str(val),
+                    f"[green]{bar}[/green]",
+                )
+            else:
+                channels.add_row(
+                    f"{ch:03d}", group_label, role, "----", "-",
+                    "[dim]no data[/dim]",
+                )
+        title = f"DMX channels ({len(state.show_channels)} selected)"
+    else:
+        # Default broadcast-block view (channels 1-23).
+        for idx, role in enumerate(CHANNEL_ROLES[:23]):
+            if idx < len(payload):
+                val = payload[idx]
+                hex_str = f"0x{val:02X}"
+                bar = "█" * max(1, val // 8)
+                channels.add_row(
+                    f"{idx + 1:02d}", role, hex_str, str(val),
+                    f"[green]{bar}[/green]",
+                )
+            else:
+                channels.add_row(
+                    f"{idx + 1:02d}", role, "----", "-",
+                    "[dim]no data[/dim]",
+                )
+        title = "DMX channels (Broadcast block)"
+    layout["channels"].update(Panel(channels, title=title, border_style="blue"))
 
     layout["footer"].update(Panel(
         Text("Ctrl+C to quit", justify="center", style="dim"),
@@ -417,6 +420,35 @@ def build_status_layout(state: ShimState) -> Layout:
 # ============================================================================
 # Main loop
 # ============================================================================
+
+def htp_merge(state: ShimState, now: float) -> bytes:
+    """Per-channel max across all live (non-stale) sources in state.sources.
+
+    Returns the merged DMX payload. Sources that haven't sent within
+    MERGE_STALENESS_S are evicted before merging - so a producer
+    stopping (QLC+ closing, orchestrator killed) cleanly hands the
+    universe back to whoever's still alive instead of pinning a
+    ghost frame on top.
+    """
+    cutoff = now - MERGE_STALENESS_S
+    stale = [k for k, (_p, ts) in state.sources.items() if ts < cutoff]
+    for k in stale:
+        del state.sources[k]
+    if not state.sources:
+        return b""
+    if len(state.sources) == 1:
+        # Hot path - single source, no real merge needed.
+        payload, _ts = next(iter(state.sources.values()))
+        return payload
+    merged = bytearray(DMX_UNIVERSE_BYTES)
+    for payload, _ts in state.sources.values():
+        n = min(len(payload), DMX_UNIVERSE_BYTES)
+        for i in range(n):
+            v = payload[i]
+            if v > merged[i]:
+                merged[i] = v
+    return bytes(merged)
+
 
 def run_loop(
     state: ShimState,
@@ -450,9 +482,39 @@ def run_loop(
         for sock in sockets:
             while True:
                 try:
-                    data, _addr = sock.recvfrom(2048)
+                    data, addr = sock.recvfrom(2048)
                 except BlockingIOError:
                     break
+                # Epic 13: OpVendorEspNow passthrough. Inner frame goes
+                # to the Stick wrapped as Enttec label 0x10; the Stick's
+                # DMX bridge unwraps and broadcasts onto ESP-NOW.
+                # Independent of merge / universe-filter logic - these
+                # frames are 1:1 from author to radio.
+                espnow_inner = decode_artnet_vendor_espnow(data)
+                if espnow_inner is not None:
+                    if ser is not None:
+                        try:
+                            framed = wrap_enttec_espnow(espnow_inner)
+                            if encoding == "python":
+                                ser.write(b'#"')
+                                ser.write(binascii.hexlify(framed))
+                                ser.write(b'"\n')
+                            elif encoding == "hex":
+                                ser.write(binascii.hexlify(framed))
+                                ser.write(b";")
+                            else:
+                                ser.write(framed)
+                            state.record_sent()
+                        except (serial.SerialException, OSError) as e:
+                            state.record_error(f"espnow write failed: {e}")
+                            try:
+                                ser.close()
+                            except Exception:
+                                pass
+                            ser = None
+                            state.serial_connected = False
+                    continue
+
                 decoded = decode_artnet_output(data)
                 if decoded is None:
                     continue
@@ -460,6 +522,20 @@ def run_loop(
                 if universe != state.universe:
                     state.frames_dropped_wrong_universe += 1
                     continue
+                # `addr` is (host, port[, ...]); first two elements are
+                # the producer's address family-agnostic identity.
+                source_key = (addr[0], addr[1])
+                # Merge layer. In "none" mode we forward the incoming
+                # payload directly (the previous shim contract). In
+                # "htp" mode we add this source's frame to the merge
+                # map and emit the per-channel max across all live
+                # sources, so orchestrator + QLC+ can co-drive the
+                # rig without one process clobbering the other.
+                if state.merge_mode == "htp":
+                    state.sources[source_key] = (payload, time.monotonic())
+                    payload = htp_merge(state, time.monotonic())
+                    if not payload:
+                        continue
                 state.record_frame(payload)
 
                 # Try to send if serial is up. Apply the cable encoding
@@ -530,15 +606,17 @@ def run_loop(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Bridge QLC+ Art-Net output to a NocturNation StickC or Tildagon "
-            "running in DMX Bridge mode."
+            "Bridge QLC+ Art-Net output to a NocturNation StickC "
+            "(Plus2 or S3) running in DMX Bridge mode."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--port", default=None,
-        help="Serial port to write to (auto-detected if omitted; "
-             "/dev/cu.usbmodem* on macOS, /dev/ttyACM* on Linux, COMn on Windows).",
+        help="StickC serial port to write to (auto-detected if omitted). "
+             "macOS: /dev/cu.usbmodem* (S3) or /dev/cu.usbserial-* (Plus2). "
+             "Linux: /dev/ttyACM* or /dev/ttyUSB*. Windows: COMn. "
+             "Tildagon ports are filtered out (DMX Bridge is StickC-only).",
     )
     parser.add_argument(
         "--baud", type=int, default=ENTTEC_BAUD,
@@ -553,10 +631,23 @@ def main() -> int:
         help="UDP bind address.",
     )
     parser.add_argument(
-        "--universe", type=int, default=0,
-        help="Art-Net universe to filter on (0-32767). Default 0 matches "
-             "QLC+'s default 'ArtNet Universe' value when QLC+'s internal "
-             "Universe 1 is patched to Art-Net output.",
+        "--universe", type=int, default=1,
+        help="Art-Net universe to filter on (0-32767). Default 1 matches "
+             "QLC+ (universes are 1-indexed in the QLC+ UI) and the "
+             "nowplaying-orchestrator's --artnet-universe default.",
+    )
+    parser.add_argument(
+        "--merge",
+        choices=["none", "htp"],
+        default="none",
+        help="Multi-source merge mode. 'none' (default) forwards whichever "
+             "frame arrived last - safe with a single producer. 'htp' "
+             "(Highest-Takes-Precedence) keeps per-source state and "
+             "emits per-channel max across all live producers, so the "
+             "orchestrator's cue-driven bed and QLC+'s manual overrides "
+             "can coexist (e.g. push a button to fire a pulse without "
+             "disturbing the running show). A source idle for "
+             f"{MERGE_STALENESS_S:.1f}s drops out of the merge.",
     )
     parser.add_argument(
         "--no-ui", action="store_true",
@@ -579,7 +670,37 @@ def main() -> int:
              "firmware reading from a hardware UART via external FTDI, "
              "see B7).",
     )
+    parser.add_argument(
+        "--showchannels", default=None,
+        help="Comma-separated list of universe channels to display in "
+             "the debug panel instead of the default broadcast block "
+             "(channels 1-23). Each channel is 1-indexed (1..512); "
+             "the panel shows the channel number, its block (Broadcast "
+             "/ Group N), its role (Master, Raw R, etc.), and the live "
+             "value. Useful when the LD has patched fixtures in "
+             "non-broadcast groups (Group 1 at 41, Group 2 at 81, ...) "
+             "and wants to watch those specifically. "
+             "Example: --showchannels 24,25,26,27,64,65,66,67",
+    )
     args = parser.parse_args()
+
+    # Parse --showchannels into a validated list of ints, or None if
+    # the flag wasn't passed (default broadcast view).
+    show_channels = None
+    if args.showchannels is not None:
+        try:
+            show_channels = [int(c.strip()) for c in args.showchannels.split(",") if c.strip()]
+        except ValueError:
+            print("--showchannels must be a comma-separated list of integers",
+                  file=sys.stderr)
+            sys.exit(2)
+        for ch in show_channels:
+            if not (1 <= ch <= MAX_UNIVERSE_CHANNEL):
+                print(f"--showchannels: channel {ch} out of range (1..{MAX_UNIVERSE_CHANNEL})",
+                      file=sys.stderr)
+                sys.exit(2)
+        if not show_channels:
+            show_channels = None  # empty list -> fall back to default view
 
     # Bind BOTH IPv4 and IPv6 wildcards on port 6454.
     #
@@ -656,13 +777,40 @@ def main() -> int:
                     pass
             return 1
 
+    # Hard guard against pointing the shim at a Tildagon. The badge's
+    # USB-CDC endpoint is owned by the OS REPL, not by a DMX Bridge
+    # mode (the Tildagon firmware has no such mode). Writing Enttec
+    # frames into the REPL would just spam the console and confuse the
+    # operator into thinking the radio is silent. Tildagons are
+    # filtered from auto-detection; this guard handles the case where
+    # the operator passes --port explicitly.
+    if chosen_port is not None:
+        for port_info in serial.tools.list_ports.comports():
+            if port_info.device == chosen_port and port_looks_like_tildagon(port_info):
+                print(
+                    f"Refusing to connect: {chosen_port} appears to be a "
+                    f"Tildagon ({describe_port(port_info)}). The DMX "
+                    f"Bridge role is StickC-only - the Tildagon "
+                    f"firmware has no DMX Bridge mode. Plug in a "
+                    f"StickC and try again.",
+                    file=sys.stderr,
+                )
+                for s in sockets:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                return 1
+            if port_info.device == chosen_port:
+                break
+
     # Resolve --encode auto: Tildagons need python-comment envelope
     # because their USB-CDC IS the MicroPython REPL channel; everything
     # else gets binary by default (Stick firmware reads raw bytes).
     chosen_encoding = args.encode
     if chosen_encoding == "auto":
         if chosen_port:
-            kind = _device_kind_from_port(chosen_port)
+            kind = device_kind_from_port(chosen_port)
             chosen_encoding = "python" if kind == "tildagon" else "binary"
         else:
             chosen_encoding = "binary"
@@ -674,6 +822,8 @@ def main() -> int:
         bind_addr=args.bind,
         artnet_port=args.artnet_port,
         universe=args.universe,
+        merge_mode=args.merge,
+        show_channels=show_channels,
     )
 
     console = Console()

@@ -1,0 +1,38 @@
+# Coldplay - Fix You
+#
+# Demo cue file. Timeline is illustrative, not a faithful map of the
+# actual track structure - update the times once the cues have been
+# walked through against the recording at the bench.
+#
+# Run length budget: ~4:55.
+
+@artist     Coldplay
+@title      Fix You
+@bpm        138
+@default_fx quiet_wash 10 20 40    # deep-blue ambient bed before song start
+
+# --- Intro (organ pad) -----------------------------------------------------
+00:00  quiet_wash       20  40 80
+# "When you try your best, but you don't succeed..."
+00:30  quiet_wash       30  60 120
+01:00  drift_wash       40 80 120  255 100 0 50   # ambient blue -> orange drift
+
+# --- Verse 2 / building tension --------------------------------------------
+01:35  pulse_per_bar    255 200 100 100
+02:05  sparkle_on_beat  255 200 100 80
+
+# --- Bridge build ----------------------------------------------------------
+02:35  linear_buildup   255 100 0 100 80  --buildup 12
+
+# --- Drop -------------------------------------------------------------------
+02:47  strobe_burst     8 255
+02:48  sparkle_on_beat  255 255 255 100
+03:00  group_cascade    255 255 255 100 4
+
+# --- Final chorus ----------------------------------------------------------
+03:40  pulse_per_bar    255 255 255 100
+04:10  sparkle_on_beat  255 255 255 100
+
+# --- Outro ------------------------------------------------------------------
+04:30  fade_to_black                       --buildup 25
+04:55  stop
