@@ -196,14 +196,30 @@ Multiple `@during` directives can target the same section — they all expand. U
 Doesn't auto-cancel at the section's `end_ms` — the FX runs until the next cue replaces it (just like any other cue). Add an explicit `stop` cue or another `@during` if you want a hard cutoff.
 
 ### `@palette <name> <#RRGGBB>[,<#RRGGBB>...]`
-**Optional. New in Epic 14 (B7).** Declares a named colour palette. Captured into `CueFile.palettes` for reference; **no automatic expansion in body cue arguments yet** (deferred to a future per-FX colour-arg pass). Useful for documenting brand palettes per stage / artist alongside the actual FX cues:
+**Optional. New in Epic 14 (B7), placeholders added in Epic 14.9 (Block A).** Declares a named colour palette. Captured into `CueFile.palettes` and **substituted into cue lines via `@name[idx]` placeholders** (see below):
 
 ```
-@palette stage_d   #FF0000,#FF8800,#FFFF00
-@palette artist_x  #00AAFF, #0044FF, #8800FF
+@palette chorus  #504028, #823C20, #C84030
+@palette bridge  #102060
+
+# Then anywhere a cue arg expects an RGB triplet:
+@during verse1   quiet_wash @chorus[0]
+@during chorus1  sparkle_on_beat @chorus[1] 70 0
+@during chorus2  drift_wash @chorus[0] @chorus[2] 4b
 ```
 
-Spaces after the comma separators are tolerated. The leading `#` on each hex value is optional (`FF0000` works the same as `#FF0000`). Malformed entries are silently dropped (one typo doesn't break the palette). Last `@palette` with the same name wins on redefinition.
+Spaces after the comma separators are tolerated. The leading `#` on each hex value is optional. Malformed entries are silently dropped (one typo doesn't break the palette). Last `@palette` with the same name wins on redefinition.
+
+**Placeholder syntax**: `@<palette_name>[<idx>]` — the regex `^@([A-Za-z_][A-Za-z0-9_]*)\[(\d+)\]$`. Expands at parse time into three RGB tokens drawn from the palette. Works anywhere a cue line takes positional args:
+
+- Cue lines: `0:35 quiet_wash @chorus[0]`
+- `@during` directives: `@during chorus1 quiet_wash @chorus[0]`
+- `@default_fx`: `@default_fx quiet_wash @chorus[0]`
+- Mixed inline + placeholder: `0:35 drift_wash @chorus[0] 50 60 70 80` — placeholder fills three slots, then inline RGB + cycle follow.
+
+Forward references work (palette declared at the foot of the file is still usable for cues at the top) — the parser does a two-pass scan over `@palette` directives first.
+
+**Errors are loud**: unknown palette name → `CueParseError` listing the known names; out-of-range index → `CueParseError` with the valid range. Silent fallback to black would be hard to debug live; loud failure surfaces typos at the authoring station.
 
 ---
 
@@ -282,6 +298,35 @@ Eleven FX shipped at Epic 14 B0 time. The FX library lives at `Docs/tools/noctur
 | `strobe_burst` | 31-40 | Brief high-rate flash. Use sparingly + at low intensity (Harding-safe cap is < 5 Hz on the wire). | colour, rate_hz, duration_ms |
 
 Detailed parameter specs (defaults, ranges, units) are in each FX class's docstring. A "cue-commands.md" deep-dive lives at Epic 14 B7.
+
+### Value notation: `Nb` (bars) on `100ms` params
+
+**New in Epic 14.9 (Block C).** Any FX param declared as unit `100ms` (the `cycle`, `release`, `duration` slots on `drift_wash`, `fade_to_black`, `linear_buildup`, etc.) accepts a bars-suffix value:
+
+```
+@bpm 138
+@time_sig 4
+
+# 4 bars at 138 BPM 4/4 = 4 * 4 * (60000/138) = 6957 ms = slider 70
+0:35  drift_wash 100 50 30 50 100 200 4b
+
+# Fractional bars supported.
+1:10  fade_to_black --buildup 0.5b
+```
+
+Conversion: `slider = round(N × time_sig × 60000 / bpm / 100)`. Saturates at slider 255 (~25.5 s) rather than wrapping. Missing `@bpm` or `@time_sig` falls back to 120 + 4.
+
+`Nb` on a non-`100ms` param (an RGB byte or count) raises `CueParseError` — silent acceptance would let a typo (`drift_wash 20b 30 40 ...`) sneak past as a degenerate-looking number.
+
+The author's value (`4b`, `0.5b`) is preserved verbatim in `params_raw` so the `--debug` log line shows what was written, not the slider-encoded form.
+
+### Beat-grid sync at runtime (Block B)
+
+When a `<basename>.cues.analysis.json` sidecar is present (written by `audio_enrich_cues.py`), the orchestrator loads its `beats` array into `CueFile.beats_ms` at parse time. The FX runner attaches that list to every FX instance before `start()`, so beat-aware FX (`sparkle_on_beat`, `pulse_per_bar`) consult the actual MIR-detected beat positions instead of a bpm × song-start clock.
+
+Effect: for songs with pickup silence (e.g. Viva La Vida — first beat at ~1.21 s) or rubato, the perimeter ring / strip / sparkle fire exactly on the music's beats rather than ~167 ms out of phase. No authoring change required; the sidecar is the only switch.
+
+Songs that start with a pickup note (bar 1 doesn't fall on `beats[0]`) — the FX assumes `beats[0]` is the first downbeat. A future `@bar1_beat <idx>` directive will let the operator override.
 
 ---
 

@@ -17,7 +17,7 @@ the show off between them mid-set if you want.
 | You want to | Use |
 |---|---|
 | Programmed show synchronised to a specific playlist | Music orchestrator |
-| Live operator control with faders, dials, cue stacks | QLC+ |
+| Live operator control with faders, dials, cue stacks | DMX/ArtNet/QLC+ (optional) |
 | Ambient wash for a venue, no audio | Either (both expose the same `quiet_wash` / `drift_wash` surface) |
 | One co-running, one as backup | Both - the orchestrator falls back to Art-Net producer mode if it sees the QLC+ shim already holding the USB port |
 
@@ -471,6 +471,51 @@ FLAC is the preferred MIR input (lossless = sharper beat /
 section detection); MP3 320 kbps works fine; Apple Music
 subscription downloads are FairPlay-DRM-encrypted and not usable
 (see cue-authoring guide for legal-acquisition options).
+
+## Authoring shortcuts (Epic 14.9)
+
+Three small directives + value notations make a hand-edited cue
+file much shorter once a track has been MIR-enriched. Quick
+reference; full spec in
+[`manuals/cue-file-schema.md`](manuals/cue-file-schema.md).
+
+**Named palettes + placeholders.** Declare a colour set once;
+reference by `@name[idx]` anywhere a cue line takes RGB args:
+
+```
+@palette chorus  #504028, #823C20, #C84030
+@palette bridge  #102060
+
+@during verse1   quiet_wash @chorus[0]
+@during chorus1  sparkle_on_beat @chorus[1] 70 0
+@during chorus2  drift_wash @chorus[0] @chorus[2] 4b
+```
+
+Change one palette declaration, every cue that references it shifts.
+
+**Bars-as-duration on time params.** Any cue arg whose FX param is
+declared as `100ms` (drift cycle, fade duration, buildup time, etc.)
+accepts a `Nb` or `N.5b` suffix; the parser converts to the
+equivalent slider using the file's `@bpm` + `@time_sig`:
+
+```
+@bpm 138
+@time_sig 4
+
+# Wash that cycles every 4 bars (= 4 * 4 * 60000/138 = ~6.96 s):
+0:35  drift_wash 100 50 30 50 100 200 4b
+
+# 0.5-bar fade-out:
+2:55  fade_to_black --buildup 0.5b
+```
+
+**Runtime beat-grid sync.** When the track has a
+`<name>.cues.analysis.json` sidecar (written by
+`audio_enrich_cues.py`), the orchestrator loads its `beats` array
+and pins `sparkle_on_beat` / `pulse_per_bar` to the actual MIR
+beats instead of a `bpm × song-start` clock. Eliminates the phase
+drift that affected tracks with pickup silence or rubato. No
+authoring change required — the sidecar IS the switch.
 
 ## Hot-reload during authoring
 
