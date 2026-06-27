@@ -995,3 +995,99 @@ class TestAnalysisSidecarLoading:
         sidecar.write_text(json.dumps({"beats": [2.5, 1.0, 1.5, 0.5]}))
         f = parse_cues_file(str(cuefile))
         assert f.beats_ms == [500, 1000, 1500, 2500]
+
+
+class TestBarsValueSuffix:
+    """Epic 14.9 Block C. A value of shape `Nb` or `N.5b` on a `100ms`
+    param means "N bars at the file's current @bpm + @time_sig".
+
+      slider = round(N * time_sig * 60000 / bpm / 100)
+
+    Tested via drift_wash's `cycle` param (only 100ms-typed slot in
+    the shipping FX library at the time of writing). Clamps to
+    0..255 (the 100ms slider range). Defaults are 120 BPM 4/4 if
+    @bpm or @time_sig is missing.
+    """
+
+    def _parse(self, text):
+        return parse_cues(text, registry=fx_registry)
+
+    def _cycle_of(self, f):
+        # drift_wash has cycle at param slot 6.
+        return f.cues[0].params[6]
+
+    def test_120_4_one_bar_is_slider_20(self):
+        # 1 bar at 120 BPM 4/4 = 4 * 500 ms = 2000 ms = slider 20.
+        f = self._parse(
+            "@bpm 120\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 1b\n"
+        )
+        assert self._cycle_of(f) == 20
+
+    def test_138_4_four_bars_is_slider_70(self):
+        # 4 bars at 138 BPM 4/4 = 4 * 4 * (60000/138) = 6956.5 ms
+        # slider = round(6956.5 / 100) = 70.
+        f = self._parse(
+            "@bpm 138\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 4b\n"
+        )
+        assert self._cycle_of(f) == 70
+
+    def test_fractional_bars(self):
+        # 0.5b at 120 BPM 4/4 = 1000 ms = slider 10.
+        f = self._parse(
+            "@bpm 120\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 0.5b\n"
+        )
+        assert self._cycle_of(f) == 10
+
+    def test_3_4_time_sig(self):
+        # 2b at 120 BPM 3/4 = 2 * 3 * 500 = 3000 ms = slider 30.
+        f = self._parse(
+            "@bpm 120\n@time_sig 3\n"
+            "0:00 drift_wash 10 20 30 40 50 60 2b\n"
+        )
+        assert self._cycle_of(f) == 30
+
+    def test_bars_on_non_100ms_param_raises(self):
+        # Bars suffix on an RGB (u8) param is a typo - reject loudly.
+        with pytest.raises(CueParseError) as excinfo:
+            self._parse(
+                "@bpm 120\n@time_sig 4\n"
+                "0:00 quiet_wash 1b 20 30\n"
+            )
+        msg = str(excinfo.value)
+        assert "'1b' (bars)" in msg
+        assert "only valid on 100ms params" in msg
+
+    def test_missing_bpm_defaults_to_120(self):
+        # No @bpm + no @time_sig: defaults of 120 + 4 apply so the
+        # value still parses (operator approximately gets what they
+        # meant; explicit directives pin it exactly).
+        f = self._parse("0:00 drift_wash 10 20 30 40 50 60 1b\n")
+        assert self._cycle_of(f) == 20
+
+    def test_raw_value_preserves_bars_notation(self):
+        # params_raw is used by the debug log; should show "4b" not
+        # the slider-encoded number so the operator sees what they
+        # actually wrote.
+        f = self._parse(
+            "@bpm 120\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 4b\n"
+        )
+        assert f.cues[0].params_raw[6] == "4b"
+
+    def test_zero_bars_is_zero(self):
+        f = self._parse(
+            "@bpm 120\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 0b\n"
+        )
+        assert self._cycle_of(f) == 0
+
+    def test_very_large_bars_clamps_at_255(self):
+        # 30 bars at 60 BPM 4/4 = 120 s = slider 1200, clamps to 255.
+        f = self._parse(
+            "@bpm 60\n@time_sig 4\n"
+            "0:00 drift_wash 10 20 30 40 50 60 30b\n"
+        )
+        assert self._cycle_of(f) == 255

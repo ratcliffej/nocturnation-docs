@@ -369,7 +369,36 @@ def _resolve_fx_by_name(name: str, line_no: int, registry) -> int:
     raise CueParseError("unknown FX %r" % name, line_no)
 
 
-def _build_params_tuple(fx_cls, positional: list, line_no: int):
+# Epic 14.9 Block C. `Nb` or `N.5b` value suffix on any 100ms param
+# means "N bars at the file's current bpm + time_sig". Computed at
+# parse time so the FX layer stays bars-unaware. Reject the suffix
+# loudly on non-100ms params - silent acceptance would let a typo
+# (RGB '20b') sneak past as a degenerate-looking number.
+_BARS_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)b$")
+
+
+def _bars_to_100ms_slider(bars: float, bpm: int, time_sig: int) -> int:
+    """Convert N bars to the equivalent 100ms-slider value.
+
+      bars * time_sig * (60000 / bpm) = total ms
+      slider = round(total ms / 100)
+
+    Clamped to 0..255 (the 100ms slider range; saturates beyond
+    25.5 s rather than wrapping). Defensive defaults: bpm 0 or
+    time_sig 0 fall back to 120 BPM and 4/4 so a file without those
+    directives still parses (the operator gets approximately what
+    they meant; explicit @bpm + @time_sig pin it exactly).
+    """
+    eff_bpm = bpm if bpm > 0 else 120
+    eff_ts  = time_sig if time_sig > 0 else 4
+    ms = bars * eff_ts * (60_000.0 / eff_bpm)
+    slider = int(round(ms / 100.0))
+    if slider < 0:   slider = 0
+    if slider > 255: slider = 255
+    return slider
+
+
+def _build_params_tuple(fx_cls, positional: list, line_no: int, file=None):
     """Map a list of positional cue-file values to (params_u8, params_raw).
 
     params_u8   is the converted form the FX consumes via start().
@@ -380,6 +409,12 @@ def _build_params_tuple(fx_cls, positional: list, line_no: int):
     Both tuples are sized to len(fx_cls.PARAMS); reserved slots stay
     0 in both. The caller's positional list must not exceed the
     count of non-reserved slots.
+
+    Epic 14.9 Block C: a value token of shape `Nb` / `N.5b` is only
+    valid on `100ms` params; converted to the equivalent slider
+    using file.default_bpm + file.time_sig. file=None falls back
+    to 120 BPM 4/4 (test-friendly default; production callers always
+    pass file).
     """
     n = len(fx_cls.PARAMS)
     out = [0] * n
@@ -394,7 +429,26 @@ def _build_params_tuple(fx_cls, positional: list, line_no: int):
             % (fx_cls.cue_name, len(named_slots), len(positional)),
             line_no,
         )
+    bpm = file.default_bpm if file is not None else 0
+    time_sig = file.time_sig if file is not None else 0
     for value_token, (slot, unit) in zip(positional, named_slots):
+        bars_match = _BARS_VALUE_RE.match(value_token)
+        if bars_match is not None:
+            if unit != "100ms":
+                raise CueParseError(
+                    "'%s' (bars) is only valid on 100ms params; "
+                    "fx %s param %d (unit %s) expects an integer"
+                    % (
+                        value_token, fx_cls.cue_name, slot,
+                        unit if unit is not None else "?",
+                    ),
+                    line_no,
+                )
+            bars = float(bars_match.group(1))
+            slider = _bars_to_100ms_slider(bars, bpm, time_sig)
+            raw[slot] = value_token   # preserve "4b" in the raw log
+            out[slot] = slider
+            continue
         value = _parse_int(value_token, line_no, "param value")
         raw[slot] = value
         try:
@@ -481,7 +535,9 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
         fx_id = _resolve_fx_by_name(name, line_no, registry)
         fx_cls = registry.get(fx_id)
         positional = tokens[2:]
-        params_u8, _params_raw = _build_params_tuple(fx_cls, positional, line_no)
+        params_u8, _params_raw = _build_params_tuple(
+            fx_cls, positional, line_no, file=file,
+        )
         file.default_fx_id = fx_id
         file.default_fx_params = params_u8
     elif directive == "@artist":
@@ -575,7 +631,9 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
         fx_id  = _resolve_fx_by_name(fx_name, line_no, registry)
         fx_cls = registry.get(fx_id)
         positional = tokens[3:]
-        params_u8, params_raw = _build_params_tuple(fx_cls, positional, line_no)
+        params_u8, params_raw = _build_params_tuple(
+            fx_cls, positional, line_no, file=file,
+        )
         file.pending_during.append({
             "section_name": section_name,
             "fx_id":        fx_id,
@@ -609,7 +667,7 @@ def _parse_directive(tokens: list, line_no: int, file: CueFile, registry) -> Non
             file.palettes[name] = colours
 
 
-def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
+def _parse_cue(tokens: list, line_no: int, registry, file=None) -> Cue:
     if len(tokens) < 2:
         raise CueParseError("cue needs at least a time and an FX name", line_no)
 
@@ -687,7 +745,9 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
             positional.append(tok)
             i += 1
 
-    params_u8, params_raw = _build_params_tuple(fx_cls, positional, line_no)
+    params_u8, params_raw = _build_params_tuple(
+        fx_cls, positional, line_no, file=file,
+    )
     return Cue(
         time_ms=time_ms, kind="fx", fx_id=fx_id,
         params=params_u8, params_raw=params_raw,
@@ -779,7 +839,7 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
         if tokens[0].startswith("@"):
             _parse_directive(tokens, raw_line_no, file, registry)
         else:
-            file.cues.append(_parse_cue(tokens, raw_line_no, registry))
+            file.cues.append(_parse_cue(tokens, raw_line_no, registry, file=file))
 
     # Resolve `@during <section_name> <fx> ...` directives now that
     # all @section directives have been collected. For each, find
