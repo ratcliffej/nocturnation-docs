@@ -366,17 +366,72 @@ silently dropped so they don't pollute the lyric stream.
 
 For songs published on [lrclib.net](https://lrclib.net) (free, no
 auth), the orchestrator ships an authoring helper that pre-stamps a
-`.cues` skeleton with timed lyric anchors::
+`.cues` skeleton with timed lyric anchors. As of Epic 14 (2026-06-27),
+lyrics emit as **real `BodyText:` cues** (centisecond precision,
+visible on Lume LCDs) rather than `#` comment anchors:
 
 ```sh
 Docs/tools/scripts/cues_from_lyrics.py "Coldplay" "Fix You"
 # -> writes Docs/songs/coldplay-fix-you.cues
 ```
 
-You then open the file and replace the `# MM:SS  TODO: cue here`
-markers with actual cue lines. The lyric anchors stay as comments
-and surface in `--debug` mode so you can hear what you're cueing
-to.
+Pass `--comment-anchors` to retain the pre-Epic-13 `# MM:SS  text`
+output if you'd rather hand-author the BodyText: cues yourself.
+
+## MIR enrichment + sectional authoring (Epic 14)
+
+`cues_from_lyrics.py` is **step 1** of a two-step authoring flow.
+**Step 2** runs `librosa` on the audio file and rewrites the cue
+file's header with tempo, key, mode, duration, and labelled
+section directives — plus optional beat-snapping of existing cue
+timestamps + a first-pass FX seed:
+
+```sh
+# Step 2: tempo / sections / key / mode from librosa
+Docs/tools/scripts/audio_enrich_cues.py \
+    Docs/songs/coldplay-fix-you.cues \
+    --audio /path/to/coldplay-fix-you.flac \
+    --snap --seed
+```
+
+This adds new directives to the cue file (`@bpm`, `@time_sig`,
+`@key`, `@mode`, `@duration`, `@section`, `@analysis_*`) plus
+optional `# seed`-tagged FX cues at each section boundary. Hand-
+edited body cues are preserved verbatim across re-runs; renamed
+sections survive boundary-overlap matching.
+
+The new section-based directives let the author write FX intent
+per-section instead of per-timestamp:
+
+```
+@section verse1   0:11.50  0:35.00
+@section chorus1  0:35.00  0:55.70
+
+@palette stage_d   #FF0000, #FF8800, #FFFF00
+
+@during verse1   quiet_wash 80 40 20
+@during chorus1  sparkle_on_beat 255 100 50 80 0
+```
+
+For the full authoring workflow + `@offset` measurement procedure +
+audio-file acquisition guidance + common gotchas, see the dedicated
+**[cue-authoring guide](manuals/cue-authoring.md)**.
+
+For the canonical directive + cue-line reference (every directive,
+every FX command, every parameter), see the
+**[cue file schema](manuals/cue-file-schema.md)**.
+
+Install for step 2:
+
+```sh
+pip install librosa     # one-time
+brew install ffmpeg     # macOS; needed for MP3 / M4A decode
+```
+
+FLAC is the preferred MIR input (lossless = sharper beat /
+section detection); MP3 320 kbps works fine; Apple Music
+subscription downloads are FairPlay-DRM-encrypted and not usable
+(see cue-authoring guide for legal-acquisition options).
 
 ## Hot-reload during authoring
 
