@@ -76,13 +76,44 @@ class SparkleOnBeat(Fx):
         # Beat phase: align the first beat to `now_ms - position_ms` so
         # late-join keeps the same on-the-beat timing.
         self._beat_anchor_ms = now_ms - position_ms
-        self._last_beat_index = -1
+        # Epic 14.9 Block B. The runner attaches `self.beats_ms` from
+        # the analysis sidecar before calling start(). When non-empty
+        # we run the FX off the actual beat grid instead of bpm /
+        # song-start. Eliminates the phase error for songs with
+        # pickup silence or rubato.
+        self._beats_ms = list(getattr(self, "beats_ms", None) or [])
+        self._use_beats = bool(self._beats_ms)
+        if self._use_beats:
+            # Pre-seed _last_beat_index to the most recent beat at or
+            # before the song's current position; otherwise the FX
+            # would retro-fire every elapsed beat on its first tick.
+            self._last_beat_index = (
+                self._count_beats_at_or_before(position_ms) - 1
+            )
+        else:
+            self._last_beat_index = -1
+
+    def _count_beats_at_or_before(self, t_ms):
+        """Binary search the count of beats whose timestamp is <= t_ms."""
+        lo, hi = 0, len(self._beats_ms)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._beats_ms[mid] <= t_ms:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
 
     def tick(self, now_ms, universe):
         elapsed = now_ms - self._beat_anchor_ms
         if elapsed < 0:
             elapsed = 0
-        beat_index = elapsed // self._beat_ms
+        if self._use_beats:
+            # Count of beats elapsed so far; index goes up by one each
+            # time the song crosses a beat from beats_ms.
+            beat_index = self._count_beats_at_or_before(elapsed) - 1
+        else:
+            beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
 

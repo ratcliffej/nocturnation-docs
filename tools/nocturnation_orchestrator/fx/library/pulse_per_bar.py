@@ -49,9 +49,9 @@ class PulsePerBar(Fx):
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms
         self._cancelled_ms = None
-        beats_per_bar = params[4] if params[4] != 0 else 4
+        self._beats_per_bar = params[4] if params[4] != 0 else 4
         beat_ms = max(1, int(round(60_000.0 / bpm)))
-        self._bar_ms = beat_ms * beats_per_bar
+        self._bar_ms = beat_ms * self._beats_per_bar
         r, g, b = params[0], params[1], params[2]
         if r == 0 and g == 0 and b == 0:
             r, g, b = 255, 255, 255
@@ -59,13 +59,47 @@ class PulsePerBar(Fx):
         self._prob = percent_to_dmx(params[3] if params[3] != 0 else 100)
         self._group = clamp_group(params[5] if len(params) > 5 else 0)
         self._anchor_ms = now_ms - position_ms
-        self._last_bar_index = -1
+        # Epic 14.9 Block B. Beat-grid mode when the runner attached a
+        # sidecar beats list. Bar 1 is assumed to start at beats[0]
+        # (songs with pickup notes need an explicit @bar1_beat
+        # directive - park for a follow-up Epic; for the songs we're
+        # shipping at EMF this is "good enough").
+        self._beats_ms = list(getattr(self, "beats_ms", None) or [])
+        self._use_beats = bool(self._beats_ms)
+        if self._use_beats:
+            self._last_bar_index = (
+                self._count_bars_at_or_before(position_ms) - 1
+            )
+        else:
+            self._last_bar_index = -1
+
+    def _count_bars_at_or_before(self, t_ms):
+        """How many bars have elapsed by t_ms, using the actual beats[]
+        grid. A bar boundary lands on every Nth beat where N = time_sig
+        (4 by default). Bar 1 = beats[0]; bar 2 = beats[time_sig]; etc.
+        Bars that fall before beats[0] count as zero - playback hasn't
+        reached the first downbeat yet."""
+        if not self._beats_ms or t_ms < self._beats_ms[0]:
+            return 0
+        # Find the index of the latest beat <= t_ms.
+        lo, hi = 0, len(self._beats_ms)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._beats_ms[mid] <= t_ms:
+                lo = mid + 1
+            else:
+                hi = mid
+        last_beat_idx = lo - 1
+        return last_beat_idx // self._beats_per_bar + 1
 
     def tick(self, now_ms, universe):
         elapsed = now_ms - self._anchor_ms
         if elapsed < 0:
             elapsed = 0
-        bar_index = elapsed // self._bar_ms
+        if self._use_beats:
+            bar_index = self._count_bars_at_or_before(elapsed) - 1
+        else:
+            bar_index = elapsed // self._bar_ms
         on_bar = bar_index != self._last_bar_index
         self._last_bar_index = bar_index
 

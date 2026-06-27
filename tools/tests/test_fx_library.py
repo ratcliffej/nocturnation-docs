@@ -694,3 +694,155 @@ class TestPulse:
         assert c.params[4] == 0
         assert c.params[5] == 128
         assert c.params[6] == 255
+
+
+# ---------------------------------------------------------------------------
+# Epic 14.9 Block B: runtime beats[] consumption
+# ---------------------------------------------------------------------------
+
+def _make_with_beats(cls, beats_ms, **start_kwargs):
+    """Build + start an FX with a beats list attached the way the
+    runner does it (set the attribute, THEN call start)."""
+    defaults = dict(
+        bpm=120, buildup_s=0,
+        params=(0, 0, 0, 0, 0, 0),
+        position_ms=0, now_ms=0,
+    )
+    defaults.update(start_kwargs)
+    fx = cls()
+    fx.beats_ms = beats_ms
+    fx.start(**defaults)
+    return fx
+
+
+class TestSparkleOnBeatGridSync:
+    """SparkleOnBeat with the runner's beats[] attached. The FX should
+    fire on the actual MIR beat positions rather than a regular
+    bpm-derived clock. Useful when the song has a pickup silence
+    (Viva La Vida: first beat at ~1.21 s) or rubato (where the bpm
+    clock would drift relative to the music)."""
+
+    def test_no_fire_before_first_beat(self):
+        # beats[0] = 1210ms; nothing should fire at song time 0..1209.
+        fx = _make_with_beats(SparkleOnBeat, [1210, 1640, 2070, 2500])
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        u = _u()
+        fx.tick(now_ms=1209, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_fires_exactly_on_first_beat(self):
+        fx = _make_with_beats(SparkleOnBeat, [1210, 1640, 2070, 2500])
+        u = _u()
+        fx.tick(now_ms=1210, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_fires_on_each_subsequent_beat(self):
+        fx = _make_with_beats(SparkleOnBeat, [1210, 1640, 2070, 2500])
+        fx.tick(now_ms=1210, universe=_u())   # beat 0
+        u = _u()
+        # 1500ms is between beat 0 and beat 1 - no fire.
+        fx.tick(now_ms=1500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        u = _u()
+        fx.tick(now_ms=1640, universe=u)   # beat 1 - rising edge
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        u = _u()
+        fx.tick(now_ms=2070, universe=u)   # beat 2
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_late_join_skips_past_beats(self):
+        # Started 2 seconds into a song with beats at 0, 500, 1000,
+        # 1500, 2000, 2500. The FX shouldn't retro-fire beats 0..3 on
+        # its first tick; only beats 4+ matter going forward.
+        fx = _make_with_beats(
+            SparkleOnBeat, [0, 500, 1000, 1500, 2000, 2500],
+            position_ms=2000, now_ms=10_000,
+        )
+        u = _u()
+        # First tick at the same wall-clock time - we're AT beat 4
+        # right now; treat that as an already-counted boundary.
+        fx.tick(now_ms=10_000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        u = _u()
+        # 500ms later: song-time 2500 - that's beat 5, fire.
+        fx.tick(now_ms=10_500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_falls_back_to_bpm_clock_without_beats(self):
+        # Empty beats list: the FX behaves as it did pre-14.9.
+        fx = _make_with_beats(SparkleOnBeat, [], bpm=120)
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        u = _u()
+        fx.tick(now_ms=500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+class TestPulsePerBarGridSync:
+    """PulsePerBar with beats[] attached. Bar 1 = beats[0]; bar 2 =
+    beats[time_sig]; etc. (4/4 default, override via the
+    beats_per_bar param.)"""
+
+    def _beat_grid(self, count, period_ms=500, anchor_ms=1210):
+        """Synthetic 120-BPM beat grid starting at anchor_ms."""
+        return [anchor_ms + i * period_ms for i in range(count)]
+
+    def test_fires_on_first_downbeat(self):
+        beats = self._beat_grid(16)   # 16 beats, 4 bars of 4/4
+        fx = _make_with_beats(PulsePerBar, beats)
+        # First bar boundary lands on beats[0].
+        u = _u()
+        fx.tick(now_ms=beats[0], universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Beats 1, 2, 3 are within bar 1 - no fire.
+        for i in (1, 2, 3):
+            u = _u()
+            fx.tick(now_ms=beats[i], universe=u)
+            assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_fires_on_second_downbeat(self):
+        beats = self._beat_grid(16)
+        fx = _make_with_beats(PulsePerBar, beats)
+        fx.tick(now_ms=beats[0], universe=_u())   # bar 1
+        u = _u()
+        # beats[4] is bar 2 downbeat (4-beat bars).
+        fx.tick(now_ms=beats[4], universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_beats_per_bar_param_overrides(self):
+        # 3/4 time: bars on beats[0], beats[3], beats[6]...
+        beats = self._beat_grid(9)
+        fx = _make_with_beats(
+            PulsePerBar, beats,
+            params=(0, 0, 0, 100, 3, 0),   # beats_per_bar=3
+        )
+        # beats[0] fires (bar 1).
+        u = _u()
+        fx.tick(now_ms=beats[0], universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # beats[3] fires (bar 2).
+        u = _u()
+        fx.tick(now_ms=beats[3], universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # beats[1], beats[2] don't fire.
+        for i in (1, 2):
+            u = _u()
+            # Sequence the FX so it doesn't see beats[3] yet on this
+            # iteration; rebuild from scratch for cleanliness.
+            fx2 = _make_with_beats(
+                PulsePerBar, beats, params=(0, 0, 0, 100, 3, 0),
+            )
+            fx2.tick(now_ms=beats[0], universe=_u())   # warm up: bar 1 done
+            u2 = _u()
+            fx2.tick(now_ms=beats[i], universe=u2)
+            assert _ch(u2, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_falls_back_to_bpm_clock_without_beats(self):
+        # Empty beats list -> classic behaviour: 1 pulse per 2000 ms at 120 BPM 4/4.
+        fx = _make_with_beats(PulsePerBar, [], bpm=120)
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI

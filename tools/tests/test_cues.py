@@ -938,3 +938,60 @@ class TestPalettePlaceholders:
         from nocturnation_orchestrator.cues import _PALETTE_PLACEHOLDER_RE
         assert _PALETTE_PLACEHOLDER_RE.match("foo@bar[0]") is None
         assert _PALETTE_PLACEHOLDER_RE.match("@bar[0]") is not None
+
+
+class TestAnalysisSidecarLoading:
+    """Epic 14.9 Block B. parse_cues_file opportunistically loads
+    `<basename>.cues.analysis.json` into CueFile.beats_ms when one
+    exists. Sidecar absence or corruption is benign - empty list
+    falls the FX layer back to the pre-14.9 bpm clock."""
+
+    def test_no_sidecar_leaves_beats_empty(self, tmp_path):
+        cuefile = tmp_path / "song.cues"
+        cuefile.write_text("@artist X\n@title Y\n@bpm 120\n")
+        f = parse_cues_file(str(cuefile))
+        assert f.beats_ms == []
+
+    def test_sidecar_loaded_and_converted_to_ms(self, tmp_path):
+        import json
+        cuefile = tmp_path / "song.cues"
+        cuefile.write_text("@artist X\n@title Y\n@bpm 138\n")
+        sidecar = tmp_path / "song.cues.analysis.json"
+        sidecar.write_text(json.dumps({
+            "tempo": 138.0,
+            "beats": [1.207, 1.637, 2.078, 2.508],
+            "time_sig": 4,
+        }))
+        f = parse_cues_file(str(cuefile))
+        assert f.beats_ms == [1207, 1637, 2078, 2508]
+
+    def test_corrupt_sidecar_silently_falls_back(self, tmp_path):
+        cuefile = tmp_path / "song.cues"
+        cuefile.write_text("@artist X\n@title Y\n@bpm 120\n")
+        sidecar = tmp_path / "song.cues.analysis.json"
+        sidecar.write_text("not valid json {{{")
+        f = parse_cues_file(str(cuefile))
+        # Bad JSON shouldn't kill the parse. Empty beats_ms = bpm
+        # fallback behaviour for the FX layer.
+        assert f.beats_ms == []
+
+    def test_sidecar_missing_beats_key_falls_back(self, tmp_path):
+        import json
+        cuefile = tmp_path / "song.cues"
+        cuefile.write_text("@artist X\n@title Y\n@bpm 120\n")
+        sidecar = tmp_path / "song.cues.analysis.json"
+        sidecar.write_text(json.dumps({"tempo": 120.0}))
+        f = parse_cues_file(str(cuefile))
+        assert f.beats_ms == []
+
+    def test_sidecar_beats_sorted_ascending(self, tmp_path):
+        # Defensive: if the sidecar somehow has out-of-order beats
+        # (manual edit, future MIR tool quirk), we sort before use
+        # so the binary search in the FX is correct.
+        import json
+        cuefile = tmp_path / "song.cues"
+        cuefile.write_text("@bpm 120\n")
+        sidecar = tmp_path / "song.cues.analysis.json"
+        sidecar.write_text(json.dumps({"beats": [2.5, 1.0, 1.5, 0.5]}))
+        f = parse_cues_file(str(cuefile))
+        assert f.beats_ms == [500, 1000, 1500, 2500]

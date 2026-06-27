@@ -183,6 +183,11 @@ class CueScheduler:
         self._last_position_ms = -1
         self._original_default_bpm = cue_file.default_bpm if cue_file else 0
         self.runner.cancel(now_ms=now_ms)
+        # Epic 14.9 Block B. Push the new file's MIR beats grid (loaded
+        # by parse_cues_file from the .analysis.json sidecar) into the
+        # runner so beat-aware FX get the right grid on their next
+        # start. Empty list when no sidecar = bpm-clock fallback.
+        self.runner.set_beats(cue_file.beats_ms if cue_file else [])
         if cue_file is None:
             return
         if cue_file.default_fx_id:
@@ -224,6 +229,11 @@ class CueScheduler:
         """
         self.cue_file = cue_file
         self._original_default_bpm = cue_file.default_bpm
+        # Epic 14.9 Block B. Hot-reload picks up an edited / refreshed
+        # MIR sidecar too. The currently-running FX captured the old
+        # beats list at start(); it keeps using that. Subsequent FX
+        # starts get the new grid.
+        self.runner.set_beats(cue_file.beats_ms)
         # Advance cue cursor past already-elapsed entries; apply any
         # past bpm cues so default_bpm matches the rolled-forward
         # state of the file.

@@ -400,6 +400,7 @@ class FakeRunner:
     def __init__(self):
         self.calls = []
         self.cancels = []
+        self.beat_sets = []   # Epic 14.9 Block B: scheduler.set_beats() audit trail
 
     def start(self, fx_id, *, bpm=0, buildup_s=0, params=(0,)*6,
               position_ms=0, now_ms, replace_running=False):
@@ -411,6 +412,12 @@ class FakeRunner:
 
     def cancel(self, now_ms):
         self.cancels.append(now_ms)
+
+    def set_beats(self, beats_ms):
+        # Epic 14.9 Block B. Scheduler pushes the MIR sidecar's beats
+        # list into the runner whenever the cue file changes. Tests
+        # that care about beat-grid propagation read this list back.
+        self.beat_sets.append(list(beats_ms or []))
 
 
 def _coldplay_cues():
@@ -434,6 +441,30 @@ class TestCueScheduler:
         # Default FX should have started.
         assert runner.calls[-1]["fx_id"] == 1  # quiet_wash
         assert runner.cancels  # cancel was called as part of set
+
+    def test_set_cue_file_propagates_beats_to_runner(self):
+        # Epic 14.9 Block B. The scheduler hands the cue file's
+        # beats_ms (loaded from the analysis sidecar at parse time)
+        # to the runner before starting any FX.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        cue_file = _coldplay_cues()
+        cue_file.beats_ms = [1210, 1640, 2070, 2500]
+        sched.set_cue_file(cue_file, now_ms=0)
+        # Most recent beat update should equal the file's list.
+        assert runner.beat_sets[-1] == [1210, 1640, 2070, 2500]
+
+    def test_set_cue_file_none_clears_beats(self):
+        # Calling set_cue_file(None) means "no track playing"; the
+        # runner's beats grid should be cleared so any next-loaded
+        # file's grid takes over cleanly.
+        runner = FakeRunner()
+        sched = CueScheduler(runner)
+        first = _coldplay_cues()
+        first.beats_ms = [500, 1000]
+        sched.set_cue_file(first, now_ms=0)
+        sched.set_cue_file(None, now_ms=10)
+        assert runner.beat_sets[-1] == []
 
     def test_monotonic_advance_fires_each_cue(self):
         runner = FakeRunner()

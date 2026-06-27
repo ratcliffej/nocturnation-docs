@@ -195,14 +195,19 @@ class CueFile:
 
     # Epic 14 B7 authoring shortcuts:
     #   palettes: name -> [(r, g, b), ...] colour sets declared via
-    #     @palette. Parser captures; expansion in body cue args is
-    #     deferred (would require per-FX colour-arg awareness).
-    #     Future tool support can resolve `:palette_name` references.
+    #     @palette. Parser captures; expansion to RGB token triplets
+    #     in body cue args lives in `_expand_palette_placeholders`.
     #   pending_during: collected during parse; resolved against
     #     `sections` at the end of parse_cues() into real cues. Empty
     #     after parse completes; only here for the parse-time pass.
     palettes: dict = field(default_factory=dict)
     pending_during: list = field(default_factory=list)
+
+    # Epic 14.9 Block B. Beat positions in milliseconds, loaded from
+    # the `<basename>.cues.analysis.json` sidecar by parse_cues_file()
+    # when one exists. Empty list when no sidecar is present (the
+    # FX layer falls back to its bpm-derived clock). Sorted ascending.
+    beats_ms: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -831,5 +836,43 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
 
 
 def parse_cues_file(path, registry=fx_registry) -> CueFile:
-    """Read a `.cues` file from disk and parse."""
-    return parse_cues(Path(path).read_text(), registry=registry)
+    """Read a `.cues` file from disk, parse it, and opportunistically
+    load the `<basename>.cues.analysis.json` MIR sidecar if present.
+
+    Sidecar absence is benign: the FX layer falls back to its
+    bpm-derived clock when `beats_ms` is empty. So tests + dev
+    workflows that don't carry sidecars still work; only files
+    enriched via `audio_enrich_cues.py` get the upgraded beat-grid
+    runtime sync.
+    """
+    p = Path(path)
+    cue_file = parse_cues(p.read_text(), registry=registry)
+    sidecar = p.with_suffix(p.suffix + ".analysis.json")
+    if sidecar.exists():
+        cue_file.beats_ms = _load_beats_from_sidecar(sidecar)
+    return cue_file
+
+
+def _load_beats_from_sidecar(sidecar_path) -> list:
+    """Read the analysis JSON sidecar's `beats` field, convert to
+    int-ms (round-half-up), return sorted ascending. Defensive: any
+    JSON / type / IO error returns an empty list, matching the
+    "no sidecar present" path so a corrupt sidecar can't kill
+    playback - only the runtime beat-grid enhancement is lost.
+    """
+    import json
+    try:
+        data = json.loads(Path(sidecar_path).read_text())
+    except (OSError, ValueError):
+        return []
+    raw = data.get("beats", [])
+    if not isinstance(raw, list):
+        return []
+    beats_ms = []
+    for v in raw:
+        try:
+            beats_ms.append(int(round(float(v) * 1000.0)))
+        except (TypeError, ValueError):
+            continue
+    beats_ms.sort()
+    return beats_ms

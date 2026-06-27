@@ -48,6 +48,7 @@ class FxRunner:
         "default_bpm",
         "current_fx",
         "cancelling_fx",
+        "beats_ms",
         "_unknown_fx_drops",
         "_runs_started",
         "_runs_cancelled",
@@ -58,9 +59,22 @@ class FxRunner:
         self.default_bpm = default_bpm
         self.current_fx = None
         self.cancelling_fx = None
+        # Epic 14.9 Block B. Set by the scheduler when a cue file is
+        # loaded; empty list when the file has no `.cues.analysis.json`
+        # sidecar. Attached to every FX instance before `start()` so
+        # beat-aware FX can consult the actual grid; FX that don't
+        # care just ignore the attribute.
+        self.beats_ms = []
         self._unknown_fx_drops = 0
         self._runs_started = 0
         self._runs_cancelled = 0
+
+    def set_beats(self, beats_ms):
+        """Replace the runner's beats list. Called by the scheduler
+        when a cue file is loaded / hot-reloaded / cleared. Pass
+        an empty list (or None) to revert to bpm-clock fallback
+        behaviour for subsequent FX starts."""
+        self.beats_ms = list(beats_ms) if beats_ms else []
 
     @property
     def is_active(self):
@@ -120,6 +134,12 @@ class FxRunner:
         self._begin_cancel(now_ms)
         effective_bpm = bpm if bpm != 0 else self.default_bpm
         new_fx = cls()
+        # Epic 14.9 Block B. Attach the runner's current beats list
+        # (loaded from the analysis sidecar) BEFORE start() so beat-
+        # aware FX can capture it. Existing FX that don't read this
+        # attribute are unaffected. Empty list = "no sidecar"; FX
+        # fall back to bpm-derived clock.
+        new_fx.beats_ms = self.beats_ms
         new_fx.start(
             bpm=effective_bpm,
             buildup_s=buildup_s,
