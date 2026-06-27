@@ -422,6 +422,16 @@ _KNOWN_DIRECTIVES = (
 )
 _FLOAT_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
+# Epic 14.9 Block A. A `@name[idx]` token in any position (cue-line
+# colour arg, @during arg, etc.) expands at parse time to the three
+# RGB tokens of the named palette's idx-th colour. The palette must
+# be declared via `@palette` somewhere in the same file; ordering
+# is irrelevant (a two-pass scan picks up declarations before
+# placeholder expansion runs).
+_PALETTE_PLACEHOLDER_RE = re.compile(
+    r"^@([A-Za-z_][A-Za-z0-9_]*)\[(\d+)\]$"
+)
+
 # Epic 13 display cue-line keywords. Recognised when they appear as
 # the SECOND token on a cue line (after the time). Trailing colon is
 # part of the keyword; the rest of the line is the text payload.
@@ -680,11 +690,71 @@ def _parse_cue(tokens: list, line_no: int, registry) -> Cue:
     )
 
 
+def _expand_palette_placeholder(token: str, palettes: dict, line_no: int):
+    """Expand a single token. Returns a list - one element if not a
+    placeholder, three elements (R G B as strings) if it matches the
+    `@name[idx]` pattern.
+
+    Raises CueParseError on unknown palette name or out-of-range
+    index. Silent fallback would paint a confusing colour with no
+    diagnostic; loud failure surfaces typos at the authoring station
+    where they're cheap to fix.
+    """
+    m = _PALETTE_PLACEHOLDER_RE.match(token)
+    if m is None:
+        return [token]
+    name = m.group(1)
+    idx  = int(m.group(2))
+    palette = palettes.get(name)
+    if palette is None:
+        raise CueParseError(
+            "unknown palette %r in placeholder %r (known: %s)" % (
+                name, token,
+                ", ".join(sorted(palettes.keys())) or "(none declared)",
+            ),
+            line_no,
+        )
+    if not (0 <= idx < len(palette)):
+        raise CueParseError(
+            "palette %r index %d out of range (palette has %d colour(s), valid 0..%d)" % (
+                name, idx, len(palette),
+                max(0, len(palette) - 1),
+            ),
+            line_no,
+        )
+    r, g, b = palette[idx]
+    return [str(r), str(g), str(b)]
+
+
+def _expand_palette_placeholders(tokens: list, palettes: dict, line_no: int):
+    """Walk a token list, expanding any `@name[idx]` token in place
+    into its three RGB sub-tokens. Returns a new list."""
+    expanded = []
+    for t in tokens:
+        expanded.extend(_expand_palette_placeholder(t, palettes, line_no))
+    return expanded
+
+
 def parse_cues(text: str, registry=fx_registry) -> CueFile:
     """Parse cue-file content. Returns a CueFile with cues + lyrics
     sorted by time, with any @offset already applied."""
     file = CueFile()
-    for raw_line_no, raw in enumerate(text.splitlines(), start=1):
+
+    # Pass 1: scan @palette directives so `@name[idx]` placeholders
+    # used in body cues work regardless of source ordering (a palette
+    # declared at the foot of the file is still available to a cue at
+    # the top). Cheap: cue files are small and the scan touches only
+    # @palette lines.
+    lines = list(enumerate(text.splitlines(), start=1))
+    for raw_line_no, raw in lines:
+        line = _strip_comment(raw).strip()
+        if not line.startswith("@palette"):
+            continue
+        tokens = line.split()
+        _parse_directive(tokens, raw_line_no, file, registry)
+
+    # Pass 2: parse the body, expanding palette placeholders inline.
+    for raw_line_no, raw in lines:
         # Timestamped lyric comments become Lyric anchors before the
         # comment stripper drops them; ordinary comments still fall
         # through to the empty-line skip below.
@@ -696,6 +766,11 @@ def parse_cues(text: str, registry=fx_registry) -> CueFile:
         if not line:
             continue
         tokens = line.split()
+        if tokens[0] == "@palette":
+            continue   # already consumed in pass 1
+        # Expand `@name[idx]` placeholders to RGB token triplets
+        # before directive vs cue dispatch.
+        tokens = _expand_palette_placeholders(tokens, file.palettes, raw_line_no)
         if tokens[0].startswith("@"):
             _parse_directive(tokens, raw_line_no, file, registry)
         else:

@@ -727,8 +727,8 @@ class TestDuringDirective:
 
 class TestPaletteDirective:
     """`@palette <name> #RRGGBB,#RRGGBB,...` captures named colour
-    lists in `file.palettes`. No automatic expansion in body cues
-    yet (deferred); just the data capture is tested here."""
+    lists in `file.palettes`. Placeholder expansion is covered by
+    `TestPalettePlaceholders` below."""
 
     def _parse(self, text):
         return parse_cues(text, registry=fx_registry)
@@ -822,3 +822,119 @@ class TestPaletteDirective:
         )
         f = self._parse(text)
         assert "stage_d" not in f.palettes
+
+
+class TestPalettePlaceholders:
+    """Epic 14.9 Block A. `@name[idx]` placeholders in cue lines /
+    @during args expand to the three RGB tokens of the named palette's
+    idx-th colour, before directive vs cue dispatch.
+
+    Forward references are allowed: the parser scans @palette
+    directives first, then processes the body. This means a palette
+    declared at the foot of the file is still usable for cues at the
+    top - useful for authoring conventions that group all palette
+    declarations together.
+    """
+
+    def _parse(self, text):
+        return parse_cues(text, registry=fx_registry)
+
+    def test_basic_substitution_on_cue_line(self):
+        text = (
+            "@palette pal #504028,#823C20\n"
+            "0:05.00 quiet_wash @pal[0]\n"
+        )
+        f = self._parse(text)
+        assert len(f.cues) == 1
+        assert f.cues[0].params_raw[:3] == (0x50, 0x40, 0x28)
+
+    def test_substitution_in_during_directive(self):
+        text = (
+            "@palette chorus #FF0000,#00FF00\n"
+            "@section verse1  0:11.50 0:35.00\n"
+            "@during verse1 quiet_wash @chorus[1]\n"
+        )
+        f = self._parse(text)
+        assert len(f.cues) == 1
+        assert f.cues[0].params_raw[:3] == (0, 0xFF, 0)
+        assert f.cues[0].time_ms == 11_500
+
+    def test_forward_reference_works(self):
+        # Cue at line 3 references palette declared on line 4.
+        text = (
+            "\n"
+            "0:05.00 quiet_wash @later[0]\n"
+            "@palette later #102030\n"
+        )
+        f = self._parse(text)
+        assert f.cues[0].params_raw[:3] == (0x10, 0x20, 0x30)
+
+    def test_multiple_placeholders_on_one_line(self):
+        text = (
+            "@palette pal #112233,#445566\n"
+            "0:05.00 drift_wash @pal[0] @pal[1] 60\n"
+        )
+        f = self._parse(text)
+        # drift_wash params: a_r a_g a_b b_r b_g b_b cycle (group)
+        assert f.cues[0].params_raw[:6] == (
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+        )
+        assert f.cues[0].params_raw[6] == 60
+
+    def test_mixed_inline_rgb_and_placeholder(self):
+        text = (
+            "@palette pal #112233\n"
+            "0:05.00 drift_wash @pal[0] 50 60 70 80\n"
+        )
+        f = self._parse(text)
+        # First three from palette, next three inline, then cycle=80.
+        assert f.cues[0].params_raw[:7] == (0x11, 0x22, 0x33, 50, 60, 70, 80)
+
+    def test_unknown_palette_raises(self):
+        text = (
+            "@palette p #112233\n"
+            "0:00 quiet_wash @nope[0]\n"
+        )
+        with pytest.raises(CueParseError) as excinfo:
+            self._parse(text)
+        msg = str(excinfo.value)
+        assert "unknown palette 'nope'" in msg
+        # Helpful: list known palette names so the typo is fixable
+        # without grepping for declarations.
+        assert "known: p" in msg
+
+    def test_out_of_range_index_raises(self):
+        text = (
+            "@palette p #112233\n"
+            "0:00 quiet_wash @p[5]\n"
+        )
+        with pytest.raises(CueParseError) as excinfo:
+            self._parse(text)
+        msg = str(excinfo.value)
+        assert "index 5 out of range" in msg
+        # Tell the author the valid range so they don't have to count.
+        assert "valid 0..0" in msg
+
+    def test_no_palettes_declared_message(self):
+        text = "0:00 quiet_wash @nope[0]\n"
+        with pytest.raises(CueParseError) as excinfo:
+            self._parse(text)
+        assert "(none declared)" in str(excinfo.value)
+
+    def test_placeholder_inside_param_string_is_not_expanded(self):
+        # `foo@bar[0]` (no leading `@` after a separator) is not a
+        # placeholder. The regex anchors to the whole token; this
+        # token has no leading `@` so it stays put.
+        text = (
+            "@palette pal #112233\n"
+            "0:00 quiet_wash 50 50 50\n"
+            # Verify the placeholder regex needs the @ at token start
+            # by sending an unparseable token in. Should raise the
+            # usual int-parse error, NOT a palette error.
+        )
+        f = self._parse(text)
+        assert "pal" in f.palettes
+        # Sanity: regex doesn't match a non-anchored case.
+        from nocturnation_orchestrator.cues import _PALETTE_PLACEHOLDER_RE
+        assert _PALETTE_PLACEHOLDER_RE.match("foo@bar[0]") is None
+        assert _PALETTE_PLACEHOLDER_RE.match("@bar[0]") is not None
