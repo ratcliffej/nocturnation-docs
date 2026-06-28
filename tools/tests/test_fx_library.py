@@ -383,18 +383,25 @@ class TestWashWithSparkle:
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_PULSE_RESPONSE) >= 128
 
-    def test_sparkle_re_arms_on_next_tick(self):
+    def test_sparkle_re_arms_after_hold_window(self):
+        # 2026-06-28 bench-bug workaround: HI is now held for HOLD_MS
+        # (100 ms) so the StickC bridge's last-wins poll catches it.
+        # Trigger drops to LO only AFTER the hold window expires.
         fx = _make(
             WashWithSparkle, bpm=120,
             params=(100, 100, 100, 50, 50, 50, 80, 255, 0, 0, 255),
         )
         u = _u()
         fx.tick(now_ms=0, universe=u)
+        # Within the hold window - still HI.
         u = _u()
         fx.tick(now_ms=20, universe=u)
-        # Same beat -> trigger drops low.
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Past the hold window - re-armed LO.
+        u = _u()
+        fx.tick(now_ms=150, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
-        # Wash channels still set.
+        # Wash channels still set throughout.
         assert _ch(u, CH_WASH_A_R) == 100
 
     def test_sparkle_fires_again_on_next_beat(self):
@@ -878,7 +885,8 @@ class TestWashWithSparkleGridSync:
         u = _u()
         fx.tick(now_ms=1210, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
-        # Mid-beat - re-armed low.
+        # Past the hold window (1210 + 100 = 1310 ms) but before
+        # the next beat at 1640 - re-armed low.
         u = _u()
         fx.tick(now_ms=1500, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO

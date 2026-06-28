@@ -104,6 +104,20 @@ class WashWithSparkle(Fx):
         self._atk_slider = params[12] if (len(params) > 12 and params[12] != 0) else 16
         self._sus_slider = params[13] if (len(params) > 13 and params[13] != 0) else 16
         self._rel_slider = params[14] if (len(params) > 14 and params[14] != 0) else 96
+        # Bench-found bug fix 2026-06-28: StickC DMX bridge mode's
+        # tick loop is "last-wins" for DMX universes (see
+        # src/modes/dmx_bridge_mode.cpp line 219). If the orchestrator
+        # dispatches HI then LO within the bridge's poll window
+        # (typically ~5-50 ms), the bridge sees only the LO and the
+        # rising-edge LIGHT_PULSE is never emitted. Observed as ~50%
+        # randomly-dropped beats at the Tildagon at 140 BPM.
+        # Workaround: hold TRIGGER_HI on the wire for HOLD_MS so the
+        # HI universe is "latest" for long enough that any reasonable
+        # bridge poll catches it before the LO transition. Long-term
+        # fix is on the StickC side (process every universe, not just
+        # last); this orchestrator-side patch unblocks bench testing
+        # without needing a firmware reflash.
+        self._hi_until_ms = 0
         # Beat cadence. Epic 14.9 Block B: when the runner has attached
         # a beats_ms list (loaded from <name>.cues.analysis.json), drive
         # the sparkle from the actual librosa beat grid rather than the
@@ -173,12 +187,16 @@ class WashWithSparkle(Fx):
             beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
+        # Hold HI on the wire for HOLD_MS so the StickC bridge's
+        # last-wins poll catches it. 100 ms is safely longer than
+        # typical bridge poll intervals (5-50 ms) but short enough
+        # to not bleed into the next beat at 240 BPM (250 ms beat).
+        HOLD_MS = 100
+        if on_beat:
+            self._hi_until_ms = now_ms + HOLD_MS
         # Bench-diagnostic: surface every on_beat fire so the
         # operator can count fires per second and discriminate
         # orchestrator-side drops from downstream pipeline drops.
-        # Compares observed fire count vs expected (60_000 / @bpm).
-        # Disable by removing this block; cost is one print per beat
-        # which is fine at musical rates.
         if on_beat:
             import sys
             print("[FX beat] pos=%s idx=%s now=%s"
@@ -187,8 +205,13 @@ class WashWithSparkle(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_R),    self._sr)
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._sg)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._sb)
-        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
-               TRIGGER_HI if on_beat else TRIGGER_LO)
+        # Hold-HI: write HI until HOLD_MS have elapsed since the last
+        # beat fire. Workaround for the StickC bridge last-wins poll
+        # eating rising-edge transitions when HI lasts only one tick.
+        if now_ms < self._hi_until_ms:
+            set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_HI)
+        else:
+            set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_LO)
         set_ch(universe, block_channel(g, CH_PULSE_ATK),  self._atk_slider)
         set_ch(universe, block_channel(g, CH_PULSE_SUS),  self._sus_slider)
         set_ch(universe, block_channel(g, CH_PULSE_REL),  self._rel_slider)
