@@ -73,6 +73,9 @@ class WashWithSparkle(Fx):
         ("s_b",         "u8",      "Sparkle Blue."),
         ("probability", "percent", "Sparkle chance per beat (0..100%). Default 100%."),
         ("group",       "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
+        ("attack",      "u8",      "Sparkle attack slider 0..255 (pixmob_time bucketed). Default 16 when zero."),
+        ("sustain",     "u8",      "Sparkle sustain slider 0..255. Default 16 when zero."),
+        ("release",     "u8",      "Sparkle release slider 0..255. Default 96 when zero."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -90,6 +93,17 @@ class WashWithSparkle(Fx):
         self._sr, self._sg, self._sb = sr, sg, sb
         self._prob = percent_to_dmx(params[10] if params[10] != 0 else 100)
         self._group = clamp_group(params[11] if len(params) > 11 else 0)
+        # Sparkle envelope (Epic 14.9 bench follow-up: was hardcoded
+        # 16/16/96 = 0+0+192 ms via pixmob_time bucketing. Operator
+        # wanted to test "what if envelope tail overlaps next beat".
+        # Defaults preserve the legacy behaviour; explicit non-zero
+        # values override. Slider math: bucket_idx = slider // 32,
+        # bucket_ms in (0, 32, 96, 192, 480, 960, 2400, 3840). For a
+        # near-instant on/off pulse, try attack=1 sustain=1 release=32
+        # which gives 0+0+32 = 32 ms.
+        self._atk_slider = params[12] if (len(params) > 12 and params[12] != 0) else 16
+        self._sus_slider = params[13] if (len(params) > 13 and params[13] != 0) else 16
+        self._rel_slider = params[14] if (len(params) > 14 and params[14] != 0) else 96
         # Beat cadence. Epic 14.9 Block B: when the runner has attached
         # a beats_ms list (loaded from <name>.cues.analysis.json), drive
         # the sparkle from the actual librosa beat grid rather than the
@@ -164,7 +178,7 @@ class WashWithSparkle(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._sb)
         set_ch(universe, block_channel(g, CH_PULSE_TRIG),
                TRIGGER_HI if on_beat else TRIGGER_LO)
-        set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
-        set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
-        set_ch(universe, block_channel(g, CH_PULSE_REL),  96)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  self._atk_slider)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  self._sus_slider)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  self._rel_slider)
         set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)
