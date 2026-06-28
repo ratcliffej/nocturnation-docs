@@ -64,7 +64,7 @@ Three reasons.
 
 **Coverage.** A single Stick's infra-red LED reaches roughly five to fifteen metres of clear line of sight, depending on which Stick and how it is oriented (see [section 2.3](#23-ir-radiation-patterns)). A medium-sized venue needs three or four Lumes spaced around the room to reach every bracelet. The Lumes do not need to hear the music; they only need to be in radio range of the Director and within infra-red line of sight of part of the audience.
 
-**Redundancy.** ESP-NOW, the radio protocol used between Sticks, is a broadcast medium with no acknowledgements. Each light command is transmitted three times in quick succession to absorb the occasional lost frame. A Lume that receives any of the three copies fires the command; a deduplication ring on the receive side ensures it only fires once.
+**Redundancy.** ESP-NOW, the radio protocol used between Sticks, is a broadcast medium with no acknowledgements. Each light command is transmitted twice in quick succession to absorb the occasional lost frame. A Lume that receives either copy fires the command; a deduplication ring on the receive side ensures it only fires once. (Pre-Epic-15 the count was three; reduced to two when the fleet moved to Long Range mode — see [section 1.7](#17-the-wireless-link) — because each frame now occupies twice the airtime and three transmits per pulse would saturate the radio at sparkle rates.)
 
 **Operator division of labour.** One operator can run the Director from front of house while helpers stationed around the room hold or stand the Lumes. The Lumes need no configuration during a show; they keep running on whatever channel and group filter you set in advance.
 
@@ -125,7 +125,11 @@ The Sticks talk to each other over **ESP-NOW**, a connection-less broadcast prot
 
 The Director picks a channel in [Connectivity > ESP-NOW > Director Channel](#43-connectivity). The Lume defaults to **auto-scan**, in which case it cycles through channels 11 and 1 and locks onto whichever is currently broadcasting (channel 11 is checked first because show traffic takes priority). A Lume can also be locked to a single channel if you want predictability.
 
-Every frame the Director sends is transmitted three times in quick succession on the same channel. Each frame carries a sequence number; Lumes keep a sixteen-deep ring of recently-seen sequence numbers and ignore duplicates. The signal-quality bars on the Lume screen show how many of the recent expected sequences were actually seen. The system never reports raw RSSI; it reports delivered fidelity, which is what an operator actually cares about.
+Every frame the Director sends is transmitted twice in quick succession on the same channel. Each frame carries a sequence number; Lumes keep a sixteen-deep ring of recently-seen sequence numbers and ignore duplicates. The signal-quality bars on the Lume screen show how many of the recent expected sequences were actually seen. The system never reports raw RSSI; it reports delivered fidelity, which is what an operator actually cares about.
+
+**Long Range mode (Epic 15).** As of the EMF 2026 firmware, the fleet runs ESP-NOW in Espressif's **`WIFI_PROTOCOL_LR`** mode: a proprietary long-range PHY that halves the bitrate (500 kbps vs 1 Mbps) in exchange for ~2.5-7× the open-air range. Bench-confirmed coverage at 110-120 m line of sight; ~30-50 m through brick/glass. LR mode is **fleet-wide one-way**: an LR-mode Director cannot talk to a standard-mode Lume and vice versa, because the PHYs are mutually unintelligible. Every Director and Lume must be flashed with the Epic 15 firmware or later. The trade-off is doubled frame airtime, which is why the redundant-transmit count was reduced from three to two — three at LR rate would saturate the radio during sparkle-rate traffic.
+
+**Repeat mode (mesh extension).** A Lume with `Connectivity > ESP-NOW > Lume Repeat = ON` rebroadcasts every accepted frame, with the frame's `hop_count` incremented by one. The frame's `source_id` and `sequence_number` are preserved so the fleet-wide dedup still works mesh-wide. The hop ceiling is **3** — frames beyond that are silently dropped as loop prevention. Use a repeater to bridge a corner or extend coverage past a wall: place the repeater with line of sight to both the Director and the audience-side Lumes. The repeater Stick shows a small `R:N` counter at the bottom-left of its LCD when Lume Repeat is on, where N is the total number of frames it has rebroadcast since entering Lume mode — useful for confirming the relay path is firing during a deployment.
 
 ### 1.8 The heartbeat
 
@@ -408,10 +412,9 @@ A picker leading to four sub-menus:
 - `Director Channel` - selects 1, 6, or 11. NVS key `mst_chan`, default 1.
 - `DirID` - this Director's Performance-range source id (one byte in `0x40..0xFE`). Shown as `P:nn`. Random on first install, persisted to NVS (key `mst_pid`), sticky across reboots. A-click drills into a hex editor with three cursor positions cycled by Btn2: high nibble (cycles `4..F`), low nibble (cycles `0..F` skipping the reserved `0xFF` slot), and `Re-roll` (rolls + persists a new random). B-hold exits. New value applies at the next Director start. The byte identifies *this* Director on the wire so Lumes can lock to it; the value is broadcast on every frame and is what the Lume's TOFU lock pins onto. Upstream show logic (Tildagon shows, the orchestrator) can pattern-match on the locked Director's ID to choose content (e.g. a stage-D logo when locked to `0xD0`, an artist QR code when locked to `0xA1`). The id matters *because* it's stable and operator-settable; pin a known value per stage / per artist when content depends on it. See [section 4.7](#47-multi-show-partitioning).
 - `Lume Channel` - 0 (auto-scan), 1, 6, or 11. NVS key `slv_chan`, default 0.
-- `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off.
+- `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off. Rebroadcasts preserve `source_id` and `sequence_number` so the fleet-wide dedup still works mesh-wide; `hop_count` is incremented by one and the frame is dropped at the 3-hop ceiling. When ON, the LCD bottom-left shows a small green `R:NNNN` counter — total frames rebroadcast since entering Lume mode. Read at a glance during a deployment to confirm the relay is firing without USB-attaching the Stick. See [section 1.7](#17-the-wireless-link) for the mesh-extension design rationale.
 
-**WiFi** (stub, reserved for future Epic):
-- Enable, SSID, Password, Soft-AP mode. Not functional in v0.6.
+The `WiFi` submenu was retired in Epic 15 — the fleet runs ESP-NOW in `WIFI_PROTOCOL_LR` mode and 802.11b/g/n is disabled at the radio layer, so no path will ever surface a Wi-Fi config screen now or in the foreseeable future.
 
 **DMX** (stub, reserved for Epic 7):
 - Carrier, Universe ID, Channel mapping. Not functional in v0.6.
@@ -629,6 +632,21 @@ If you want to verify a deployment without any chance gating, use Test mode's `P
 ### 6.5 Lume repeater not working
 
 The Lume-as-repeater toggle requires the Lume to actually have received a frame before it can rebroadcast. If the Lume is not receiving (signal-quality strip is clear), it cannot repeat. Verify direct Director-to-Lume reception first; turn the repeater on after.
+
+**Diagnostic toolchain (Epic 15):**
+
+1. **`R:NNNN` counter on the repeater Stick's LCD.** A repeater Lume with `Lume Repeat: ON` shows a green counter at the bottom-left of its LCD — total frames rebroadcast since entering Lume mode. If R is incrementing, the relay TX is firing. If R stays at 0, the repeater isn't seeing frames itself (check direct reception first).
+
+2. **Debug overlay on the Tildagon.** Toggle `Settings → Debug: ON` in the Tildagon app, then enter Lume mode. The LCD shows a colour-coded diagnostic readout:
+   - Lock label (`ch N P:nn` or `ch N C:nn`) showing which Director the badge has locked to
+   - `Last: 0.4s` — frame age in seconds + tenths (the prominent diagnostic)
+   - Background tints: **green** if last frame < 1.2 s ago, **amber** 1.2 – 2 s, **red** > 2 s
+   - `Fr/10s: N` — frames received in rolling 10 s window
+   - `Hop: N (a b ...)` — hop_count of most recent frame, plus a live meter of higher hop levels seen at any point in this session. `Hop: 0 ()` means only direct reception; `Hop: 0 (1)` means a relay reached us at some point; `Hop: 1 (2)` means we're hearing relayed and double-relayed traffic.
+
+3. **Static bench test for relay validation.** Place Director + Repeater (Lume + Repeat ON) + Tildagon (Debug ON) all within ~2 m of each other on a desk, all in clear line of sight. The Tildagon should show `Hop: 0 (1)` within seconds — meaning relayed frames are reaching it. If it stays at `Hop: 0 ()` despite the repeater's `R:N` counter climbing, the relay TX isn't bridging at the radio layer.
+
+For corner / repeater-placement work in the field: walk the Tildagon while watching the `Last:` background tint go from green → amber → red as you move out of direct range. If a well-placed repeater is bridging, `Hop:` should flip to `1` and the background return to green at the corner. If `Hop:` stays `0 ()` and the background goes straight red, the repeater isn't bridging that location — reposition it with clearer line of sight to both endpoints.
 
 ### 6.6 Low battery behaviour
 
