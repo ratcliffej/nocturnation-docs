@@ -88,6 +88,23 @@ class PositionTracker:
 
         if (track_changed or state_changed or position_changed
                 or not self._has_anchor):
+            # Bench-diagnostic: log every re-anchor with the
+            # interpolated-vs-OS divergence. Lets the operator see
+            # whether nowplaying-cli polling is causing position
+            # jumps that span beat boundaries (= dropped beats).
+            # Pre-anchor we use the OLD anchor to compute what we
+            # would have interpolated for this wall time; that's
+            # what the FX layer was about to see.
+            if self._has_anchor and self._is_playing:
+                interp = self._anchor_position_ms + (
+                    now_ms - self._anchor_wall_ms
+                )
+                jump = np.position_ms - interp
+                if abs(jump) >= 5:
+                    import sys
+                    print("[tracker re-anchor] interp=%d os=%d jump=%+dms"
+                          % (interp, np.position_ms, jump),
+                          file=sys.stderr)
             self._anchor_position_ms = np.position_ms
             self._anchor_wall_ms = now_ms
             self._has_anchor = True
