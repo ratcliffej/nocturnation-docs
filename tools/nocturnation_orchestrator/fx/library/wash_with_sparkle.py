@@ -90,10 +90,38 @@ class WashWithSparkle(Fx):
         self._sr, self._sg, self._sb = sr, sg, sb
         self._prob = percent_to_dmx(params[10] if params[10] != 0 else 100)
         self._group = clamp_group(params[11] if len(params) > 11 else 0)
-        # Beat cadence.
+        # Beat cadence. Epic 14.9 Block B: when the runner has attached
+        # a beats_ms list (loaded from <name>.cues.analysis.json), drive
+        # the sparkle from the actual librosa beat grid rather than the
+        # bpm-derived clock. This is critical when @bpm doesn't quite
+        # match librosa's measured tempo (e.g. 140 declared, 139.67
+        # actual = ~90 ms phase offset per beat at runtime) or when the
+        # song has any tempo variation. Falls back to bpm-clock when
+        # no sidecar is loaded (host tests, devs without librosa, etc.)
+        # so the FX still works in those environments.
         self._beat_ms = max(1, int(round(60_000.0 / bpm)))
         self._beat_anchor_ms = now_ms - position_ms
-        self._last_beat_index = -1
+        self._beats_ms = list(getattr(self, "beats_ms", None) or [])
+        self._use_beats = bool(self._beats_ms)
+        if self._use_beats:
+            self._last_beat_index = (
+                self._count_beats_at_or_before(position_ms) - 1
+            )
+        else:
+            self._last_beat_index = -1
+
+    def _count_beats_at_or_before(self, t_ms):
+        """Binary search the count of beats whose timestamp is <= t_ms.
+        Mirrors sparkle_on_beat / pulse_per_bar; could be promoted to
+        a shared helper if more FX adopt beat-grid awareness."""
+        lo, hi = 0, len(self._beats_ms)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._beats_ms[mid] <= t_ms:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
 
     def tick(self, now_ms, universe):
         g = self._group
@@ -117,7 +145,14 @@ class WashWithSparkle(Fx):
         elapsed = now_ms - self._beat_anchor_ms
         if elapsed < 0:
             elapsed = 0
-        beat_index = elapsed // self._beat_ms
+        if self._use_beats:
+            # Beat-grid mode: count beats whose timestamp <= elapsed
+            # song-time. Index advances each time we cross a beat in
+            # the librosa list.
+            beat_index = self._count_beats_at_or_before(elapsed) - 1
+        else:
+            # Fallback: even-cadence bpm clock.
+            beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
         set_ch(universe, block_channel(g, CH_PULSE_R),    self._sr)

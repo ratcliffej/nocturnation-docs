@@ -846,3 +846,85 @@ class TestPulsePerBarGridSync:
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+class TestWashWithSparkleGridSync:
+    """Epic 14.9 follow-up. wash_with_sparkle missed the original
+    Block B pass and stayed on the bpm-clock - which the operator
+    noticed when the sparkle phase-offset by ~90 ms relative to the
+    actual bass drum (140 declared bpm vs 139.67 librosa-measured).
+    Same beat-grid contract as sparkle_on_beat once the runner
+    attaches beats_ms."""
+
+    def test_no_fire_before_first_beat(self):
+        # beats[0] = 1210ms; nothing should fire at song time 0..1209.
+        fx = _make_with_beats(
+            WashWithSparkle, [1210, 1640, 2070, 2500],
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_fires_exactly_on_grid_beats(self):
+        beats = [1210, 1640, 2070, 2500]
+        fx = _make_with_beats(
+            WashWithSparkle, beats,
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        # First beat in the grid - rising edge.
+        u = _u()
+        fx.tick(now_ms=1210, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Mid-beat - re-armed low.
+        u = _u()
+        fx.tick(now_ms=1500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Second beat - rising edge again.
+        u = _u()
+        fx.tick(now_ms=1640, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_uses_librosa_grid_not_bpm_clock(self):
+        # The regression we shipped this fix for: at 140 declared bpm
+        # the bpm-clock fires every 428.6 ms anchored to song-time 0,
+        # so it would emit a rising edge on the very first tick (t=0).
+        # On the librosa grid with beats[0] = 1200 ms, t=0 is BEFORE
+        # any beat - so the FX should stay LOW until the grid's first
+        # beat is crossed. The "no fire at t=0" assertion is what
+        # distinguishes the two modes cleanly.
+        beats = [1200, 1630, 2071, 2501]   # uneven 430/441 like librosa
+        fx = _make_with_beats(
+            WashWithSparkle, beats, bpm=140,
+            params=(0, 0, 0, 0, 0, 0, 80,
+                    255, 255, 255, 255),
+        )
+        # Grid mode: no beat at or before 0, so no rising edge yet.
+        # bpm-clock mode WOULD have fired here.
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Crossing into the grid's first beat fires the trigger.
+        u = _u()
+        fx.tick(now_ms=1200, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Second grid beat at 1630 - rising edge again.
+        u = _u()
+        fx.tick(now_ms=1500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO   # mid-beat re-arm
+        u = _u()
+        fx.tick(now_ms=1630, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_falls_back_to_bpm_clock_without_beats(self):
+        # Empty beats list -> classic behaviour: pulse on bpm clock.
+        fx = _make_with_beats(
+            WashWithSparkle, [], bpm=120,
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
