@@ -446,16 +446,26 @@ def run(
                                 current_cue_mtime = new_mtime
 
             # 2) Advance the scheduler against interpolated position.
+            # current_position correctly returns the FROZEN position
+            # when music is paused, so we compute it unconditionally
+            # and pass it to runner.tick below - that's what lets
+            # beat-aware FX freeze with the music instead of pulsing
+            # off wall-clock (bench-found bug: badge kept pulsing
+            # while music was paused).
+            current_position_ms = (
+                tracker.current_position(now)
+                if scheduler.cue_file is not None
+                else None
+            )
             if tracker.is_playing and scheduler.cue_file is not None:
-                position_ms = tracker.current_position(now)
-                scheduler.advance(position_ms, now_ms=now)
+                scheduler.advance(current_position_ms, now_ms=now)
 
             # 3) Tick the FX engine. Capture pre-tick state too so a
             # one-tick FX (notably Blackout - the `stop` cue) still
             # gets its zero universe dispatched even though it
             # finishes mid-tick.
             pre_tick_active = runner.is_active
-            runner.tick(now, universe)
+            runner.tick(now, universe, position_ms=current_position_ms)
 
             # 4) Dispatch - with two layers of suppression so we look
             # like a polite DMX producer rather than a firehose:

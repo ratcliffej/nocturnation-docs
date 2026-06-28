@@ -93,12 +93,21 @@ class PulsePerBar(Fx):
         return last_beat_idx // self._beats_per_bar + 1
 
     def tick(self, now_ms, universe):
-        elapsed = now_ms - self._anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        if self._use_beats:
+        # Prefer music-position over wall-clock so bars freeze on
+        # pause, same as sparkle_on_beat (bench-found that wall-clock
+        # FX keep firing through music pauses).
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            bar_index = self._count_bars_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             bar_index = self._count_bars_at_or_before(elapsed) - 1
         else:
+            elapsed = now_ms - self._anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             bar_index = elapsed // self._bar_ms
         on_bar = bar_index != self._last_bar_index
         self._last_bar_index = bar_index

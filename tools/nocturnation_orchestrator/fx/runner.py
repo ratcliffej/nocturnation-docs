@@ -157,18 +157,33 @@ class FxRunner:
     # ------------------------------------------------------------------
     # Tick
 
-    def tick(self, now_ms, universe):
+    def tick(self, now_ms, universe, position_ms=None):
         """Advance both the current FX and any cancelling FX.
 
         Called from the orchestrator render loop at ~50 Hz. The
         cancelling FX ticks first so the current FX has the final say
         on any channels they both touch.
+
+        position_ms (optional, new in this bench-found bug fix): the
+        current music-player position. Stored on the FX instance
+        before each tick() so beat-aware FX (sparkle_on_beat,
+        pulse_per_bar, wash_with_sparkle) can look up beats[] against
+        the actual music clock rather than wall-clock-elapsed-since-
+        cue-start. The wall-clock approach silently breaks on
+        pause / seek - badge kept pulsing while music was paused,
+        which was the smoking gun for this bug. When position_ms is
+        omitted (back-compat / host tests), FX fall back to the
+        wall-clock math.
         """
         if self.cancelling_fx is not None:
+            if position_ms is not None:
+                self.cancelling_fx.position_ms = position_ms
             self.cancelling_fx.tick(now_ms, universe)
             if self.cancelling_fx.is_finished(now_ms):
                 self.cancelling_fx = None
         if self.current_fx is not None:
+            if position_ms is not None:
+                self.current_fx.position_ms = position_ms
             self.current_fx.tick(now_ms, universe)
             if self.current_fx.is_finished(now_ms):
                 self.current_fx = None

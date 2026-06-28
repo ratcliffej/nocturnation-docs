@@ -141,17 +141,21 @@ class WashWithSparkle(Fx):
         # this the Lume drops every subsequent pulse cue silently.
         # See render/perimeter.py dispatch() guard on pulse_response.
         set_ch(universe, block_channel(g, CH_WASH_PULSE_RESPONSE), 255)
-        # Sparkle (beat-aligned rising edge).
-        elapsed = now_ms - self._beat_anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        if self._use_beats:
-            # Beat-grid mode: count beats whose timestamp <= elapsed
-            # song-time. Index advances each time we cross a beat in
-            # the librosa list.
+        # Sparkle (beat-aligned rising edge). Prefer music-position
+        # over wall-clock - badge keeps pulsing through a pause
+        # otherwise. See sparkle_on_beat.tick for the same shape.
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            beat_index = self._count_beats_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = self._count_beats_at_or_before(elapsed) - 1
         else:
-            # Fallback: even-cadence bpm clock.
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index

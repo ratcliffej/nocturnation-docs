@@ -105,14 +105,25 @@ class SparkleOnBeat(Fx):
         return lo
 
     def tick(self, now_ms, universe):
-        elapsed = now_ms - self._beat_anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        if self._use_beats:
-            # Count of beats elapsed so far; index goes up by one each
-            # time the song crosses a beat from beats_ms.
+        # Prefer the music-position-driven beat index (set by the
+        # runner from tracker.current_position). When music pauses,
+        # position_ms freezes and so does the beat index - which is
+        # the correct behaviour for a music-cue system. Falls back
+        # to wall-clock-elapsed when no position is attached (host
+        # tests, callers that haven't been updated to pass
+        # position_ms through runner.tick).
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            beat_index = self._count_beats_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = self._count_beats_at_or_before(elapsed) - 1
         else:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
