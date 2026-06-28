@@ -279,14 +279,20 @@ class TestDriftWash:
 
 class TestSparkleOnBeat:
     def test_fires_trigger_high_on_beat(self):
+        # 2026-06-28 bench-bug workaround: HI is now held for 100 ms
+        # to survive the StickC bridge's last-wins poll. Re-arm only
+        # after the hold window expires.
         fx = _make(SparkleOnBeat, bpm=120, params=(200, 0, 100, 200, 0, 0))
         u = _u()
-        # First tick of the first beat - rising edge.
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
-        # Same beat, next tick - re-armed low.
+        # Within the hold window - still HI.
         u = _u()
         fx.tick(now_ms=20, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Past the 100 ms hold window - re-armed LO.
+        u = _u()
+        fx.tick(now_ms=150, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
 
     def test_fires_again_on_next_beat(self):

@@ -194,14 +194,6 @@ class WashWithSparkle(Fx):
         HOLD_MS = 100
         if on_beat:
             self._hi_until_ms = now_ms + HOLD_MS
-        # Bench-diagnostic: surface every on_beat fire so the
-        # operator can count fires per second and discriminate
-        # orchestrator-side drops from downstream pipeline drops.
-        if on_beat:
-            import sys
-            print("[FX beat] pos=%s idx=%s now=%s"
-                  % (music_pos, beat_index, now_ms),
-                  file=sys.stderr)
         set_ch(universe, block_channel(g, CH_PULSE_R),    self._sr)
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._sg)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._sb)
