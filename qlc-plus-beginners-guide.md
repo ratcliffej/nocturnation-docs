@@ -11,7 +11,7 @@ sync_direction: bidirectional
 
 A from-zero walkthrough to driving NocturNation from QLC+, written for someone who has never opened a lighting console before. By the end you will be able to install QLC+, navigate its interface, define the core concepts in plain English, plug a StickC into your laptop, build a Scene, sequence a Chaser, and link a cue stack to a track for a coordinated live performance.
 
-This guide is split across thirteen sections. The first four are concept-only - install QLC+, learn the UI, learn the vocabulary. No NocturNation hardware required for sections 1-4. Section 5 introduces the cable; section 7 is the first-light moment where a slider in QLC+ produces a visible Lume flash.
+This guide is split across fourteen sections. The first four are concept-only - install QLC+, learn the UI, learn the vocabulary. No NocturNation hardware required for sections 1-4. Section 5 introduces the cable; section 7 is the first-light moment where a slider in QLC+ produces a visible Lume flash. Section 8 loads the NocturNation fixture file so subsequent chapters can reach channels by name instead of number.
 
 If you already know QLC+ and want the short version of "where do I point my console?", read [`dmx-quickstart.md`](dmx-quickstart.md) instead.
 
@@ -24,12 +24,13 @@ If you already know QLC+ and want the short version of "where do I point my cons
 - [5. Hardware](#5-hardware)
 - [6. Configuring QLC+ output](#6-configuring-qlc-output)
 - [7. First light](#7-first-light)
-- [8. Building a Scene](#8-building-a-scene)
-- [9. Building a Chaser](#9-building-a-chaser)
-- [10. Linking a track](#10-linking-a-track)
-- [11. Saving + sharing](#11-saving--sharing)
-- [12. Glossary](#12-glossary)
-- [13. Further reading](#13-further-reading)
+- [8. Loading the NocturNation fixture](#8-loading-the-nocturnation-fixture)
+- [9. Building a Scene](#9-building-a-scene)
+- [10. Building a Chaser](#10-building-a-chaser)
+- [11. Linking a track](#11-linking-a-track)
+- [12. Saving + sharing](#12-saving--sharing)
+- [13. Glossary](#13-glossary)
+- [14. Further reading](#14-further-reading)
 
 ---
 
@@ -84,7 +85,7 @@ A short tour of each - what to look at, what to ignore for now.
 
 ### Fixtures
 
-This is where you build your virtual rig. The left pane lists the fixtures you've added; the right pane shows the channel layout for the selected fixture. New installs have nothing here yet. When we add the NocturNation fixture in section 6, this is where it lands.
+This is where you build your virtual rig. The left pane lists the fixtures you've added; the right pane shows the channel layout for the selected fixture. New installs have nothing here yet. When we add the NocturNation fixture in section 8, this is where it lands.
 
 Also in this panel you'll find universe management (NocturNation only needs one universe for the EMF demo) and the input/output configuration that connects QLC+ to whatever is on the other end of the wire.
 
@@ -128,7 +129,7 @@ What a channel "means" is defined by the fixture occupying that channel address.
 
 A logical device that occupies **N consecutive channels** starting at a base address. The fixture file (a `.qxf` file in QLC+'s case) tells QLC+ "this device has 12 channels - channel 1 is Master Intensity, channel 2 is Strobe Rate, channels 3-5 are Pulse R/G/B, …". Once added, you address the fixture by its meaningful names instead of channel numbers.
 
-The NocturNation fixture is **12 channels per Lume group**. We'll add it to QLC+ in section 6.
+The NocturNation fixture is **12 channels per Lume group**. We'll add it to QLC+ in section 8.
 
 *When you reach for this:* whenever you add or move hardware. One fixture per Lume group in NocturNation's case.
 
@@ -338,7 +339,7 @@ If `in=` stays at 0 but `drops=N` is climbing in the `--no-ui` output, that's th
 
 ### 6.5 Add the NocturNation fixtures
 
-NocturNation v2 uses a **7-fixture-per-universe** layout — one Broadcast (reaches every Lume regardless of configured group) plus six Group fixtures (each addressing a distinct Lume group). One fixture instance per addressable group means the LD can scene each group independently — "audience zone A red, zone B blue, broadcast dark".
+In a normal DMX rig you'd also set a *base address* on each fixture (channel 1 vs channel 13 vs channel 25, etc.) to slot multiple fixtures into one universe. We add the NocturNation fixture in section 8; for now the universe is configured but empty.
 
 **Install the fixture definition (one-time):**
 
@@ -526,7 +527,63 @@ If the Stick's DMX Bridge view is "connected" with frames flowing but no Lume li
 
 ---
 
-## 8. Building a Scene
+## 8. Loading the NocturNation fixture
+
+So far you've driven raw channel numbers: channel 1 = master, channel 6 = trigger, channel 7 = wash anchor A red. That's fine for Simple Desk first-light testing, but the moment you start programming Scenes and Chasers you want the sliders to say "Master Intensity" and "Pulse Trigger", not "Channel 1" and "Channel 6". That's what a fixture file does - it teaches QLC+ what each channel of NocturNation's 12-channel layout *means*.
+
+### Step 1: get the fixture file
+
+A `nocturnation-lume-group.qxf` file ships in the `qlc-fixtures/` directory of the [nocturnation-docs repo](https://github.com/ratcliffej/nocturnation-docs). Download it (right-click → Save Link As, or clone the repo, or grab it from a release).
+
+### Step 2: drop it into QLC+'s user fixtures folder
+
+QLC+ looks in a user-writable fixtures folder on startup so you don't have to put your custom fixtures next to the official ones. The path varies by platform:
+
+| Platform | User fixtures folder |
+|----------|---------------------|
+| macOS    | `~/Library/Application Support/QLC+/Fixtures/` |
+| Linux    | `~/.qlcplus/fixtures/` |
+| Windows  | `%USERPROFILE%\QLC+\Fixtures\` |
+
+Copy `nocturnation-lume-group.qxf` into that folder. (Create the folder if it doesn't exist.)
+
+Restart QLC+ so it picks up the new file. (Some versions re-scan on the fly; restart is the safe option.)
+
+<!-- Verify-against-install: confirm the exact path on macOS - some QLC+ installs put the fixtures folder somewhere slightly different. If yours does, capture it. -->
+
+### Step 3: add the fixture to your workspace
+
+In the **Fixtures** panel, click the + button (Add Fixture). The Fixture Browser opens with manufacturers listed alphabetically.
+
+1. Scroll down to **NocturNation**. Expand it.
+2. Pick **Lume Group (12ch)**.
+3. The right pane shows the fixture's channel layout - Master Intensity, Strobe Rate, Pulse R/G/B, Pulse Trigger, Wash A R/G/B, Wash B R/G/B.
+4. **Universe:** 1 (the default).
+5. **Address:** 1 (start of universe 1; matches what Epic 7 B3's DmxBridge mode reads).
+6. **Mode:** 12-Channel (the only mode this fixture has).
+7. Click OK / Add.
+
+<!-- Verify-and-screenshot: the Fixture Browser with NocturNation > Lume Group selected, channel layout visible on the right. -->
+
+The fixture appears in the workspace's universe map at address 1, occupying channels 1-12.
+
+### Step 4: confirm it took
+
+Open **Simple Desk** again. Channels 1-12 now show their names instead of raw numbers - "Master Intensity", "Pulse Trigger", and so on. Drag the same sliders you did in section 7 to confirm the mapping is the same (it is - the fixture is purely a relabelling layer).
+
+### Why this matters for the rest of the guide
+
+Section 9 onwards programmes Scenes against the fixture's *named* channels. With the fixture loaded, "set the Verse Scene's Wash A R to 120" is a single click in the Scene editor. Without the fixture, you'd be matching raw channel numbers to a printed cheatsheet every time. The fixture makes the rest of the workflow tractable.
+
+### Multiple Lume groups in one universe
+
+v1 of NocturNation's DMX bridge only addresses a single Lume group at base address 1 - the StickC firmware reads channels 1-12 and broadcasts to every Lume on the channel. If a future version exposes per-group addressing (multiple fixtures at base addresses 1, 13, 25, 37, ...), this same `.qxf` covers each one - you'd just add the fixture multiple times at different addresses in the Fixtures panel.
+
+For the EMF village-talk demo: one fixture, one Lume group, one cohesive look across the whole audience. Multi-group is a v2 polish.
+
+---
+
+## 9. Building a Scene
 
 Simple Desk is great for testing. For a real show, you want **saved looks** you can recall at any moment - that's what a Scene is. A Scene is a snapshot of channel values; recalling it sends those values to the Lumes, optionally fading from wherever the previous state was.
 
@@ -558,8 +615,8 @@ Save the Scene (Ctrl-S or the toolbar Save button).
 How you trigger a Scene varies by panel:
 
 - From the Functions panel, double-click the Scene name (some versions) or right-click → "Run".
-- From Virtual Console (see section 9), drop a Button widget and bind it to this Scene.
-- From a Show timeline (section 10), drag the Scene onto the timeline at a moment in time.
+- From Virtual Console (see section 10), drop a Button widget and bind it to this Scene.
+- From a Show timeline (section 11), drag the Scene onto the timeline at a moment in time.
 
 Either way, the Lumes should switch to your "Verse" colour.
 
@@ -579,14 +636,14 @@ Now you have two saved looks. You can recall either at any time. This is the bui
 QLC+ Scenes have a built-in fade-in / hold / fade-out time. Set them in the Scene's properties (look for "Fade In" / "Hold" / "Fade Out" fields).
 
 - **Fade In:** how long it takes to interpolate from the current channel values to the Scene's values when recalled.
-- **Hold:** how long the Scene stays at full intensity before fading out (only meaningful when chained in a Chaser, section 9).
+- **Hold:** how long the Scene stays at full intensity before fading out (only meaningful when chained in a Chaser, section 10).
 - **Fade Out:** how long it takes to fade from the Scene's values back to wherever (0 by default, or the next Scene's values).
 
 A 2-second Fade In on the Chorus Scene gives a soft ramp from Verse into Chorus instead of a hard snap. Try it.
 
 ---
 
-## 9. Building a Chaser
+## 10. Building a Chaser
 
 A Chaser is **a sequence of Scenes** with timings - the simplest form of an automated cue stack. "Verse Scene for 4 seconds → Chorus Scene for 4 seconds → loop" is one line of programming.
 
@@ -627,11 +684,11 @@ Same options as a Scene: from Functions, from Virtual Console, from a Show timel
 
 ### What a Chaser isn't
 
-A Chaser is **time-driven**. It doesn't know about your audio track. If you want the cues to land on specific moments in a recorded song, that's section 10's territory - the Show timeline.
+A Chaser is **time-driven**. It doesn't know about your audio track. If you want the cues to land on specific moments in a recorded song, that's section 11's territory - the Show timeline.
 
 ---
 
-## 10. Linking a track
+## 11. Linking a track
 
 The Show timeline is where QLC+ stops being a slider board and starts being a lighting console. Drop an audio file in, drop Scenes and Chasers along the waveform, hit play - the lighting follows the music.
 
@@ -688,7 +745,7 @@ The Show is part of the workspace - **File → Save Workspace** persists it alon
 
 ---
 
-## 11. Saving + sharing
+## 12. Saving + sharing
 
 QLC+ workspaces are single `.qxw` files - XML inside, but you never read them by hand. One file holds everything: universe config, fixtures, all Scenes / Chasers / Shows, and Virtual Console layout.
 
@@ -718,14 +775,14 @@ The village-talk demo will ship its workspace file alongside the slide deck as p
 
 ---
 
-## 12. Glossary
+## 13. Glossary
 
 | Term | Meaning |
 |------|---------|
 | **Art-Net** | An Ethernet/UDP-based protocol that carries DMX-512 channel data over a network. NocturNation's shim listens for Art-Net packets on UDP port 6454 from QLC+. The standard port for Art-Net is 6454 regardless of universe. |
 | **ArtNet Universe** | The 15-bit wire-universe value stamped in an Art-Net packet (0-indexed). Distinct from QLC+'s internal "Universe" patch number (1-indexed). QLC+'s Universe 1 patches to ArtNet Universe 0 by default - see section 6.3's universe-mapping gotcha. |
 | **ASR envelope** | Attack / Sustain / Release - the three-stage shape of a NocturNation pulse. QLC+ doesn't expose ASR directly; NocturNation's `LIGHT_PULSE` carries it via the wire. |
-| **Chaser** | A QLC+ Function that plays Scenes in a timed sequence. See section 9. |
+| **Chaser** | A QLC+ Function that plays Scenes in a timed sequence. See section 10. |
 | **Channel** | One of the 512 lines in a DMX universe. Carries an 8-bit value. See section 4. |
 | **Cue / Cue List** | A numbered list of triggerable lighting states. QLC+ exposes this via Virtual Console's Cue List widget. Less relevant for track-driven shows; standard for live performance. |
 | **DMX-512** | The 1986 ESTA standard for lighting console-to-fixture communication. 512 channels per universe, 8 bits each, sent at 250 kbit/s over RS-485 (or, in NocturNation's case, 921 600 baud over USB-CDC with Enttec Pro framing). |
@@ -737,10 +794,8 @@ The village-talk demo will ship its workspace file alongside the slide deck as p
 | **Master Intensity** | Channel 1 in the NocturNation fixture. Multiplies the wash + pulse output brightness. Set to 0 = blackout. |
 | **Patch** | Lighting-design jargon for the mapping between fixtures and DMX channel addresses. QLC+'s Fixtures panel does the patch. |
 | **Pulse** | A short flash (NocturNation's `LIGHT_PULSE` wire frame). Fired by the Pulse Trigger channel (rising edge) or by the strobe channel (continuous cadence). |
-| **sACN (E1.31)** | The other modern Ethernet-based DMX transport, also supported by QLC+. NocturNation's shim uses Art-Net because mich181189/Tildagon-ArtNet provided a reference implementation we could lean on; the architectural design would work identically with sACN. |
-| **Scene** | A QLC+ Function that holds a snapshot of channel values. See section 8. |
-| **Shim** | The Python bridge daemon (`artnet-to-enttec-pro.py`) that runs on the laptop alongside QLC+. Listens for Art-Net UDP packets, wraps the DMX payload in Enttec Pro framing, writes to the Stick's serial port. See section 6. |
-| **Show** | A QLC+ Function that lays Scenes / Chasers against a timeline tied to an audio file. See section 10. |
+| **Scene** | A QLC+ Function that holds a snapshot of channel values. See section 9. |
+| **Show** | A QLC+ Function that lays Scenes / Chasers against a timeline tied to an audio file. See section 11. |
 | **Simple Desk** | A QLC+ panel with raw per-channel sliders. The fastest way to test that channels reach Lumes; the foundation everything else builds on. |
 | **Strobe** | Continuous repeated flashing at a configured rate. NocturNation Channel 2 sets the rate; the architecture spec §15.1 caps it at 4 Hz for safety. |
 | **Universe** | A group of 512 DMX channels addressed as a unit. NocturNation uses one universe per laptop. See section 4. |
@@ -750,7 +805,7 @@ The village-talk demo will ship its workspace file alongside the slide deck as p
 
 ---
 
-## 13. Further reading
+## 14. Further reading
 
 ### QLC+ specifics
 
