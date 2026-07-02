@@ -76,6 +76,11 @@ class SparkleOnBeat(Fx):
         # Beat phase: align the first beat to `now_ms - position_ms` so
         # late-join keeps the same on-the-beat timing.
         self._beat_anchor_ms = now_ms - position_ms
+        # Bench-found bug workaround 2026-06-28: StickC DMX bridge
+        # is last-wins on universes. Holding TRIGGER_HI on the wire
+        # for 100 ms ensures the bridge poll catches the rising edge.
+        # See wash_with_sparkle.start for the full rationale.
+        self._hi_until_ms = 0
         # Epic 14.9 Block B. The runner attaches `self.beats_ms` from
         # the analysis sidecar before calling start(). When non-empty
         # we run the FX off the actual beat grid instead of bpm /
@@ -105,17 +110,34 @@ class SparkleOnBeat(Fx):
         return lo
 
     def tick(self, now_ms, universe):
-        elapsed = now_ms - self._beat_anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        if self._use_beats:
-            # Count of beats elapsed so far; index goes up by one each
-            # time the song crosses a beat from beats_ms.
+        # Prefer the music-position-driven beat index (set by the
+        # runner from tracker.current_position). When music pauses,
+        # position_ms freezes and so does the beat index - which is
+        # the correct behaviour for a music-cue system. Falls back
+        # to wall-clock-elapsed when no position is attached (host
+        # tests, callers that haven't been updated to pass
+        # position_ms through runner.tick).
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            beat_index = self._count_beats_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = self._count_beats_at_or_before(elapsed) - 1
         else:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
+        # Hold TRIGGER_HI for 100 ms so the StickC bridge's last-wins
+        # poll catches the rising edge. See wash_with_sparkle for full
+        # rationale.
+        HOLD_MS = 100
+        if on_beat:
+            self._hi_until_ms = now_ms + HOLD_MS
 
         g = self._group
         set_ch(universe, block_channel(g, CH_MASTER),     255)
@@ -123,7 +145,7 @@ class SparkleOnBeat(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
         set_ch(universe, block_channel(g, CH_PULSE_TRIG),
-               TRIGGER_HI if on_beat else TRIGGER_LO)
+               TRIGGER_HI if now_ms < self._hi_until_ms else TRIGGER_LO)
         set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
         set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
         set_ch(universe, block_channel(g, CH_PULSE_REL),  96)

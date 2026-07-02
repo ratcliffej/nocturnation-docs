@@ -73,6 +73,9 @@ class WashWithSparkle(Fx):
         ("s_b",         "u8",      "Sparkle Blue."),
         ("probability", "percent", "Sparkle chance per beat (0..100%). Default 100%."),
         ("group",       "count",   "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
+        ("attack",      "u8",      "Sparkle attack slider 0..255 (pixmob_time bucketed). Default 16 when zero."),
+        ("sustain",     "u8",      "Sparkle sustain slider 0..255. Default 16 when zero."),
+        ("release",     "u8",      "Sparkle release slider 0..255. Default 96 when zero."),
     ]
 
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
@@ -90,10 +93,63 @@ class WashWithSparkle(Fx):
         self._sr, self._sg, self._sb = sr, sg, sb
         self._prob = percent_to_dmx(params[10] if params[10] != 0 else 100)
         self._group = clamp_group(params[11] if len(params) > 11 else 0)
-        # Beat cadence.
+        # Sparkle envelope (Epic 14.9 bench follow-up: was hardcoded
+        # 16/16/96 = 0+0+192 ms via pixmob_time bucketing. Operator
+        # wanted to test "what if envelope tail overlaps next beat".
+        # Defaults preserve the legacy behaviour; explicit non-zero
+        # values override. Slider math: bucket_idx = slider // 32,
+        # bucket_ms in (0, 32, 96, 192, 480, 960, 2400, 3840). For a
+        # near-instant on/off pulse, try attack=1 sustain=1 release=32
+        # which gives 0+0+32 = 32 ms.
+        self._atk_slider = params[12] if (len(params) > 12 and params[12] != 0) else 16
+        self._sus_slider = params[13] if (len(params) > 13 and params[13] != 0) else 16
+        self._rel_slider = params[14] if (len(params) > 14 and params[14] != 0) else 96
+        # Bench-found bug fix 2026-06-28: StickC DMX bridge mode's
+        # tick loop is "last-wins" for DMX universes (see
+        # src/modes/dmx_bridge_mode.cpp line 219). If the orchestrator
+        # dispatches HI then LO within the bridge's poll window
+        # (typically ~5-50 ms), the bridge sees only the LO and the
+        # rising-edge LIGHT_PULSE is never emitted. Observed as ~50%
+        # randomly-dropped beats at the Tildagon at 140 BPM.
+        # Workaround: hold TRIGGER_HI on the wire for HOLD_MS so the
+        # HI universe is "latest" for long enough that any reasonable
+        # bridge poll catches it before the LO transition. Long-term
+        # fix is on the StickC side (process every universe, not just
+        # last); this orchestrator-side patch unblocks bench testing
+        # without needing a firmware reflash.
+        self._hi_until_ms = 0
+        # Beat cadence. Epic 14.9 Block B: when the runner has attached
+        # a beats_ms list (loaded from <name>.cues.analysis.json), drive
+        # the sparkle from the actual librosa beat grid rather than the
+        # bpm-derived clock. This is critical when @bpm doesn't quite
+        # match librosa's measured tempo (e.g. 140 declared, 139.67
+        # actual = ~90 ms phase offset per beat at runtime) or when the
+        # song has any tempo variation. Falls back to bpm-clock when
+        # no sidecar is loaded (host tests, devs without librosa, etc.)
+        # so the FX still works in those environments.
         self._beat_ms = max(1, int(round(60_000.0 / bpm)))
         self._beat_anchor_ms = now_ms - position_ms
-        self._last_beat_index = -1
+        self._beats_ms = list(getattr(self, "beats_ms", None) or [])
+        self._use_beats = bool(self._beats_ms)
+        if self._use_beats:
+            self._last_beat_index = (
+                self._count_beats_at_or_before(position_ms) - 1
+            )
+        else:
+            self._last_beat_index = -1
+
+    def _count_beats_at_or_before(self, t_ms):
+        """Binary search the count of beats whose timestamp is <= t_ms.
+        Mirrors sparkle_on_beat / pulse_per_bar; could be promoted to
+        a shared helper if more FX adopt beat-grid awareness."""
+        lo, hi = 0, len(self._beats_ms)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._beats_ms[mid] <= t_ms:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
 
     def tick(self, now_ms, universe):
         g = self._group
@@ -113,19 +169,42 @@ class WashWithSparkle(Fx):
         # this the Lume drops every subsequent pulse cue silently.
         # See render/perimeter.py dispatch() guard on pulse_response.
         set_ch(universe, block_channel(g, CH_WASH_PULSE_RESPONSE), 255)
-        # Sparkle (beat-aligned rising edge).
-        elapsed = now_ms - self._beat_anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        beat_index = elapsed // self._beat_ms
+        # Sparkle (beat-aligned rising edge). Prefer music-position
+        # over wall-clock - badge keeps pulsing through a pause
+        # otherwise. See sparkle_on_beat.tick for the same shape.
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            beat_index = self._count_beats_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
+            beat_index = self._count_beats_at_or_before(elapsed) - 1
+        else:
+            elapsed = now_ms - self._beat_anchor_ms
+            if elapsed < 0:
+                elapsed = 0
+            beat_index = elapsed // self._beat_ms
         on_beat = beat_index != self._last_beat_index
         self._last_beat_index = beat_index
+        # Hold HI on the wire for HOLD_MS so the StickC bridge's
+        # last-wins poll catches it. 100 ms is safely longer than
+        # typical bridge poll intervals (5-50 ms) but short enough
+        # to not bleed into the next beat at 240 BPM (250 ms beat).
+        HOLD_MS = 100
+        if on_beat:
+            self._hi_until_ms = now_ms + HOLD_MS
         set_ch(universe, block_channel(g, CH_PULSE_R),    self._sr)
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._sg)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._sb)
-        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
-               TRIGGER_HI if on_beat else TRIGGER_LO)
-        set_ch(universe, block_channel(g, CH_PULSE_ATK),  16)
-        set_ch(universe, block_channel(g, CH_PULSE_SUS),  16)
-        set_ch(universe, block_channel(g, CH_PULSE_REL),  96)
+        # Hold-HI: write HI until HOLD_MS have elapsed since the last
+        # beat fire. Workaround for the StickC bridge last-wins poll
+        # eating rising-edge transitions when HI lasts only one tick.
+        if now_ms < self._hi_until_ms:
+            set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_HI)
+        else:
+            set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_LO)
+        set_ch(universe, block_channel(g, CH_PULSE_ATK),  self._atk_slider)
+        set_ch(universe, block_channel(g, CH_PULSE_SUS),  self._sus_slider)
+        set_ch(universe, block_channel(g, CH_PULSE_REL),  self._rel_slider)
         set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)

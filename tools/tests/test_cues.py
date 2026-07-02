@@ -585,6 +585,25 @@ class TestDisplayCueLines:
         # for visual layout; Lume centres the line).
         assert f.cues[0].text == "Turn your magic on, please!"
 
+    def test_body_text_newline_escape(self):
+        # Literal `\n` in the cue file converts to actual newline char so
+        # the Tildagon renderer can split on it for forced line breaks.
+        f = parse_cues("00:03 BodyText: Music of\\nthe Spheres")
+        assert f.cues[0].text == "Music of\nthe Spheres"
+
+    def test_body_text_multiple_newlines(self):
+        # Several `\n` escapes in a row each become newline chars; the
+        # renderer turns consecutive newlines into blank lines for
+        # vertical spacing.
+        f = parse_cues("00:03 BodyText: Line1\\nLine2\\n\\nLine4")
+        assert f.cues[0].text == "Line1\nLine2\n\nLine4"
+
+    def test_header_text_newline_escape(self):
+        # Same escape applies to HeaderText for consistency, though
+        # the marquee renderer typically only shows one logical line.
+        f = parse_cues("00:01 HeaderText: Coldplay\\n2026 Tour")
+        assert f.cues[0].text == "Coldplay\n2026 Tour"
+
 
 class TestDisplayDirectives:
     def test_show_song_info_bare(self):

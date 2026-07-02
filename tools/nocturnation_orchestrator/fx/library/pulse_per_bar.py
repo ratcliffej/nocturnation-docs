@@ -72,6 +72,10 @@ class PulsePerBar(Fx):
             )
         else:
             self._last_bar_index = -1
+        # Bench-found bug workaround 2026-06-28: StickC DMX bridge
+        # last-wins. Hold HI for 100 ms so the bridge catches it.
+        # See wash_with_sparkle.start for full rationale.
+        self._hi_until_ms = 0
 
     def _count_bars_at_or_before(self, t_ms):
         """How many bars have elapsed by t_ms, using the actual beats[]
@@ -93,15 +97,29 @@ class PulsePerBar(Fx):
         return last_beat_idx // self._beats_per_bar + 1
 
     def tick(self, now_ms, universe):
-        elapsed = now_ms - self._anchor_ms
-        if elapsed < 0:
-            elapsed = 0
-        if self._use_beats:
+        # Prefer music-position over wall-clock so bars freeze on
+        # pause, same as sparkle_on_beat (bench-found that wall-clock
+        # FX keep firing through music pauses).
+        music_pos = getattr(self, "position_ms", None)
+        if self._use_beats and music_pos is not None:
+            bar_index = self._count_bars_at_or_before(music_pos) - 1
+        elif self._use_beats:
+            elapsed = now_ms - self._anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             bar_index = self._count_bars_at_or_before(elapsed) - 1
         else:
+            elapsed = now_ms - self._anchor_ms
+            if elapsed < 0:
+                elapsed = 0
             bar_index = elapsed // self._bar_ms
         on_bar = bar_index != self._last_bar_index
         self._last_bar_index = bar_index
+        # Hold TRIGGER_HI for 100 ms (same workaround as
+        # sparkle_on_beat / wash_with_sparkle).
+        HOLD_MS = 100
+        if on_bar:
+            self._hi_until_ms = now_ms + HOLD_MS
 
         g = self._group
         set_ch(universe, block_channel(g, CH_MASTER),     255)
@@ -109,7 +127,7 @@ class PulsePerBar(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
         set_ch(universe, block_channel(g, CH_PULSE_TRIG),
-               TRIGGER_HI if on_bar else TRIGGER_LO)
+               TRIGGER_HI if now_ms < self._hi_until_ms else TRIGGER_LO)
         set_ch(universe, block_channel(g, CH_PULSE_ATK),  32)
         set_ch(universe, block_channel(g, CH_PULSE_SUS),  64)
         set_ch(universe, block_channel(g, CH_PULSE_REL),  128)

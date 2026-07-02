@@ -279,14 +279,20 @@ class TestDriftWash:
 
 class TestSparkleOnBeat:
     def test_fires_trigger_high_on_beat(self):
+        # 2026-06-28 bench-bug workaround: HI is now held for 100 ms
+        # to survive the StickC bridge's last-wins poll. Re-arm only
+        # after the hold window expires.
         fx = _make(SparkleOnBeat, bpm=120, params=(200, 0, 100, 200, 0, 0))
         u = _u()
-        # First tick of the first beat - rising edge.
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
-        # Same beat, next tick - re-armed low.
+        # Within the hold window - still HI.
         u = _u()
         fx.tick(now_ms=20, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Past the 100 ms hold window - re-armed LO.
+        u = _u()
+        fx.tick(now_ms=150, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
 
     def test_fires_again_on_next_beat(self):
@@ -383,18 +389,25 @@ class TestWashWithSparkle:
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_WASH_PULSE_RESPONSE) >= 128
 
-    def test_sparkle_re_arms_on_next_tick(self):
+    def test_sparkle_re_arms_after_hold_window(self):
+        # 2026-06-28 bench-bug workaround: HI is now held for HOLD_MS
+        # (100 ms) so the StickC bridge's last-wins poll catches it.
+        # Trigger drops to LO only AFTER the hold window expires.
         fx = _make(
             WashWithSparkle, bpm=120,
             params=(100, 100, 100, 50, 50, 50, 80, 255, 0, 0, 255),
         )
         u = _u()
         fx.tick(now_ms=0, universe=u)
+        # Within the hold window - still HI.
         u = _u()
         fx.tick(now_ms=20, universe=u)
-        # Same beat -> trigger drops low.
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Past the hold window - re-armed LO.
+        u = _u()
+        fx.tick(now_ms=150, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
-        # Wash channels still set.
+        # Wash channels still set throughout.
         assert _ch(u, CH_WASH_A_R) == 100
 
     def test_sparkle_fires_again_on_next_beat(self):
@@ -845,4 +858,193 @@ class TestPulsePerBarGridSync:
         fx = _make_with_beats(PulsePerBar, [], bpm=120)
         u = _u()
         fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+class TestWashWithSparkleGridSync:
+    """Epic 14.9 follow-up. wash_with_sparkle missed the original
+    Block B pass and stayed on the bpm-clock - which the operator
+    noticed when the sparkle phase-offset by ~90 ms relative to the
+    actual bass drum (140 declared bpm vs 139.67 librosa-measured).
+    Same beat-grid contract as sparkle_on_beat once the runner
+    attaches beats_ms."""
+
+    def test_no_fire_before_first_beat(self):
+        # beats[0] = 1210ms; nothing should fire at song time 0..1209.
+        fx = _make_with_beats(
+            WashWithSparkle, [1210, 1640, 2070, 2500],
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_fires_exactly_on_grid_beats(self):
+        beats = [1210, 1640, 2070, 2500]
+        fx = _make_with_beats(
+            WashWithSparkle, beats,
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        # First beat in the grid - rising edge.
+        u = _u()
+        fx.tick(now_ms=1210, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Past the hold window (1210 + 100 = 1310 ms) but before
+        # the next beat at 1640 - re-armed low.
+        u = _u()
+        fx.tick(now_ms=1500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Second beat - rising edge again.
+        u = _u()
+        fx.tick(now_ms=1640, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_uses_librosa_grid_not_bpm_clock(self):
+        # The regression we shipped this fix for: at 140 declared bpm
+        # the bpm-clock fires every 428.6 ms anchored to song-time 0,
+        # so it would emit a rising edge on the very first tick (t=0).
+        # On the librosa grid with beats[0] = 1200 ms, t=0 is BEFORE
+        # any beat - so the FX should stay LOW until the grid's first
+        # beat is crossed. The "no fire at t=0" assertion is what
+        # distinguishes the two modes cleanly.
+        beats = [1200, 1630, 2071, 2501]   # uneven 430/441 like librosa
+        fx = _make_with_beats(
+            WashWithSparkle, beats, bpm=140,
+            params=(0, 0, 0, 0, 0, 0, 80,
+                    255, 255, 255, 255),
+        )
+        # Grid mode: no beat at or before 0, so no rising edge yet.
+        # bpm-clock mode WOULD have fired here.
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Crossing into the grid's first beat fires the trigger.
+        u = _u()
+        fx.tick(now_ms=1200, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Second grid beat at 1630 - rising edge again.
+        u = _u()
+        fx.tick(now_ms=1500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO   # mid-beat re-arm
+        u = _u()
+        fx.tick(now_ms=1630, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_falls_back_to_bpm_clock_without_beats(self):
+        # Empty beats list -> classic behaviour: pulse on bpm clock.
+        fx = _make_with_beats(
+            WashWithSparkle, [], bpm=120,
+            params=(50, 50, 50, 100, 100, 100, 80,
+                    255, 255, 255, 255),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+class TestMusicPositionDrivenBeatSync:
+    """Bench-found bug 2026-06-28: FX were ticking off wall-clock-
+    elapsed-since-cue-start, not music position. Symptom: badge kept
+    pulsing while music was paused. Architectural fix: runner stores
+    position_ms on the FX instance before each tick; beat-aware FX
+    prefer self.position_ms over the wall-clock anchor math when set."""
+
+    def _make_with_beats_and_pos(self, cls, beats_ms, pos_ms, **start_kwargs):
+        defaults = dict(
+            bpm=140, buildup_s=0,
+            params=(0, 0, 0, 100, 0, 0),
+            position_ms=0, now_ms=0,
+        )
+        defaults.update(start_kwargs)
+        fx = cls()
+        fx.beats_ms = beats_ms
+        fx.position_ms = pos_ms
+        fx.start(**defaults)
+        return fx
+
+    def test_sparkle_freezes_when_position_doesnt_advance(self):
+        # Music paused at song-time 12.945s (right on a beat). Wall
+        # clock keeps ticking. The FX should NOT fire on subsequent
+        # ticks because the music position doesn't advance.
+        beats = [12945, 13375, 13805, 14234]   # 4 successive beats
+        fx = self._make_with_beats_and_pos(
+            SparkleOnBeat, beats, pos_ms=12945,
+            position_ms=12945, now_ms=100000,
+            params=(255, 255, 255, 100, 0),
+        )
+        # First tick at the cue start - we're AT beat 12945 already
+        # via pre-seed. No fire.
+        u = _u()
+        fx.position_ms = 12945
+        fx.tick(now_ms=100000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Wall clock advances 1 second; music position FROZEN (paused).
+        # The FX must not fire - beat index unchanged because position
+        # is unchanged.
+        u = _u()
+        fx.position_ms = 12945   # still paused
+        fx.tick(now_ms=101000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Resume: position advances to next beat. FX fires.
+        u = _u()
+        fx.position_ms = 13375
+        fx.tick(now_ms=101500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_wash_with_sparkle_freezes_when_position_doesnt_advance(self):
+        beats = [12945, 13375, 13805, 14234]
+        fx = self._make_with_beats_and_pos(
+            WashWithSparkle, beats, pos_ms=12945,
+            position_ms=12945, now_ms=100000,
+            params=(0, 0, 0, 0, 0, 0, 80, 255, 255, 255, 255),
+        )
+        u = _u()
+        fx.position_ms = 12945
+        fx.tick(now_ms=100000, universe=u)
+        # Just crossed beat 12945; first tick fires.
+        # Pause: wall clock advances, position frozen.
+        u = _u()
+        fx.position_ms = 12945
+        fx.tick(now_ms=101000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_pulse_per_bar_freezes_when_position_doesnt_advance(self):
+        # 4-beat bar; bars at beats[0] and beats[4].
+        beats = [1000 + i * 430 for i in range(10)]
+        fx = self._make_with_beats_and_pos(
+            PulsePerBar, beats, pos_ms=1000,
+            position_ms=1000, now_ms=100000,
+            params=(255, 255, 255, 100, 4, 0),
+        )
+        # Initial tick on bar 1.
+        fx.tick(now_ms=100000, universe=_u())
+        # Pause: wall clock crosses what would be bar 2 (in bpm-clock),
+        # but music position doesn't advance.
+        u = _u()
+        fx.position_ms = 1000
+        fx.tick(now_ms=103000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Resume to bar 2.
+        u = _u()
+        fx.position_ms = beats[4]   # bar 2 downbeat
+        fx.tick(now_ms=103500, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+    def test_fallback_when_no_position_ms_set(self):
+        # If the runner doesn't set position_ms (back-compat with
+        # callers not updated), the FX falls back to wall-clock
+        # math. Existing tests cover this path; here we just confirm
+        # explicit absence doesn't break anything.
+        beats = [1210, 1640, 2070, 2500]
+        fx = SparkleOnBeat()
+        fx.beats_ms = beats
+        # Deliberately do NOT set fx.position_ms.
+        fx.start(bpm=120, buildup_s=0,
+                 params=(255, 255, 255, 100, 0),
+                 position_ms=0, now_ms=0)
+        u = _u()
+        fx.tick(now_ms=1210, universe=u)
+        # Wall-clock fallback path: fires when elapsed crosses beat[0].
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI

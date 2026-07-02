@@ -680,12 +680,22 @@ def _parse_cue(tokens: list, line_no: int, registry, file=None) -> Cue:
     # line is the text payload (joined with single spaces to recover
     # what the author typed). Empty after the keyword clears that
     # field on the Lume.
+    #
+    # Escape sequence: literal `\n` (backslash + n, two chars in the
+    # cue file) is converted to an actual newline. The Tildagon's
+    # text renderer splits on newlines before word-wrap so authors
+    # can force line breaks for stylistic effect:
+    #
+    #     00:03  BodyText: Music of\nthe Spheres
+    #
+    # renders as two lines. Useful for short multi-line titles +
+    # section labels.
     if name == "HeaderText:":
-        text = " ".join(rest)
+        text = " ".join(rest).replace("\\n", "\n")
         return Cue(time_ms=time_ms, kind="header_text", text=text,
                    line_no=line_no)
     if name == "BodyText:":
-        text = " ".join(rest)
+        text = " ".join(rest).replace("\\n", "\n")
         return Cue(time_ms=time_ms, kind="body_text", text=text,
                    line_no=line_no)
     if name == "clearscreen":
