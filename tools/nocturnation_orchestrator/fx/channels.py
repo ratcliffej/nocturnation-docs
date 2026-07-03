@@ -98,28 +98,3 @@ def clamp_group(value):
     return value
 
 
-def percent_to_dmx(value):
-    """Convert a percent value (0..100) declared by an FX `("percent",
-    ...)` PARAMS entry into the 0..255 DMX scalar the wire surface
-    expects.
-
-    Bug: FX files were declaring probability params as "percent" but
-    writing the raw int to DMX, so cue-file authors writing '50'
-    expecting 50% were getting DMX 50, which the StickC's mapper
-    buckets to CHANCE_10 (10%). This helper makes the percent <-> DMX
-    conversion explicit so the FX UX matches its docs.
-
-    Value clamped to 0..100; out-of-range silently coerces (>100 -> 100,
-    <0 -> 0) rather than raising, so a malformed cue line produces a
-    sensible default instead of crashing the runtime.
-
-    Quantisation note: the StickC mapper buckets DMX 0..255 into 8
-    Chance enum slots (CHANCE_4 .. CHANCE_100). 0% lands on CHANCE_4
-    (4% effective floor), 50% on CHANCE_50, 87.5%+ on CHANCE_100.
-    Bucket boundaries are inherent to the PixMob wire format.
-    """
-    if value is None or value <= 0:
-        return 0
-    if value >= 100:
-        return 255
-    return int(value * 255 / 100 + 0.5)
