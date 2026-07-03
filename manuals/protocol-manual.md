@@ -5,7 +5,7 @@ protocol_version: 0x02
 firmware_version: "v0.6"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-05-23
+last_synced: 2026-07-03
 sync_direction: bidirectional
 ---
 
