@@ -78,6 +78,20 @@ A NocturNation frame is encapsulated as the payload of one ESP-NOW vendor action
 
 ESP-NOW is the reference carrier for this version of the protocol. The frame format in [section 3](#3-frame-format) carries no ESP-NOW-specific fields, so the same frames could in principle be carried over another link such as Bluetooth LE or infra-red; other carriers are not specified by this document.
 
+#### 2.1.1 PHY mode: Long Range (LR)
+
+Added in Epic 15 (2026-06-27). The reference firmware configures the ESP-NOW radio in **Long Range** PHY mode fleet-wide (both Director and Lume). LR is Espressif's proprietary sub-1 Mb/s modulation on top of the same 2.4 GHz carrier; it trades peak throughput for sensitivity and interference resilience:
+
+| Parameter | Standard 802.11 b/g/n | LR mode |
+|---|---|---|
+| Payload rate | 1..54 Mb/s | ~500 kb/s |
+| Receiver sensitivity | ~-92 dBm | ~-105 dBm |
+| Typical open-air range at 20 dBm TX | ~150 m | ~1 km |
+
+Every deployed NocturNation device MUST use the same PHY mode: an LR transmitter is unreadable by a non-LR receiver on the same channel, and vice-versa. There is no per-frame indicator of the mode; a receiver simply sees noise if the transmitter is on the wrong PHY. Fleet-wide LR is the current baseline; a future protocol revision MAY permit mixed operation if a discovery mechanism is added.
+
+Field time and airtime accounting are unaffected by LR — a single frame still occupies one ESP-NOW action frame regardless of PHY — but the on-air duration of each frame is roughly 3× longer, which the redundancy triple in [section 2.3](#23-redundancy) already accommodates. Operators SHOULD size Director-side beat/effect throughput against LR's lower peak rate; the reference firmware has been bench-validated at ~40 frames per second sustained on channel 11 with LR.
+
 ### 2.2 Channels
 
 NocturNation uses three of the standard non-overlapping 2.4 GHz Wi-Fi channels. A Director MUST be configured on exactly one of these channels at any moment:
@@ -141,11 +155,15 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | `0x06` | `LIGHT_WASH` | 16 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
 | `0x07` | `LIGHT_WASH_END` | 3 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
 | `0x08` | `LIGHT_WASH_PULSE` | 9 | Director to all (only Lumes currently washing act on it; everyone else drops) |
+| `0x09` | `TEXT_DISPLAY` | 8..200 | Director to all (Lumes with `DisplayText` capability render; others drop) |
+| `0x0A` | `BITMAP_HEADER` | 37 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
+| `0x0B` | `BITMAP_PLANE` | 5..242 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
+| `0x0C` | `CLEAR_SCREEN` | 3 | Director to all (Lumes with `DisplayText` or `DisplayBitmap` capability clear the corresponding surface; others drop) |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
 All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
-A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_PULSE`. A receiver MAY honour `EXTENSION` and future code points when defined. A receiver that declares itself **wash-capable** (per its `BindingCapabilities` surface; see [developing-shows.md / capability design doc](../lume-capabilities-design.md)) MUST honour `LIGHT_WASH`, `LIGHT_WASH_END`, and `LIGHT_WASH_PULSE`; a receiver that is *not* wash-capable MUST silently drop these three types.
+A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_PULSE`. A receiver MAY honour `EXTENSION` and future code points when defined. A receiver that declares itself **wash-capable** (per its `BindingCapabilities` surface; see [developing-shows.md / capability design doc](../lume-capabilities-design.md)) MUST honour `LIGHT_WASH`, `LIGHT_WASH_END`, and `LIGHT_WASH_PULSE`; a receiver that is *not* wash-capable MUST silently drop these three types. A receiver that declares `Capability::DisplayText` MUST honour `TEXT_DISPLAY` and the text half of `CLEAR_SCREEN`; a receiver that declares `Capability::DisplayBitmap` MUST honour `BITMAP_HEADER`, `BITMAP_PLANE`, and the bitmap half of `CLEAR_SCREEN`. A receiver without the relevant display capability MUST silently drop the corresponding type at the earliest gate (before payload decode) — for a headless bracelet-only Lume this means zero decode work on display traffic.
 
 ### 3.3 Payloads
 
@@ -228,7 +246,82 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 
 `payload_len == 9`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
 
-#### 3.3.6 `EXTENSION` (`0xFF`)
+#### 3.3.6 `TEXT_DISPLAY` (`0x09`)
+
+> Added in Epic 13 (2026-06-14). Header and body strings for the Lume's screen surface. UTF-8; the reference firmware uses the bundled Ctx font which is Latin-only, so authors targeting audience-worn badges SHOULD romanise non-Latin content at the cue-file layer (see `developing-shows.md`).
+
+The message type itself denotes the surface (`DeviceClass::Display` + `Capability::DisplayText`); there is no `target_class` byte on the wire — a receiver that has already declined the frame at the capability gate never reaches this payload. `target_group` remains for per-Lume addressing within the Display class (group 0 = all Display-class Lumes).
+
+`header` and `body` are independent length-prefixed strings; either may be empty (length 0). Empty header means "no header line"; empty body means "no body text". Both empty is legal and acts as a no-op on a surface with existing content (the fields do not overwrite what's already displayed unless explicitly non-empty).
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
+| 1 | `r` | 1 | Foreground text red 0..255. |
+| 2 | `g` | 1 | Foreground text green 0..255. |
+| 3 | `b` | 1 | Foreground text blue 0..255. |
+| 4 | `ttl_ms` | 2 LE | 0 = sticky (persists until `CLEAR_SCREEN` or a superseding `TEXT_DISPLAY`); non-zero = auto-clear after this many milliseconds. |
+| 6 | `header_len` | 1 | 0..64. |
+| 7 | `header_bytes` | `header_len` | UTF-8 bytes. |
+| 7+`header_len` | `body_len` | 1 | 0..128. |
+| 8+`header_len` | `body_bytes` | `body_len` | UTF-8 bytes. |
+
+`payload_len` = 8 (both strings empty) .. 200 (both strings at max). A Lume declaring `Capability::DisplayText` MUST render the header and body to its screen surface honouring the `ttl_ms` semantics. A Lume declaring `Capability::DisplayText` MUST also honour a `CLEAR_SCREEN` frame's `clear_text` field to blank the text surface without affecting an active bitmap.
+
+The maximum lengths (64 header / 128 body) are wire-format constants; a Lume MAY truncate to a lower rendering budget dictated by its own screen dimensions and font.
+
+#### 3.3.7 `BITMAP_HEADER` (`0x0A`)
+
+> Added in Epic 13. Framing for a bitmap render. One `BITMAP_HEADER` precedes N `BITMAP_PLANE` frames; the receiver stages a buffer sized to `ceil(width * height / 8) * plane_count` bytes, accumulates plane bytes, then verifies the checksum before committing to the render surface.
+
+The message type denotes the surface (`DeviceClass::Display` + `Capability::DisplayBitmap`) — no `target_class` byte.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
+| 1 | `width` | 1 | 1..64 pixels. |
+| 2 | `height` | 1 | 1..64 pixels. |
+| 3 | `plane_count` | 1 | 1..8. Bits per rendered pixel = `plane_count`. |
+| 4 | `colours` | 24 | Eight RGB triplets. Only the first `plane_count` slots are meaningful; the rest are ignored but present on the wire for a fixed layout. Each plane's `1` bits render in the corresponding colour. |
+| 28 | `fit` | 1 | 0 = ACTUAL (plot at native dimensions, top-left origin); 1 = FIT (preserve aspect, scale to display largest dimension); 2 = ZOOM (preserve aspect, fill display, crop overflow). |
+| 29 | `zoom_pct` | 1 | Multiplier on the FIT/ZOOM scale factor. 100 = baseline; 50 = half; 200 = 2x. Ignored when `fit == 0`. |
+| 30 | `overwrite` | 1 | 0 = ADDITIVE (compose onto whatever is currently on the surface); 1 = REPLACE (clear surface at plane 0 of this header set). |
+| 31 | `checksum` | 4 LE | CRC32 over all plane bytes concatenated in plane-index order. |
+| 35 | `ttl_ms` | 2 LE | 0 = sticky; non-zero = auto-clear after this many milliseconds. |
+
+`payload_len == 37`. A Lume declaring `Capability::DisplayBitmap` MUST allocate a staging buffer and MUST NOT commit the bitmap until every plane's bytes have arrived AND the concatenation matches `checksum`. A Lume MAY drop the entire staging buffer on receipt of a subsequent `BITMAP_HEADER` for the same `target_group` before the previous set completes; wire-format retries are not defined.
+
+#### 3.3.8 `BITMAP_PLANE` (`0x0B`)
+
+> Added in Epic 13. Chunked pixel bytes for one plane of a bitmap. Multiple `BITMAP_PLANE` frames per plane are permitted and distinguished by `byte_offset` into that plane's byte stream.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_group` | 1 | Same routing as the preceding `BITMAP_HEADER`. |
+| 1 | `plane_index` | 1 | 0..(`plane_count` - 1) per the preceding `BITMAP_HEADER`. |
+| 2 | `byte_offset` | 2 LE | Offset into this plane's pixel byte stream where `data_bytes` begins. |
+| 4 | `data_len` | 1 | 0..237. Number of payload bytes in `data_bytes`. |
+| 5 | `data_bytes` | `data_len` | Raw plane bytes; bit-packing is row-major, MSB-first within each byte. |
+
+`payload_len` = 5 (`data_len == 0`) .. 242 (`data_len == 237`). A receiver MUST accumulate `data_bytes` at the plane's base offset + `byte_offset` into the staging buffer allocated by the preceding `BITMAP_HEADER`. A `BITMAP_PLANE` frame arriving without a matching `BITMAP_HEADER` (or after the header's staging buffer has been committed / abandoned) MUST be silently discarded.
+
+The 237-byte data cap is the wire-format maximum; encoders MAY chunk smaller for latency-sensitive shows.
+
+#### 3.3.9 `CLEAR_SCREEN` (`0x0C`)
+
+> Added in Epic 13. Per-surface clear on the Lume's screen.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
+| 1 | `clear_text` | 1 | 0 = leave text surface untouched; non-zero = clear text surface. |
+| 2 | `clear_bitmap` | 1 | 0 = leave bitmap surface untouched; non-zero = clear bitmap surface. |
+
+`payload_len == 3`. `clear_text` and `clear_bitmap` are independent so an author can drop the song title without disturbing the band logo. A Lume declaring `Capability::DisplayText` MUST honour `clear_text`; a Lume declaring `Capability::DisplayBitmap` MUST honour `clear_bitmap`; a Lume without the relevant capability MUST silently drop the corresponding half (a Lume with neither MUST drop the entire frame at the capability gate).
+
+Both flags zero is legal and acts as a no-op; the reference encoder emits `clear_text=1, clear_bitmap=1` for a full-screen clear.
+
+#### 3.3.10 `EXTENSION` (`0xFF`)
 
 Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
 
@@ -381,6 +474,7 @@ NocturNation has no Lume-to-Director heartbeat. A Director has no on-wire knowle
 A conforming receiver MUST honour the following:
 
 - The magic prefix check (`0x4E 0x4E` at offset 0..1) as the very first inbound validation. Frames failing this check MUST be silently discarded with no further processing.
+- The Long Range (LR) PHY mode configuration on the ESP-NOW radio ([section 2.1.1](#211-phy-mode-long-range-lr)). A receiver on a different PHY sees noise on the carrier and cannot interoperate.
 - The frame header layout and validation in [section 3.1](#31-header) and [section 3.2](#32-message-types).
 - Deduplication on `(source_id, sequence_number)` against a ring of at least sixteen entries ([section 2.3](#23-redundancy)).
 - The hop-count limit of 3 ([section 2.3](#23-redundancy)).
@@ -418,6 +512,7 @@ A conforming receiver MUST NOT:
 
 A conforming Director MUST honour:
 
+- The Long Range (LR) PHY mode configuration on the ESP-NOW radio ([section 2.1.1](#211-phy-mode-long-range-lr)). Fleet-wide LR is required — a Director transmitting on standard PHY is invisible to LR-configured Lumes and vice-versa.
 - Three-times redundant transmission with identical sequence numbers ([section 2.3](#23-redundancy)).
 - The heartbeat rule and skip-if-recent suppression ([section 6.1](#61-director-heartbeat)).
 - The protocol-version byte at offset 0 of every frame.
@@ -636,7 +731,11 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 | 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_PULSE`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
 | 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
 
-Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. The source_id partitioning rules added on 2026-05-17 ([section 3.4](#34-source-identifier-partitioning)) are one such non-wire convention.
+Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of v0x02 include:
+
+- **Source_id partitioning rules** (2026-05-17, [section 3.4](#34-source-identifier-partitioning)) — layered convention on the existing 1-byte field, no wire change.
+- **Display message types** `0x09..0x0C` (Epic 13, 2026-06-14, [section 3.3.6](#336-text_display-0x09) onwards) — new codepoints, backward-compatible under the v0x02 forward-compatibility rule (old v0x02 receivers see them as unknown types and silently drop per [section 3.2](#32-message-types)).
+- **Long Range PHY mode** (Epic 15, 2026-06-27, [section 2.1.1](#211-phy-mode-long-range-lr)) — PHY-layer configuration, not a wire-format change per se, but a fleet-wide invariant a mixed-mode Director/Lume pair would not appear to interoperate.
 
 ---
 
