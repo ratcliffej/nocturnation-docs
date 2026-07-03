@@ -21,6 +21,9 @@ clean song boundary.
 """
 
 from ..base import Fx
+from ..channels import (
+    block_channel, CH_WASH_PULSE_RESPONSE, NUM_BLOCKS,
+)
 from ..registry import fx_registry
 
 
@@ -53,6 +56,12 @@ class Blackout(Fx):
     def tick(self, now_ms, universe):
         for i in range(_ZEROED_CHANNELS):
             universe[i] = 0
+        # Restore pulse_response on every block so the (all-zero) wash
+        # the StickC mapper emits doesn't lock the Lume into "drop all
+        # pulses" mode. Without this, any LD using `stop` to clear the
+        # stage before a series of accent pulses silently loses them.
+        for b in range(NUM_BLOCKS):
+            universe[block_channel(b, CH_WASH_PULSE_RESPONSE) - 1] = 255
         self._ticked = True
 
     def is_finished(self, now_ms):

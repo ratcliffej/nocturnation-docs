@@ -8,6 +8,12 @@ A 0-second buildup degrades to a hard cut: 1 s minimum window with
 master driven straight to 0 on the first tick. For instant blackout
 prefer a `stop` cue (fx_id=0) instead.
 
+Fading on PixMob bracelets is the Director's responsibility - the
+StickC's `PixMobIrBinding` (Epic 11) renders the fade by stopping
+its periodic refresh and firing one final `SingleColor` with a long
+release. This FX just writes Master; per-Lume-class encoding lives
+in the binding.
+
 params:
     [0] start_master  (0..255; default 255)
     [1] reserved
