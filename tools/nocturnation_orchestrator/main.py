@@ -7,7 +7,10 @@ Loop body each tick:
     1. Maybe poll the now-playing backend (once per POLL_INTERVAL_MS).
        - On track change: load the matching cue file, switch
          scheduler, run any file default_fx.
-       - On no-source: stop the scheduler (output goes black).
+       - On no-source / no-cue-match / parse-failure: stop the
+         scheduler AND start Blackout so the fleet actively fades
+         to zero (a bare stop just cancels FX, leaving the last
+         wash on the wire).
     2. Advance the scheduler against the interpolated position.
     3. Tick the FX engine, writing the universe.
     4. Send the universe via the output dispatcher.
@@ -23,6 +26,7 @@ from nocturnation_dmx import espnow_frame
 
 from .cues import Cue, parse_cues_file
 from .fx import library  # noqa: F401  side-effects: register all FX
+from .fx.library.blackout import Blackout
 from .fx.registry import fx_registry
 from .fx.runner import FxRunner
 from .matcher import find_cue_path, slugify
@@ -41,6 +45,22 @@ POLL_LOG_QUIET_MS = 10_000  # debug poll-log min cadence when state is steady
 
 def _now_ms():
     return int(_time.monotonic() * 1000)
+
+
+def _stop_to_black(scheduler, runner, now_ms):
+    """Tear down the scheduler AND hand off to the Blackout FX, so a
+    zero universe reaches the wire before the runner goes idle.
+
+    A bare ``scheduler.stop()`` only cancels whatever FX is running;
+    per fx/library/blackout.py's docstring, a bare cancel leaves the
+    fleet glowing on the last wash it was given (the StickC mapper
+    holds channels, the Lume holds LIGHT_WASH with TTL=0=infinite).
+    Used on every no-source / no-cue-match / parse-failure teardown
+    path so those look the same to the fleet as an explicit `stop`
+    cue mid-song.
+    """
+    scheduler.stop(now_ms=now_ms)
+    runner.start(Blackout.id, now_ms=now_ms)
 
 
 def _fmt_pos(position_ms):
@@ -243,7 +263,7 @@ def run(
                     if current_track_key != (None, None):
                         log("nowplaying: no source")
                         tracker.clear()
-                        scheduler.stop(now_ms=now)
+                        _stop_to_black(scheduler, runner, now_ms=now)
                         current_track_key = (None, None)
                         # Epic 13: blank the Lume screens when the
                         # source goes away. Otherwise the last
@@ -304,7 +324,7 @@ def run(
                             log("matcher: no cue file for %s [genre=%s]; "
                                 "going silent"
                                 % (slug, genre_label))
-                            scheduler.stop(now_ms=now)
+                            _stop_to_black(scheduler, runner, now_ms=now)
                             current_cue_path = None
                             current_cue_mtime = 0.0
                         else:
@@ -315,7 +335,7 @@ def run(
                             except Exception as exc:
                                 log("matcher: parse failed for %s: %s"
                                     % (path.name, exc))
-                                scheduler.stop(now_ms=now)
+                                _stop_to_black(scheduler, runner, now_ms=now)
                                 current_cue_path = None
                                 current_cue_mtime = 0.0
                             else:
