@@ -1,6 +1,7 @@
 # Internal working docs - Notion is the master copy for these; the public
 # mirror does not carry per-Epic plans and close-outs.
 epics/
+manuals/notes.md
 
 # macOS noise
 .DS_Store
