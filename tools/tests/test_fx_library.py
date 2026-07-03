@@ -1059,3 +1059,52 @@ class TestMusicPositionDrivenBeatSync:
         fx.tick(now_ms=1210, universe=u)
         # Wall-clock fallback path: fires when elapsed crosses beat[0].
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+
+
+class TestMultiGroupSparkle:
+    """Reproduces the coldplay-higher-power.cues failure: three
+    sparkles at (near-)simultaneous timestamps, one per device group.
+    Before the per-group runner, only the last-started group survived
+    (single-slot design)."""
+
+    def test_three_group_sparkles_all_write_their_blocks(self):
+        # Convert convert_to_u8 by hand: probability 100 (percent) ->
+        # 255 in u8 land. The runner just sees the u8 tuple.
+        from nocturnation_orchestrator.fx.runner import FxRunner
+
+        runner = FxRunner(fx_registry, default_bpm=120)
+
+        # Three cues, disjoint groups. Mirrors:
+        #   sparkle_on_beat 100   0 100 100 1
+        #   sparkle_on_beat 100 100   0 100 2
+        #   sparkle_on_beat   0 100 100 100 3
+        runner.start(SparkleOnBeat.id,
+                     params=(100,   0, 100, 255, 1, 0), now_ms=0)
+        runner.start(SparkleOnBeat.id,
+                     params=(100, 100,   0, 255, 2, 0), now_ms=100)
+        runner.start(SparkleOnBeat.id,
+                     params=(  0, 100, 100, 255, 3, 0), now_ms=200)
+
+        # All three groups have live FX instances.
+        assert set(runner.current_fx_by_group.keys()) == {1, 2, 3}
+
+        # Tick and read: each block should have its own pulse RGB.
+        u = _u()
+        runner.tick(300, u, position_ms=300)
+
+        assert _ch(u, block_channel(1, CH_PULSE_R)) == 100
+        assert _ch(u, block_channel(1, CH_PULSE_G)) == 0
+        assert _ch(u, block_channel(1, CH_PULSE_B)) == 100
+
+        assert _ch(u, block_channel(2, CH_PULSE_R)) == 100
+        assert _ch(u, block_channel(2, CH_PULSE_G)) == 100
+        assert _ch(u, block_channel(2, CH_PULSE_B)) == 0
+
+        assert _ch(u, block_channel(3, CH_PULSE_R)) == 0
+        assert _ch(u, block_channel(3, CH_PULSE_G)) == 100
+        assert _ch(u, block_channel(3, CH_PULSE_B)) == 100
+
+        # Blocks 0 (broadcast) and 4..9 stay untouched.
+        for empty_group in (0, 4, 5, 6, 7, 8, 9):
+            for ch in (CH_PULSE_R, CH_PULSE_G, CH_PULSE_B):
+                assert _ch(u, block_channel(empty_group, ch)) == 0
