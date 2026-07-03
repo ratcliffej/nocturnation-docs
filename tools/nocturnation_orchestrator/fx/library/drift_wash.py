@@ -8,6 +8,13 @@ Channels written every tick:
     18 Wash Int    <- 220
     19 Wash Attack <- 30
     20 Wash Rel    <- 30
+    23 Wash Pulse Response <- 255 (allow LIGHT_PULSE to overlay)
+
+Wash on PixMob bracelets is the Director's responsibility, not the
+orchestrator's: the StickC's `PixMobIrBinding` (Epic 11) encodes
+`LIGHT_WASH` with cycle > 0 into a periodic `SingleColor` refresh
+at the live blended A↔B colour. The orchestrator just writes the
+wash channels; per-Lume-class encoding decisions live in the binding.
 """
 
 from ..base import Fx, set_ch
@@ -17,6 +24,7 @@ from ..channels import (
     CH_WASH_A_R, CH_WASH_A_G, CH_WASH_A_B,
     CH_WASH_B_R, CH_WASH_B_G, CH_WASH_B_B,
     CH_WASH_CYCLE, CH_WASH_INT, CH_WASH_ATK, CH_WASH_REL,
+    CH_WASH_PULSE_RESPONSE,
 )
 from ..registry import fx_registry
 
@@ -72,3 +80,7 @@ class DriftWash(Fx):
         set_ch(universe, block_channel(g, CH_WASH_INT),   220)
         set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
         set_ch(universe, block_channel(g, CH_WASH_REL),   30)
+        # Allow pulse cues to overlay; without this the Lume's
+        # perimeter renderer drops every LIGHT_PULSE arriving while
+        # this wash is in ATTACK / HOLD.
+        set_ch(universe, block_channel(g, CH_WASH_PULSE_RESPONSE), 255)

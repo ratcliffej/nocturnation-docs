@@ -20,6 +20,14 @@ Channels written every tick:
     18 Wash Int    <- params[3] or 200
     19 Wash Attack <- 20 (~2 s smooth fade-in on Lume side)
     20 Wash Rel    <- 20 (~2 s smooth release)
+    23 Wash Pulse Response <- 255 (allow LIGHT_PULSE to overlay)
+
+Wash on PixMob bracelets is the Director's responsibility, not the
+orchestrator's: the StickC's `PixMobIrBinding` (Epic 11) encodes
+`LIGHT_WASH` into the appropriate IR commands per the Lume's
+capabilities. This FX writes the wash channels; the StickC mapper
+turns them into `LIGHT_WASH` wire events that each binding renders
+in its own way. No PixMob-specific logic lives here.
 
 Runs indefinitely until cancelled.
 """
@@ -31,6 +39,7 @@ from ..channels import (
     CH_WASH_A_R, CH_WASH_A_G, CH_WASH_A_B,
     CH_WASH_B_R, CH_WASH_B_G, CH_WASH_B_B,
     CH_WASH_CYCLE, CH_WASH_INT, CH_WASH_ATK, CH_WASH_REL,
+    CH_WASH_PULSE_RESPONSE,
 )
 from ..registry import fx_registry
 
@@ -78,3 +87,7 @@ class QuietWash(Fx):
         set_ch(universe, block_channel(g, CH_WASH_INT),   self._intensity)
         set_ch(universe, block_channel(g, CH_WASH_ATK),   20)
         set_ch(universe, block_channel(g, CH_WASH_REL),   20)
+        # Allow pulse cues to overlay; without this the Lume's
+        # perimeter renderer drops every LIGHT_PULSE arriving while
+        # this wash is in ATTACK / HOLD.
+        set_ch(universe, block_channel(g, CH_WASH_PULSE_RESPONSE), 255)
