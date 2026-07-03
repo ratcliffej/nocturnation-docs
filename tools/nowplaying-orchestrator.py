@@ -95,6 +95,11 @@ def main(argv=None):
         help="Art-Net target port (default: %(default)s)",
     )
     parser.add_argument(
+        "--artnet-universe", type=int, default=1,
+        help="Art-Net universe to emit on. Matches QLC+ / shim defaults "
+             "(default: %(default)s)",
+    )
+    parser.add_argument(
         "--default-bpm", type=int, default=120,
         help="fallback BPM if neither @bpm nor a per-cue --bpm is set",
     )
@@ -120,6 +125,7 @@ def main(argv=None):
         usb_baud=args.usb_baud,
         artnet_host=args.artnet_host,
         artnet_port=args.artnet_port,
+        artnet_universe=args.artnet_universe,
     )
 
     try:
