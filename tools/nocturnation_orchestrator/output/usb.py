@@ -1,6 +1,7 @@
 """USB-direct dispatcher using the existing nocturnation_dmx UsbWriter."""
 
 import sys
+import time
 
 from nocturnation_dmx.port_picker import (
     find_candidate_ports_with_info,
@@ -9,6 +10,17 @@ from nocturnation_dmx.port_picker import (
 from nocturnation_dmx.usb_writer import UsbWriter
 
 from .base import OutputDispatcher, OutputError
+
+
+# Seconds to wait between reopen attempts after a write error closes
+# the writer. UsbWriter.write_* closes itself on any SerialException /
+# OSError (including a >100 ms write_timeout, or an S3 native-USB
+# re-enumeration), so without a bounded reopen a single transient
+# stall would wedge the dispatcher closed for the rest of the show -
+# every subsequent tick would raise "UsbWriter is not open" and the
+# fleet would freeze on the last frame. ~1 s recovers quickly without
+# hammering open() on a genuinely unplugged Stick.
+REOPEN_INTERVAL_S = 1.0
 
 
 def _pick_stickc_port():
@@ -58,6 +70,28 @@ class UsbDispatcher(OutputDispatcher):
     def __init__(self, port, writer):
         self.port = port
         self._writer = writer
+        # Monotonic deadline before which we won't retry a reopen.
+        self._reopen_after = 0.0
+
+    def _ensure_open(self):
+        """Best-effort, rate-limited reopen of a writer that a prior
+        write error closed. Returns True if the writer is open.
+
+        UsbWriter.write_* closes itself on any SerialException / OSError
+        (including a >100 ms write_timeout), so without this a single
+        transient stall would wedge the dispatcher closed for the rest
+        of the show. Rebuild the writer at most once per
+        REOPEN_INTERVAL_S so a genuinely unplugged / re-enumerating
+        Stick isn't hammered on every tick.
+        """
+        if self._writer.is_open:
+            return True
+        now = time.monotonic()
+        if now < self._reopen_after:
+            return False
+        self._reopen_after = now + REOPEN_INTERVAL_S
+        self._writer = UsbWriter(self.port, baud=self._writer.baud)
+        return self._writer.is_open
 
     @classmethod
     def open(cls, port=None, baud=None):
@@ -74,6 +108,8 @@ class UsbDispatcher(OutputDispatcher):
         return cls(port=port, writer=writer)
 
     def send(self, universe):
+        if not self._ensure_open():
+            raise OutputError("USB writer closed; reopen pending")
         self._writer.write_universe(universe)
 
     def send_espnow_frame(self, frame: bytes) -> bool:
@@ -85,6 +121,8 @@ class UsbDispatcher(OutputDispatcher):
         write; the caller logs and continues. True on a successful
         write attempt (the radio side is best-effort by nature).
         """
+        if not self._ensure_open():
+            return False
         try:
             self._writer.write_espnow_frame(frame)
             return True

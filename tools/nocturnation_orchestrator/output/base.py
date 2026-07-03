@@ -20,7 +20,10 @@ class OutputDispatcher:
 
         Implementations should treat send() failures as non-fatal and
         log; only raise on terminal conditions (cable unplugged, port
-        gone). The main loop will catch + reopen.
+        gone). Implementations that own a closable resource (USB) must
+        attempt a rate-limited reopen from send() themselves so one
+        transient write error doesn't wedge output for the rest of the
+        show; the main loop catches, logs, and retries on the next tick.
         """
         raise NotImplementedError
 
