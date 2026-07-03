@@ -32,7 +32,6 @@ holds the phase.
 
 from ..base import Fx, set_ch
 from ..channels import (
-    percent_to_dmx,
     block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
@@ -91,7 +90,9 @@ class WashWithSparkle(Fx):
         if sr == 0 and sg == 0 and sb == 0:
             sr, sg, sb = 255, 255, 255
         self._sr, self._sg, self._sb = sr, sg, sb
-        self._prob = percent_to_dmx(params[10] if params[10] != 0 else 100)
+        # to_u8() in cues.py already ran percent->u8 on this slot
+        # (declared "percent" in PARAMS). Take verbatim; 0 -> 255 (100%).
+        self._prob = params[10] if params[10] != 0 else 255
         self._group = clamp_group(params[11] if len(params) > 11 else 0)
         # Sparkle envelope (Epic 14.9 bench follow-up: was hardcoded
         # 16/16/96 = 0+0+192 ms via pixmob_time bucketing. Operator

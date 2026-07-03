@@ -84,47 +84,50 @@ class TestChannelConstants:
             block_channel(0, 0)
 
 
-class TestPercentToDmx:
-    """Pins the percent -> DMX conversion the FX probability params use.
-    The StickC mapper buckets the resulting DMX into a pixmob::Chance
-    enum (8 slots between CHANCE_4 and CHANCE_100); we don't model the
-    bucketing here, but the boundary table is documented in the helper's
-    docstring."""
+class TestProbabilityEndToEnd:
+    """Locks the cue-file `probability N` -> DMX CH_PULSE_PROB chain
+    against a regression to the double-percent bug (fleet-review
+    finding #5, 2026-07-03). The invariant: whatever the cue-file
+    author writes as `probability N` on a percent-declared slot must
+    reach CH_PULSE_PROB as round(N * 255 / 100). Two conversions
+    (cues.py `convert_to_u8` followed by an FX-side percent_to_dmx
+    would collapse everything >=40% to 255."""
 
-    def test_zero_percent_is_zero_dmx(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        # 0% lands on CHANCE_4 (4% effective floor) after the mapper
-        # quantises - the bracelet's wire format has no "never" slot.
-        assert percent_to_dmx(0) == 0
+    def test_sparkle_50pc_reaches_ch_pulse_prob_as_dmx_128(self):
+        from nocturnation_orchestrator.fx.params import convert_to_u8
+        # `probability 50` in the cue file goes through the same
+        # to_u8() the cue parser uses on percent-declared slots.
+        prob_u8 = convert_to_u8(50, "percent")
+        fx = _make(SparkleOnBeat, params=(255, 255, 255, prob_u8, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_PROB) == 128
 
-    def test_hundred_percent_is_max_dmx(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        # 100% must land in the CHANCE_100 bucket (DMX 224..255).
-        assert percent_to_dmx(100) == 255
+    def test_sparkle_40pc_does_not_saturate_to_255(self):
+        # The bug's telltale: any percent >=40 became DMX 255. Under the
+        # fix, 40% lands at 102.
+        from nocturnation_orchestrator.fx.params import convert_to_u8
+        prob_u8 = convert_to_u8(40, "percent")
+        fx = _make(SparkleOnBeat, params=(255, 255, 255, prob_u8, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_PROB) == 102
 
-    def test_fifty_percent_lands_in_chance_50_bucket(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        # 50% -> DMX 128, mapper buckets 128..159 into CHANCE_50.
-        assert percent_to_dmx(50) == 128
+    def test_sparkle_100pc_is_255(self):
+        from nocturnation_orchestrator.fx.params import convert_to_u8
+        prob_u8 = convert_to_u8(100, "percent")
+        fx = _make(SparkleOnBeat, params=(255, 255, 255, prob_u8, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_PROB) == 255
 
-    def test_clamps_above_100(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        assert percent_to_dmx(150) == 255
-
-    def test_clamps_below_0(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        assert percent_to_dmx(-5) == 0
-
-    def test_none_is_zero(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        assert percent_to_dmx(None) == 0
-
-    def test_intermediate_values_round(self):
-        from nocturnation_orchestrator.fx.channels import percent_to_dmx
-        # 25% * 2.55 = 63.75 -> rounds to 64
-        assert percent_to_dmx(25) == 64
-        # 75% * 2.55 = 191.25 -> rounds to 191
-        assert percent_to_dmx(75) == 191
+    def test_sparkle_omitted_defaults_to_255(self):
+        # A cue-file that omits `probability` reaches start() with
+        # params[3]==0; the FX must interpret that as "use 100%".
+        fx = _make(SparkleOnBeat, params=(255, 255, 255, 0, 0, 0))
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, CH_PULSE_PROB) == 255
 
     def test_block_channel_rejects_past_active(self):
         # Channel index just past ACTIVE_CHANNELS_PER_BLOCK must raise.
@@ -306,10 +309,14 @@ class TestSparkleOnBeat:
         assert _ch(u2, CH_PULSE_TRIG) == TRIGGER_HI
 
     def test_writes_rgb_and_prob(self):
-        # probability=50 (percent) -> percent_to_dmx(50) = 128 (DMX).
-        # The mapper buckets DMX 128 into CHANCE_50 = 50% on the wire,
-        # which is what a cue-file author writing "50" intends.
-        fx = _make(SparkleOnBeat, params=(80, 200, 200, 50, 0, 0))
+        # start() receives the u8 form of the cue-file param (cues.py
+        # `to_u8()` already ran percent -> u8 for the "percent"-declared
+        # slot). A cue author writing `probability 50` therefore reaches
+        # start() as params[3] == 128, which the mapper buckets into
+        # CHANCE_50 = 50% on the wire. This test drives that shape
+        # directly so it locks the invariant against the double-conversion
+        # regression (fleet-review finding #5, 2026-07-03).
+        fx = _make(SparkleOnBeat, params=(80, 200, 200, 128, 0, 0))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_R) == 80
@@ -500,9 +507,12 @@ class TestLinearBuildup:
         assert _ch(u, CH_MASTER) == 255
 
     def test_probability_ramps_zero_to_target(self):
-        # target_probability=80 (percent) -> percent_to_dmx(80) = 204 (DMX).
-        # tick ramps 0 -> 204 across the buildup window.
-        fx = _make(LinearBuildup, buildup_s=4, params=(255, 0, 0, 80, 0, 0))
+        # start() receives the u8 form of the cue-file param (cues.py
+        # `to_u8()` already ran percent -> u8). target_probability=80%
+        # in the cue file becomes params[3] == 204 by the time start()
+        # sees it; tick ramps 0 -> 204 across the buildup window.
+        # Fleet-review finding #5, 2026-07-03.
+        fx = _make(LinearBuildup, buildup_s=4, params=(255, 0, 0, 204, 0, 0))
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_PROB) == 0
@@ -512,8 +522,9 @@ class TestLinearBuildup:
 
     def test_clamps_past_duration(self):
         # If the runner over-ticks beyond default_duration_ms, master
-        # must not exceed 255. target_probability=80% holds at 204 DMX.
-        fx = _make(LinearBuildup, buildup_s=2, params=(255, 0, 0, 80, 64, 0))
+        # must not exceed 255. target_probability=80% arrives as u8 204
+        # and holds there past the buildup window.
+        fx = _make(LinearBuildup, buildup_s=2, params=(255, 0, 0, 204, 64, 0))
         u = _u()
         fx.tick(now_ms=5000, universe=u)  # well past
         assert _ch(u, CH_MASTER) == 255

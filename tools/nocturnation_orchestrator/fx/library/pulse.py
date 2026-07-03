@@ -28,7 +28,6 @@ Universe channels written (per cue.group):
 
 from ..base import Fx, set_ch
 from ..channels import (
-    percent_to_dmx,
     block_channel, clamp_group,
     CH_MASTER,
     CH_PULSE_R, CH_PULSE_G, CH_PULSE_B,
@@ -110,7 +109,10 @@ class Pulse(Fx):
         self._attack = params[3]
         self._sustain = params[4]
         self._decay = params[5]
-        self._prob = percent_to_dmx(params[6] if params[6] != 0 else 100)
+        # to_u8() in cues.py already ran percent->u8 on this slot
+        # (declared "percent" in PARAMS). Take params[6] verbatim;
+        # fall back to 255 (== 100%) when the cue omitted the value.
+        self._prob = params[6] if params[6] != 0 else 255
         self._group = clamp_group(params[7] if len(params) > 7 else 0)
         self._ticks = 0
 
