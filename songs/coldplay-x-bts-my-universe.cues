@@ -7,62 +7,72 @@
 # Korean lyrics (BTS verses) are romanised with the English
 # meaning in brackets. The Tildagon's bundled Ctx font is
 # Latin-only (Arimo Regular) and cannot render Hangul glyphs;
-# embedding a Korean font would require a badge-firmware fork.
-# Romanised + parenthetical English keeps the K-pop convention
-# while staying inside the badge's renderable character set.
 
 @artist     coldplay,
 @title      my_universe
-@bpm        120
+@bpm        105
 @default_fx quiet_wash 20 40 80
+@palette pulses #ff3232
+@palette washes #328eff, #337ad1 
 
-00:02  BodyText: You (you), you are (you are) my universe
-00:06  BodyText: And I (I) just want (just want) to put you first
-00:11  BodyText: And you (you), you are (you are) my universe, and I
-00:22  BodyText: In the night, I lie and look up at you
-00:27  BodyText: When the morning comes, I watch you rise
-00:31  BodyText: There's a paradise they couldn't capture
-00:35  BodyText: That bright infinity inside your eyes
-00:38  BodyText: Maeil bam nege naraga (Every night I fly to you)
-00:41  BodyText: Kkumiran geotdo ijeun chae (Forgetting it's a dream)
-00:43  BodyText: Na useumyeo neoreul manna (I smile and meet you)
-00:45  BodyText: Never-ending forever, baby
-00:48  BodyText: You (you), you are (you are) my universe
-00:52  BodyText: And I (I) just want (just want) to put you first
-00:56  BodyText: And you (you), you are (you are) my universe
-01:01  BodyText: And you make my world light up inside
-01:08  BodyText: Eodumi naegen deo pyeonhaesseotji (Darkness was easier for me)
-01:13  BodyText: Gireojin geurimja sogeseo (In the lengthening shadows)
-01:17  BodyText: And they said that we can't be together
-01:21  BodyText: Because, because we come from different sides
-01:24  BodyText: You (you), you are (you are) my universe
-01:28  BodyText: And I (I) just want (just want) to put you first
-01:33  BodyText: And you (you), you are (you are) my universe
-01:37  BodyText: And you make my world light up inside
-01:41  BodyText: My universe (doo-doo, doo-doo)
-01:46  BodyText: My universe (doo-doo, doo-doo)
-01:50  BodyText: My universe (doo-doo, doo-doo)
-01:55  BodyText: (You make my world)
-01:57  BodyText: You make my world light up inside
-01:59  BodyText: You make my world light up inside
-02:02  BodyText: Nareul balkyeojuneun geon (What brightens me)
-02:03  BodyText: Neoran sarangeuro su nohajin byeol (A star woven from your love)
-02:06  BodyText: Nae ujuui neon (You of my universe)
-02:08  BodyText: Tto dareun sesangeul mandeureo juneun geol (You create another world)
-02:10  BodyText: Neoneun nae byeoriya naui ujunikka (You're my star and universe)
-02:12  BodyText: Jigeum i siryeondo gyeolgugen jamsinikka (This trial too will be brief)
-02:14  BodyText: Neoneun eonjekkajina jigeumcheoreom balkgeman binnajwo (Always shine bright)
-02:17  BodyText: Urineun neoreul ttara i gin bameul sunoeul geoya (We weave the long night)
-02:19  BodyText: Neowa hamkke naraga (I fly with you)
-02:22  BodyText: When I'm without you, I'm crazy
-02:24  BodyText: Ja eoseo nae soneul jaba (Come take my hand)
-02:26  BodyText: We are made of each other, baby
-02:28  BodyText: You (you), you are (you are) my universe
-02:32  BodyText: And I (I) just want (just want) to put you first
-02:37  BodyText: And you (you), you are (you are) my universe
-02:41  BodyText: And you make my world light up inside
-02:45  BodyText: My universe (you, you are)
-02:50  BodyText: My universe (I just want)
-02:54  BodyText: My universe (you, you are my universe, and I)
-03:04  BodyText: My universe
 
+00:00    stop
+00:01.2  pulse @pulses[0]     0 5 5   100
+00:02    BodyText: You (you), you are (you are) my universe
+00:05.4  pulse @pulses[0]    0 5 5   100
+00:06    BodyText: And I (I) just want (just want) to put you first
+00:10.3  pulse @pulses[0]    0 5 5   100
+00:11    BodyText: And you (you), you are (you are) my universe, and I
+00:14    pulse @pulses[0]     0 5 5   100
+#00:19 beats kick in
+00:19    drift_wash @washes[0] @washes[1] 40
+00:19.4  pulse_per_bar @pulses[0] 100 2
+00:22    BodyText: In the night, I lie and look up at you
+00:27    BodyText: When the morning comes, I watch you rise
+00:31    BodyText: There's a paradise they couldn't capture
+00:35    BodyText: That bright infinity inside your eyes
+00:38    BodyText: Maeil bam nege naraga (Every night I fly to you)
+00:41    BodyText: Kkumiran geotdo ijeun chae (Forgetting it's a dream)
+00:43    BodyText: Na useumyeo neoreul manna (I smile and meet you)
+00:45    BodyText: Never-ending forever, baby
+00:48    BodyText: You (you), you are (you are) my universe
+00:52    BodyText: And I (I) just want (just want) to put you first
+00:56    BodyText: And you (you), you are (you are) my universe
+01:01    BodyText: And you make my world light up inside
+01:08    BodyText: Eodumi naegen deo pyeonhaesseotji (Darkness was easier for me)
+01:13    BodyText: Gireojin geurimja sogeseo (In the lengthening shadows)
+01:17    BodyText: And they said that we can't be together
+01:21    BodyText: Because, because we come from different sides
+01:24    BodyText: You (you), you are (you are) my universe
+01:28    BodyText: And I (I) just want (just want) to put you first
+01:33    BodyText: And you (you), you are (you are) my universe
+01:37    BodyText: And you make my world light up inside
+01:41    BodyText: My universe (doo-doo, doo-doo)
+01:46    BodyText: My universe (doo-doo, doo-doo)
+01:50    BodyText: My universe (doo-doo, doo-doo)
+01:55    BodyText: (You make my world)
+01:57    BodyText: You make my world light up inside
+01:59    BodyText: You make my world light up inside
+02:02    BodyText: Nareul balkyeojuneun geon (What brightens me)
+02:03    BodyText: Neoran sarangeuro su nohajin byeol (A star woven from your love)
+02:06    BodyText: Nae ujuui neon (You of my universe)
+02:08    BodyText: Tto dareun sesangeul mandeureo juneun geol (You create another world)
+02:10    BodyText: Neoneun nae byeoriya naui ujunikka (You're my star and universe)
+02:12    BodyText: Jigeum i siryeondo gyeolgugen jamsinikka (This trial too will be brief)
+02:14    BodyText: Neoneun eonjekkajina jigeumcheoreom balkgeman binnajwo (Always shine bright)
+02:17    BodyText: Urineun neoreul ttara i gin bameul sunoeul geoya (We weave the long night)
+02:19    BodyText: Neowa hamkke naraga (I fly with you)
+02:22    BodyText: When I'm without you, I'm crazy
+02:24    BodyText: Ja eoseo nae soneul jaba (Come take my hand)
+02:26    BodyText: We are made of each other, baby
+02:28    BodyText: You (you), you are (you are) my universe
+02:32    BodyText: And I (I) just want (just want) to put you first
+02:37    BodyText: And you (you), you are (you are) my universe
+02:41    BodyText: And you make my world light up inside
+02:45    BodyText: My universe (you, you are)
+02:50    BodyText: My universe (I just want)
+02:54    BodyText: My universe (you, you are my universe, and I)
+03:04    BodyText: My universe
+#03:04 beat stops
+#03:16 beat starts
+03:33    fade_to_black 5

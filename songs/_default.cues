@@ -10,3 +10,4 @@
 
 @bpm        120
 @default_fx quiet_wash 2 5 10
+@ShowSongInfo

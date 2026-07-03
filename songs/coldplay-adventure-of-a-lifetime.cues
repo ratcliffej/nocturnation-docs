@@ -3,6 +3,7 @@
 # Skeleton generated from lrclib.net synced lyrics.
 # The lyric rows are time anchors; add real cue
 # lines between them to choreograph the show.
+# Note: In the concert, the wristbands flashed multiple colours
 
 @artist     coldplay
 @title      adventure-of-a-lifetime
@@ -12,21 +13,23 @@
 
 00:00     stop
 00:00.4   bpm 112
-00:00.5   wash_with_sparkle 0 0 50  0 50 0  40  25 25 25  25
+00:00.5   wash_with_sparkle 0 0 50  0 50 0  40  25 25 25  65
+00:01     HeaderText: Coldplay
+00:01     BodyText: Adventure of a Lifetime
 #00:09    warm up
-00:09     wash_with_sparkle 0 0 50  100 0 100  50  25 25 25  50
+00:09     wash_with_sparkle 0 0 50  100 0 100  50  25 25 25  100
+00:10     HeaderText: 
+00:10     BodyText: 
 00:14     quiet_wash        0 50 0  255 100 
 #00:16    beat kicks in
-00:15.5   bpm 140
+00:15.5   bpm 140 
 00:15.75  sparkle_on_beat  200 200 255  100
 00:17.2   bpm 112
-00:17.2   wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
-00:30    HeaderText:
-00:30    BodyText:
+00:17.2   wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 00:35  Turn your magic on
 00:35    BodyText: Turn your magic on
-# 00:37  Umi she'd say
-00:37    BodyText: Umi she'd say
+# 00:37  To me she'd say
+00:37    BodyText: To me she'd say
 # 00:40  Everything you want's a dream away
 00:40    BodyText: Everything you want's a dream away
 # 00:44  And we are legends every day
@@ -48,7 +51,7 @@
 01:07    bpm 140
 01:07.25 sparkle_on_beat  200 200 255  100
 01:08    bpm 112
-01:08    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+01:08    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 01:11  I feel my heart underneath my skin
 01:11    BodyText: I feel my heart underneath my skin
 # 01:15  And I feel my heart beating
@@ -62,18 +65,18 @@
 01:22.25 bpm 140
 01:24.2    sparkle_on_beat  200 200 255  100
 01:25.5    bpm 112
-01:25.5    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+01:25.5    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 01:33  Alive again!
 01:33    BodyText: Alive again!
 01:33    pulse 200 200 200   1 1 7
-01:35    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+01:35    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 01:37  Oh, you make me feel
 01:37    BodyText: Oh, you make me feel
 # 01:41  Like I'm alive again
 01:41    BodyText: Like I'm alive again
 # 01:44  Said, I can't go on
 01:44    BodyText: Said, I can't go on
-01:35    wash_with_sparkle 0 0 100  50 100 50  50  100 25 100  75
+01:35    wash_with_sparkle 0 0 100  50 100 50  50  100 25 100  100
 # 01:46  Not in this way
 01:46    BodyText: Not in this way
 # 01:48  I'm a dream, I die by light of day
@@ -84,7 +87,7 @@
 01:57    BodyText: Oh, we are omen
 # 01:58  And I feel my heart beating
 01:58    BodyText: And I feel my heart beating
-01:58    wash_with_sparkle 0 0 100  100 0 50  50  100 25 25  75
+01:58    wash_with_sparkle 0 0 100  100 0 50  50  100 25 25  100
 # 02:02  I feel my heart underneath my skin
 02:02    BodyText: I feel my heart underneath my skin
 # 02:06  Oh, I can feel my heart beating
@@ -98,18 +101,18 @@
 02:14    bpm 140
 02:16    sparkle_on_beat  200 200 255  100
 02:17    bpm 112
-02:17    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+02:17    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 02:24  Alive again
 02:24    BodyText: Alive again
 02:23    bpm 140
 02:24.7  sparkle_on_beat  200 200 255  100
 02:26    bpm 112
-02:25.5  wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+02:25.5  wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 # 02:28  Oh, you make me feel
 02:28    BodyText: Oh, you make me feel
 # 02:32  Like I'm alive again
 02:32    BodyText: Like I'm alive again
-02:34    wash_with_sparkle 0 0 10  0 0 20  40  30 30 30  75
+02:34    wash_with_sparkle 0 0 10  0 0 20  40  30 30 30  100
 02:34    BodyText:
 
 # 02:44  Turn your magic on
@@ -124,7 +127,7 @@
 02:57    BodyText: We are diamonds, taking shape
 # 03:01  We are diamonds, taking shape
 03:01    BodyText: We are diamonds, taking shape
-03:04    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  75
+03:04    wash_with_sparkle 0 0 100  100 0 50  50  25 100 25  100
 03:04    BodyText:
 # 03:20  If we've only got this life
 03:20    BodyText: If we've only got this life
@@ -161,6 +164,7 @@
 04:12    drift_wash 0 0 100  100 0 100  40
 # 04:14  Woo-hoo (woo-hoo)
 # 04:16  Woo-hoo (woo-hoo)
+04:15    BodyText: ♥
 04:16    fade_to_black 3
 04:16    clearscreen
 # 04:18  Woo-hoo (woo-hoo)

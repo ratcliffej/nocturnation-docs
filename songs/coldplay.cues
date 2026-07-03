@@ -1,0 +1,40 @@
+# coldplay, - ⦵
+#
+# Skeleton generated from lrclib.net synced lyrics.
+# The lyric rows are time anchors; add real cue
+# lines between them to choreograph the show.
+
+@artist     coldplay,
+@title      ⦵
+@bpm        120
+@default_fx quiet_wash 20 40 80
+
+# 00:00  Instrumental
+00:00   HeaderText:
+00:00   BodyText:
+00:00   stop
+00:00.5 drift_wash 0 0 0  0 5 15  120
+00:01   HeaderText: Coldplay
+00:02   BodyText: Music
+00:02.5 BodyText: Music of 
+00:03   BodyText: Music of the Spheres
+
+00:07   BodyText:
+00:07   HeaderText:
+00:07   drift_wash 5 15 0  0 0 15  120
+00:14   drift_wash 05 0 15  15 0 15  120
+00:21   drift_wash 15 0 15  0 0 15  120
+00:29   bpm 160
+00:29.5 sparkle_on_beat 100 100 155  100
+00:31   sparkle_on_beat 15 0 15  100
+00:34.3   sparkle_on_beat 100 100 155  100
+00:36   sparkle_on_beat 15 0 15  100
+00:39.5   sparkle_on_beat 100 100 155  100
+00:41   sparkle_on_beat 15 0 15  100
+00:45   sparkle_on_beat 100 100 155  100
+00:47   sparkle_on_beat 15 0 15  100
+00:49   fade_to_black 3
+00:48   BodyText: Music
+00:49   BodyText: Music Of The
+00:50   BodyText: Music Of The Spheres
+
