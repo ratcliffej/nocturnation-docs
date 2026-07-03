@@ -7,6 +7,7 @@ from .usb import UsbDispatcher
 
 def create_dispatcher(mode="auto", *, usb_port=None, usb_baud=None,
                       artnet_host="127.0.0.1", artnet_port=6454,
+                      artnet_universe=1,
                       log=print):
     """Build an OutputDispatcher for the requested mode.
 
@@ -29,8 +30,11 @@ def create_dispatcher(mode="auto", *, usb_port=None, usb_baud=None,
         log("output: USB on %s" % d.port)
         return d
     if mode == "artnet":
-        d = ArtnetDispatcher.open(host=artnet_host, port=artnet_port)
-        log("output: Art-Net to %s:%d" % (d.host, d.port))
+        d = ArtnetDispatcher.open(
+            host=artnet_host, port=artnet_port, universe=artnet_universe,
+        )
+        log("output: Art-Net universe %d to %s:%d"
+            % (d.universe, d.host, d.port))
         return d
     if mode == "auto":
         try:
@@ -39,7 +43,10 @@ def create_dispatcher(mode="auto", *, usb_port=None, usb_baud=None,
             return d
         except OutputError as exc:
             log("output: USB unavailable (%s); falling back to Art-Net" % exc)
-            d = ArtnetDispatcher.open(host=artnet_host, port=artnet_port)
-            log("output: Art-Net to %s:%d (auto)" % (d.host, d.port))
+            d = ArtnetDispatcher.open(
+                host=artnet_host, port=artnet_port, universe=artnet_universe,
+            )
+            log("output: Art-Net universe %d to %s:%d (auto)"
+                % (d.universe, d.host, d.port))
             return d
     raise OutputError("unknown output mode %r" % mode)
