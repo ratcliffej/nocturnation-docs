@@ -212,6 +212,35 @@ front) is sparkling on the beat. Author two cues at the same time
 with different group params - both run in parallel because they
 write non-overlapping universe blocks.
 
+### Cascading a wash across groups (phase-offset wave)
+
+To make a colour flow across groups 1..N on a static display, author
+one `drift_wash` cue per group at staggered times. Each per-group cue
+lands in its own runner slot and drifts independently, so their
+cycle phases are naturally offset by the delay between cue times::
+
+```text
+@bpm 120
+# 8-second drift cycle, 3 groups -> stagger every 8/3 = 2.667 s
+00:19       drift_wash @washes[0] @washes[1] 80 220 100 1
+00:21.667   drift_wash @washes[0] @washes[1] 80 220 100 2
+00:24.333   drift_wash @washes[0] @washes[1] 80 220 100 3
+# optional sparkle overlay: cascades one group per beat
+00:19       group_cascade @pulses[0] 100 3
+# optional broadcast pulse: sits in its own slot (0), doesn't cancel
+# any of the group washes above
+00:19.400   pulse_per_bar @pulses[0] 100 2
+```
+
+Each `drift_wash` starts its Lume-side drift at its emission moment,
+so at any time the three groups are showing three points on the
+same drift cycle offset by 1/3 - a moving colour wave when the
+groups are physically arranged in order.
+
+Author flexibility: uneven spacing, partial-fleet coverage, and
+overlapping cycles all fall out for free from the "one cue per
+runner slot" model. No compound FX required.
+
 ### Mid-track BPM changes
 
 Tracks with tempo changes use the `bpm` cue. Drop it on the
