@@ -202,9 +202,10 @@ So:
 ```
 
 The group param is the LAST positional slot on every FX that writes
-a single block. Omit it and you get broadcast. `group_cascade` is
-the exception - it's multi-group by design and uses its own
-`num_groups` slot instead.
+a single block. Omit it and you get broadcast. The multi-group FX
+(`group_cascade`, `group_drift_wash_with_sparkle`) are the exception -
+they are multi-group by design and use their own `num_groups` slot
+instead.
 
 This lets you score sections of a venue independently: e.g. a slow
 drift wash on group 1 (the back of the room) while group 2 (the
@@ -316,6 +317,7 @@ the time of writing:
 | 13 | `group_cascade` | beat | Rotates a pulse around groups 1..N, one beat per group. |
 | 14 | `wash_with_sparkle` | beat | Layered drift wash + sparkle-on-beat in a single cue. |
 | 15 | `pulse` | accent | One-shot pulse for accenting specific moments. Attack / sustain / decay take 1/10 s units (quantised to pixmob::Time buckets). |
+| 16 | `group_drift_wash_with_sparkle` | beat | Phase-offset drift wash across groups 1..N plus a cascading sparkle one group per beat. Reads as a moving colour wave on a static display. |
 | 21 | `linear_buildup` | buildup | Ramps Master and Pulse Probability over `buildup_s` seconds. |
 | 32 | `strobe_burst` | drop | Max strobe rate for a short window, then auto-finish. |
 | 41 | `fade_to_black` | transition | Ramps Master from start value to 0 over `buildup_s` seconds. |

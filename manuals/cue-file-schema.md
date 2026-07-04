@@ -3,7 +3,7 @@
 > Canonical reference for the `.cues` file format. Every directive, every cue-line keyword, every FX command name. Authoring tools must not invent new directives unilaterally — propose, settle, document here, then implement.
 
 **Schema version**: 1
-**Last updated**: 2026-06-26 (Epic 14 B0)
+**Last updated**: 2026-07-04 (add `group_drift_wash_with_sparkle`)
 **Scope**: Music orchestrator (`nowplaying-orchestrator.py`) cue files under `Docs/songs/*.cues`. Parser lives at `Docs/tools/nocturnation_orchestrator/cues.py`.
 
 ---
@@ -293,6 +293,7 @@ Eleven FX shipped at Epic 14 B0 time. The FX library lives at `Docs/tools/noctur
 | `pulse_per_bar` | 11-20 | One pulse per bar (every N beats, where N = time signature). Sparser than `pulse`. | colour, attack, sustain, release |
 | `sparkle_on_beat` | 11-20 | Per-pixel CHANCE-rolled sparkles on the beat. Most-used FX for energetic sections. | colour, prob (0-100), group_size |
 | `wash_with_sparkle` | 11-20 | Combines `quiet_wash` (under) + `sparkle_on_beat` (over). Single cue = both layers. | wash_colour, sparkle_colour, prob |
+| `group_drift_wash_with_sparkle` | 11-20 | Phase-offset drift wash across groups 1..N + cascading sparkle one group per beat. Reads as a moving colour wave on a static display. | anchor_a, anchor_b, cycle, sparkle_colour, prob, num_groups |
 | `linear_buildup` | 21-30 | Intensity ramp from 0 to full over `duration_ms`. Build-toward-the-drop FX. | colour, duration_ms |
 | `group_cascade` | 31-40 | Sweeps a colour across Lume groups in order (group 1, then group 2, ...). | colour, sweep_ms |
 | `strobe_burst` | 31-40 | Brief high-rate flash. Use sparingly + at low intensity (Harding-safe cap is < 5 Hz on the wire). | colour, rate_hz, duration_ms |
