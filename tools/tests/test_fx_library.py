@@ -350,15 +350,46 @@ class TestPulsePerBar:
     def test_fires_once_per_4_beats_by_default(self):
         fx = _make(PulsePerBar, bpm=120)  # bar = 2000 ms
         u = _u()
-        fx.tick(now_ms=0, universe=u)                # bar 0 start
-        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
-        fx.tick(now_ms=500, universe=_u())            # still bar 0
+        # Bench-fix 2026-07-04: first 100 ms is a rearm-LOW window so
+        # any lingering HIGH in the universe (from a prior Pulse's
+        # tail) clears before we write HIGH. The bar edge at t=0 is
+        # deferred; the FIRST bar to fire is bar 1 at t~2000.
+        fx.tick(now_ms=0, universe=u)                # in rearm window
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Past the rearm, still in bar 0 window and _last_bar_index
+        # already at 0 -> no HI here.
+        u_early = _u()
+        fx.tick(now_ms=500, universe=u_early)
+        assert _ch(u_early, CH_PULSE_TRIG) == TRIGGER_LO
         u2 = _u()
         fx.tick(now_ms=1999, universe=u2)
         assert _ch(u2, CH_PULSE_TRIG) == TRIGGER_LO
         u3 = _u()
-        fx.tick(now_ms=2010, universe=u3)             # bar 1 starts
+        fx.tick(now_ms=2010, universe=u3)            # bar 1 starts
         assert _ch(u3, CH_PULSE_TRIG) == TRIGGER_HI
+        # HI held for HOLD_MS = 100 ms.
+        u4 = _u()
+        fx.tick(now_ms=2050, universe=u4)
+        assert _ch(u4, CH_PULSE_TRIG) == TRIGGER_HI
+        u5 = _u()
+        fx.tick(now_ms=2200, universe=u5)
+        assert _ch(u5, CH_PULSE_TRIG) == TRIGGER_LO
+
+    def test_rearm_window_forces_low_regardless_of_bar_edge(self):
+        # Regression for bench 2026-07-04: pulse_per_bar restarted
+        # while universe holds TRIG=HIGH (from a prior Pulse tail)
+        # used to fire its first bar as HIGH-then-HIGH with no
+        # rising edge - LIGHT_PULSE was silently dropped. The rearm
+        # window guarantees at least 100 ms of LOW on the wire before
+        # any HIGH is written, so the mapper's pulse_armed_ state
+        # machine re-arms.
+        fx = _make(PulsePerBar, bpm=120)
+        # Anywhere inside the rearm window: LOW.
+        for t in (0, 20, 50, 99):
+            u = _u()
+            fx.tick(now_ms=t, universe=u)
+            assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO, (
+                "rearm window at t=%d should force LOW" % t)
 
 
 # ---------------------------------------------------------------------------
@@ -908,10 +939,15 @@ class TestPulsePerBarGridSync:
 
     def test_falls_back_to_bpm_clock_without_beats(self):
         # Empty beats list -> classic behaviour: 1 pulse per 2000 ms at 120 BPM 4/4.
+        # Post bench-fix 2026-07-04: first 100 ms is a rearm-LOW window; bar 0
+        # at t=0 is deferred inside it, first live bar is bar 1 at ~2000 ms.
         fx = _make_with_beats(PulsePerBar, [], bpm=120)
         u = _u()
         fx.tick(now_ms=0, universe=u)
-        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        u2 = _u()
+        fx.tick(now_ms=2010, universe=u2)
+        assert _ch(u2, CH_PULSE_TRIG) == TRIGGER_HI
 
 
 class TestWashWithSparkleGridSync:

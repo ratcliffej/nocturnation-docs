@@ -77,6 +77,18 @@ class PulsePerBar(Fx):
         # last-wins. Hold HI for 100 ms so the bridge catches it.
         # See wash_with_sparkle.start for full rationale.
         self._hi_until_ms = 0
+        # Bench-found bug fix 2026-07-04: on start (or seek-restart),
+        # the universe may have TRIG=HIGH left over from a prior Pulse
+        # / pulse_per_bar tail. If our very first tick lands on a bar
+        # and writes HIGH, the StickC mapper sees HIGH -> HIGH with no
+        # falling edge in between and its pulse_armed_ state machine
+        # never re-arms - LIGHT_PULSE is silently dropped. Force LOW
+        # for HOLD_MS on start so the mapper sees the re-arm before we
+        # write HIGH. Same pattern as Pulse's fix on this branch.
+        # Cost: if a bar edge lands inside this re-arm window it's
+        # deferred by up to HOLD_MS - imperceptible for beat-driven
+        # per-bar cues, and only affects the first bar after start.
+        self._rearm_end_ms = now_ms + 100
 
     def _count_bars_at_or_before(self, t_ms):
         """How many bars have elapsed by t_ms, using the actual beats[]
@@ -117,9 +129,13 @@ class PulsePerBar(Fx):
         on_bar = bar_index != self._last_bar_index
         self._last_bar_index = bar_index
         # Hold TRIGGER_HI for 100 ms (same workaround as
-        # sparkle_on_beat / wash_with_sparkle).
+        # sparkle_on_beat / wash_with_sparkle). Suppress on-bar HI
+        # updates during the initial rearm window - see start() for
+        # rationale. Bar detection still advances _last_bar_index so a
+        # bar edge that fell inside the rearm window doesn't retro-fire
+        # once the window closes.
         HOLD_MS = 100
-        if on_bar:
+        if on_bar and now_ms >= self._rearm_end_ms:
             self._hi_until_ms = now_ms + HOLD_MS
 
         g = self._group
@@ -127,8 +143,17 @@ class PulsePerBar(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_R),    self._r)
         set_ch(universe, block_channel(g, CH_PULSE_G),    self._g)
         set_ch(universe, block_channel(g, CH_PULSE_B),    self._b)
-        set_ch(universe, block_channel(g, CH_PULSE_TRIG),
-               TRIGGER_HI if now_ms < self._hi_until_ms else TRIGGER_LO)
+        # LOW during the initial rearm window (guarantees the mapper's
+        # pulse_armed_ state machine re-arms across any lingering HIGH
+        # from a prior Pulse's tail), then normal HI-on-bar / LO
+        # otherwise.
+        if now_ms < self._rearm_end_ms:
+            trig = TRIGGER_LO
+        elif now_ms < self._hi_until_ms:
+            trig = TRIGGER_HI
+        else:
+            trig = TRIGGER_LO
+        set_ch(universe, block_channel(g, CH_PULSE_TRIG), trig)
         set_ch(universe, block_channel(g, CH_PULSE_ATK),  32)
         set_ch(universe, block_channel(g, CH_PULSE_SUS),  64)
         set_ch(universe, block_channel(g, CH_PULSE_REL),  128)
