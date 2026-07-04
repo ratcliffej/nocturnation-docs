@@ -24,6 +24,7 @@ from . import pulse_per_bar       # noqa: F401  id=12
 from . import group_cascade       # noqa: F401  id=13
 from . import wash_with_sparkle   # noqa: F401  id=14
 from . import pulse               # noqa: F401  id=15
+from . import group_drift_wash_with_sparkle  # noqa: F401  id=16
 from . import linear_buildup      # noqa: F401  id=21
 from . import strobe_burst        # noqa: F401  id=32
 from . import fade_to_black       # noqa: F401  id=41

@@ -34,6 +34,9 @@ from nocturnation_orchestrator.fx.library.drift_wash import DriftWash
 from nocturnation_orchestrator.fx.library.sparkle_on_beat import SparkleOnBeat
 from nocturnation_orchestrator.fx.library.pulse_per_bar import PulsePerBar
 from nocturnation_orchestrator.fx.library.group_cascade import GroupCascade
+from nocturnation_orchestrator.fx.library.group_drift_wash_with_sparkle import (
+    GroupDriftWashWithSparkle,
+)
 from nocturnation_orchestrator.fx.library.wash_with_sparkle import WashWithSparkle
 from nocturnation_orchestrator.fx.library.linear_buildup import LinearBuildup
 from nocturnation_orchestrator.fx.library.strobe_burst import StrobeBurst
@@ -153,6 +156,7 @@ EXPECTED_IDS = {
     13:  ("Group Cascade",     "beat"),
     14:  ("Wash With Sparkle", "beat"),
     15:  ("Pulse",             "accent"),
+    16:  ("Group Drift Wash With Sparkle", "beat"),
     21:  ("Linear Buildup",    "buildup"),
     32:  ("Strobe Burst",      "drop"),
     41:  ("Fade To Black",     "transition"),
@@ -482,6 +486,182 @@ class TestGroupCascade:
             for g in range(1, 4)
         ]
         assert fired == [(1, TRIGGER_LO), (2, TRIGGER_HI), (3, TRIGGER_LO)]
+
+
+# ---------------------------------------------------------------------------
+# GroupDriftWashWithSparkle
+# ---------------------------------------------------------------------------
+
+
+class TestGroupDriftWashWithSparkle:
+    # params layout (per PARAMS):
+    #   [0..2] a_r a_g a_b        [3..5] b_r b_g b_b
+    #   [6]    cycle_100ms        [7..9] s_r s_g s_b
+    #   [10]   probability        [11]   num_groups
+    #   [12..14] attack / sustain / release
+
+    def test_writes_wash_channels_to_group_one_on_first_tick(self):
+        # Anchor A magenta, anchor B cyan, cycle 40 (4 s), 4 groups,
+        # sparkle white 100%.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200,
+                    0, 200, 200,
+                    40,
+                    255, 255, 255,
+                    255, 4,
+                    0, 0, 0),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+
+        # Group 1: wash channels written immediately.
+        assert _ch(u, block_channel(1, CH_WASH_A_R))   == 200
+        assert _ch(u, block_channel(1, CH_WASH_A_G))   == 0
+        assert _ch(u, block_channel(1, CH_WASH_A_B))   == 200
+        assert _ch(u, block_channel(1, CH_WASH_B_R))   == 0
+        assert _ch(u, block_channel(1, CH_WASH_B_G))   == 200
+        assert _ch(u, block_channel(1, CH_WASH_B_B))   == 200
+        assert _ch(u, block_channel(1, CH_WASH_CYCLE)) == 40
+        assert _ch(u, block_channel(1, CH_WASH_PULSE_RESPONSE)) == 255
+        # Group 2's wash not yet - its offset is cycle_ms/4 = 1000 ms.
+        assert _ch(u, block_channel(2, CH_WASH_A_R))   == 0
+        assert _ch(u, block_channel(2, CH_WASH_CYCLE)) == 0
+
+    def test_wash_channels_stagger_by_phase_offset(self):
+        # 4 groups, cycle = 40 (4 s). Group N's wash fires at
+        # elapsed = (N-1) * 1000 ms.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200,
+                    0, 200, 200,
+                    40,
+                    255, 255, 255,
+                    255, 4, 0, 0, 0),
+        )
+        u = _u()
+        # t = 0 s: g1 primed.
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, block_channel(1, CH_WASH_CYCLE)) == 40
+        assert _ch(u, block_channel(2, CH_WASH_CYCLE)) == 0
+
+        # t = 1 s: g2 primed.
+        fx.tick(now_ms=1000, universe=u)
+        assert _ch(u, block_channel(2, CH_WASH_CYCLE)) == 40
+        assert _ch(u, block_channel(3, CH_WASH_CYCLE)) == 0
+
+        # t = 3 s: g4 primed too.
+        fx.tick(now_ms=3000, universe=u)
+        assert _ch(u, block_channel(3, CH_WASH_CYCLE)) == 40
+        assert _ch(u, block_channel(4, CH_WASH_CYCLE)) == 40
+
+    def test_broadcast_block_never_touched(self):
+        # This FX is inherently per-group; block 0 (broadcast) must
+        # stay untouched so a previous FX's broadcast wash can survive
+        # under it (matches group_cascade's convention).
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    255, 255, 255, 255, 4, 0, 0, 0),
+        )
+        u = _u()
+        # Run for several ticks / beats to give it every chance.
+        for t in (0, 250, 500, 750, 1000, 2000, 3000):
+            fx.tick(now_ms=t, universe=u)
+        # Block 0 (broadcast) is universe channels 1..40.
+        for ch in range(1, 41):
+            assert u[ch - 1] == 0, "broadcast channel %d dirty" % ch
+
+    def test_sparkle_cascades_one_group_per_beat(self):
+        # 3 groups, bpm=120 -> 500 ms/beat. Beat 0 -> g1, 1 -> g2, 2 -> g3.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    255, 255, 255, 255, 3, 0, 0, 0),
+        )
+        u = _u()
+        # Beat 0.
+        fx.tick(now_ms=0, universe=u)
+        assert _ch(u, block_channel(1, CH_PULSE_TRIG)) == TRIGGER_HI
+        assert _ch(u, block_channel(2, CH_PULSE_TRIG)) == TRIGGER_LO
+        assert _ch(u, block_channel(3, CH_PULSE_TRIG)) == TRIGGER_LO
+        # Broadcast pulse untouched.
+        assert _ch(u, CH_PULSE_TRIG) == 0
+
+        # Beat 1 (500 ms). Fresh universe so HOLD_MS on group 1 doesn't
+        # bleed into this assertion.
+        u = _u()
+        fx.tick(now_ms=520, universe=u)
+        assert _ch(u, block_channel(1, CH_PULSE_TRIG)) == TRIGGER_LO
+        assert _ch(u, block_channel(2, CH_PULSE_TRIG)) == TRIGGER_HI
+        assert _ch(u, block_channel(3, CH_PULSE_TRIG)) == TRIGGER_LO
+
+        # Beat 2 (1000 ms).
+        u = _u()
+        fx.tick(now_ms=1020, universe=u)
+        assert _ch(u, block_channel(2, CH_PULSE_TRIG)) == TRIGGER_LO
+        assert _ch(u, block_channel(3, CH_PULSE_TRIG)) == TRIGGER_HI
+
+        # Beat 3 wraps back to group 1.
+        u = _u()
+        fx.tick(now_ms=1520, universe=u)
+        assert _ch(u, block_channel(1, CH_PULSE_TRIG)) == TRIGGER_HI
+        assert _ch(u, block_channel(3, CH_PULSE_TRIG)) == TRIGGER_LO
+
+    def test_num_groups_clamps_to_valid_range(self):
+        # 0 -> default 4.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    255, 255, 255, 255, 0, 0, 0, 0),
+        )
+        assert fx._num_groups == 4
+
+        # 15 -> 9.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    255, 255, 255, 255, 15, 0, 0, 0),
+        )
+        assert fx._num_groups == 9
+
+    def test_all_zero_sparkle_rgb_defaults_to_white(self):
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    0, 0, 0,     # sparkle RGB all zero
+                    255, 4, 0, 0, 0),
+        )
+        u = _u()
+        fx.tick(now_ms=0, universe=u)
+        # Pulse RGB written on every tick to every active group.
+        assert _ch(u, block_channel(1, CH_PULSE_R)) == 255
+        assert _ch(u, block_channel(1, CH_PULSE_G)) == 255
+        assert _ch(u, block_channel(1, CH_PULSE_B)) == 255
+
+    def test_groups_above_num_groups_never_touched(self):
+        # num_groups = 2; blocks 3..9 must stay zero across every tick.
+        fx = _make(
+            GroupDriftWashWithSparkle,
+            bpm=120,
+            params=(200, 0, 200, 0, 200, 200, 40,
+                    255, 255, 255, 255, 2, 0, 0, 0),
+        )
+        u = _u()
+        for t in (0, 500, 1000, 1500, 2000, 4000):
+            fx.tick(now_ms=t, universe=u)
+        for g in range(3, 10):
+            for ch in (CH_WASH_A_R, CH_WASH_B_R, CH_WASH_CYCLE,
+                       CH_MASTER, CH_PULSE_R, CH_PULSE_TRIG):
+                assert _ch(u, block_channel(g, ch)) == 0, (
+                    "group %d ch %d dirty" % (g, ch))
 
 
 # ---------------------------------------------------------------------------
