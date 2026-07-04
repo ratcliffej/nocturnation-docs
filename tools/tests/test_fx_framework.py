@@ -63,9 +63,20 @@ class RecordingFx(Fx):
         return self._cancelled_ms is not None
 
 
-def make_recording_class(fx_id, name="Recording"):
-    """Build a fresh Fx subclass with the given id. Returns the class."""
-    return type(name, (RecordingFx,), {"id": fx_id, "name": name})
+def make_recording_class(fx_id, name="Recording", *, group_slot=None):
+    """Build a fresh Fx subclass with the given id. Returns the class.
+
+    ``group_slot`` (optional int, 0..5) attaches a PARAMS declaration
+    whose entry at that slot is named "group" so the runner's group
+    extractor routes admissions to per-group slots. Omit for FX with
+    no group param (broadcast-only, e.g. blackout)."""
+    attrs = {"id": fx_id, "name": name}
+    if group_slot is not None:
+        params = [("p%d" % i, "u8", "") for i in range(group_slot)] + [
+            ("group", "count", "Target device group.")
+        ]
+        attrs["PARAMS"] = params
+    return type(name, (RecordingFx,), attrs)
 
 
 # ---------------------------------------------------------------------------
@@ -400,3 +411,176 @@ class TestFxRunnerStats:
         stats = runner.stats()
         assert stats["current_fx_id"] == 13
         assert stats["cancelling_fx_id"] == 11
+
+
+class TestFxRunnerMultiGroup:
+    """Per-group FX slot behaviour: concurrent FX in disjoint groups,
+    independent replacement per slot, broadcast-cancel semantics for
+    the legacy `stop` cue."""
+
+    def _make_registry_with_grouped_fx(self, group_slot=4):
+        """Build a registry with two grouped FX (fx_id 11, 13) whose
+        params place `group` at ``group_slot`` (default 4, mirroring
+        sparkle_on_beat's PARAMS layout)."""
+        reg = FxRegistry()
+        reg.register(make_recording_class(11, "A", group_slot=group_slot))
+        reg.register(make_recording_class(13, "B", group_slot=group_slot))
+        return reg
+
+    def test_concurrent_fx_in_different_groups_both_tick(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        # Same fx_id, different groups -> two independent slots.
+        runner.start(11, params=(0, 0, 0, 0, 1, 0), now_ms=0)
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=1)
+
+        assert runner.current_fx_by_group == {
+            1: runner.current_fx_by_group[1],
+            2: runner.current_fx_by_group[2],
+        }
+        # Both slots hold live instances; they must be distinct objects
+        # so their per-tick state doesn't collide.
+        assert (runner.current_fx_by_group[1]
+                is not runner.current_fx_by_group[2])
+
+        u = bytearray(UNIVERSE_SIZE)
+        runner.tick(10, u)
+
+        # Both FX ticked exactly once.
+        assert len(runner.current_fx_by_group[1].ticks) == 1
+        assert len(runner.current_fx_by_group[2].ticks) == 1
+
+    def test_same_group_different_fx_replaces_slot(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        runner.start(11, params=(0, 0, 0, 0, 3, 0), now_ms=0)
+        first = runner.current_fx_by_group[3]
+        first.finish_at_ms = 10_000   # keep it alive through the tail
+
+        runner.start(13, params=(0, 0, 0, 0, 3, 0), now_ms=100)
+
+        # Slot 3 now holds the new fx (id 13); the old fx (id 11) is
+        # in the cancelling tail for slot 3, not somewhere else.
+        assert runner.current_fx_by_group[3].id == 13
+        assert runner.cancelling_fx_by_group[3] is first
+        # Other slots untouched.
+        assert 3 not in {g for g in runner.current_fx_by_group if g != 3}
+
+    def test_same_group_same_fx_no_replace_running_is_idempotent(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=0)
+        first = runner.current_fx_by_group[2]
+
+        # Repeat the same fx_id + same group; without replace_running
+        # the runner must keep the existing instance untouched.
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=100)
+        assert runner.current_fx_by_group[2] is first
+        assert len(first.starts) == 1   # start() called exactly once
+
+    def test_same_group_same_fx_replace_running_swaps_instance(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=0)
+        first = runner.current_fx_by_group[2]
+        first.finish_at_ms = 10_000
+
+        runner.start(11, params=(0, 0, 0, 0, 2, 0),
+                     replace_running=True, now_ms=100)
+        assert runner.current_fx_by_group[2] is not first
+        assert runner.cancelling_fx_by_group[2] is first
+
+    def test_broadcast_and_group_coexist(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        # A broadcast FX (group=0) does NOT displace a live group-1 FX.
+        runner.start(11, params=(0, 0, 0, 0, 1, 0), now_ms=0)
+        runner.start(13, params=(0, 0, 0, 0, 0, 0), now_ms=1)
+
+        assert 0 in runner.current_fx_by_group
+        assert 1 in runner.current_fx_by_group
+        assert runner.current_fx_by_group[0].id == 13
+        assert runner.current_fx_by_group[1].id == 11
+
+    def test_cancel_wipes_every_slot(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        runner.start(11, params=(0, 0, 0, 0, 1, 0), now_ms=0)
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=1)
+        runner.start(11, params=(0, 0, 0, 0, 3, 0), now_ms=2)
+        # Keep the cancelling tails visible so we can see them land.
+        for fx in runner.current_fx_by_group.values():
+            fx.finish_at_ms = 10_000
+
+        # `stop` cue (fx_id=0) is the operator's "kill everything".
+        runner.start(0, now_ms=100)
+
+        assert runner.current_fx_by_group == {}
+        # All three landed in their per-slot cancelling tails.
+        assert set(runner.cancelling_fx_by_group.keys()) == {1, 2, 3}
+
+    def test_is_active_true_when_any_slot_populated(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        assert not runner.is_active
+        runner.start(11, params=(0, 0, 0, 0, 5, 0), now_ms=0)
+        # Populated in a non-broadcast slot; is_active must still fire.
+        assert runner.is_active
+
+    def test_stats_current_fx_id_reports_broadcast_slot(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        # Only a group-1 FX active; legacy `current_fx_id` field must
+        # report 0 (empty broadcast slot) while the by-group field
+        # exposes the truth. Back-compat contract for the pre-multi-
+        # group status panel.
+        runner.start(11, params=(0, 0, 0, 0, 1, 0), now_ms=0)
+        stats = runner.stats()
+        assert stats["current_fx_id"] == 0
+        assert stats["current_fx_by_group"] == {1: 11}
+
+    def test_ticks_visit_all_slots_in_group_order(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+        runner.start(11, params=(0, 0, 0, 0, 3, 0), now_ms=0)
+        runner.start(11, params=(0, 0, 0, 0, 1, 0), now_ms=0)
+        runner.start(11, params=(0, 0, 0, 0, 2, 0), now_ms=0)
+
+        # Attach a unique universe write so we can assert tick order.
+        # The RecordingFx tick_value defaults to 0xAA; give each a
+        # channel derived from its group index, then assert one tick
+        # each landed in the universe.
+        u = bytearray(UNIVERSE_SIZE)
+        runner.tick(10, u)
+
+        # Every registered slot ticked exactly once.
+        for group in (1, 2, 3):
+            assert len(runner.current_fx_by_group[group].ticks) == 1
+
+    def test_fx_without_group_param_lands_in_broadcast(self):
+        # An FX with no PARAMS declaration (e.g. blackout / fade_to_black)
+        # is broadcast-only; it must always land in slot 0.
+        reg = FxRegistry()
+        reg.register(make_recording_class(11, "NoParams"))   # no PARAMS
+        runner = FxRunner(reg)
+
+        runner.start(11, params=(0, 0, 0, 0, 7, 0), now_ms=0)
+        # params[4]=7 is ignored because the FX declares no group slot.
+        assert list(runner.current_fx_by_group.keys()) == [0]
+
+    def test_out_of_range_group_falls_back_to_broadcast(self):
+        reg = self._make_registry_with_grouped_fx()
+        runner = FxRunner(reg)
+
+        # 10 is outside the valid 0..9 range; the extractor treats it
+        # as broadcast rather than silently allocating an 11th slot.
+        runner.start(11, params=(0, 0, 0, 0, 10, 0), now_ms=0)
+        assert list(runner.current_fx_by_group.keys()) == [0]
