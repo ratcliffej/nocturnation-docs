@@ -3,6 +3,12 @@
 epics/
 manuals/notes.md
 
+# Cue files are the author's active bench working copy - not tracked in
+# GitHub so no git operation (checkout / stash / pop / reset) can
+# clobber in-progress edits. Backup discipline lives on the author's
+# laptop.
+songs/*.cues
+
 # macOS noise
 .DS_Store
 
