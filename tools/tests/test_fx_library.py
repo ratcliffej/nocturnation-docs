@@ -654,32 +654,73 @@ class TestBlackout:
 # ---------------------------------------------------------------------------
 
 class TestPulse:
-    def test_tick0_primes_low_then_tick1_fires_high(self):
-        # Two-tick fire sequence so the StickC mapper always sees a
-        # clean rising edge even if the previous FX left trig HIGH.
+    def test_low_held_for_hold_ms_then_high(self):
+        # Time-based fire sequence: LOW during the first HOLD_MS window
+        # (re-arms if previous FX left trig HIGH), then HIGH for the
+        # next HOLD_MS (rising edge -> mapper fires LIGHT_PULSE).
         fx = _make(
             Pulse,
             # r, g, b, attack, sustain, decay, probability, group
             #                                       (1/10 s units)
             params=(255, 100, 0, 0, 1, 5, 255, 0),
         )
-        # Tick 0: trig=LOW (prime).
+        HOLD_MS = Pulse.HOLD_MS
+        # Anywhere in the LOW window: trig=LOW.
         u = _u()
         fx.tick(now_ms=0, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
         assert _ch(u, CH_PULSE_R) == 255
-        # Tick 1: trig=HIGH (rising edge -> mapper fires).
         u = _u()
-        fx.tick(now_ms=20, universe=u)
+        fx.tick(now_ms=HOLD_MS - 1, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Right at the boundary: transitions to HIGH.
+        u = _u()
+        fx.tick(now_ms=HOLD_MS, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        # Anywhere in the HIGH window: trig=HIGH.
+        u = _u()
+        fx.tick(now_ms=HOLD_MS + 50, universe=u)
         assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
 
-    def test_finishes_after_two_ticks(self):
+    def test_finishes_after_two_hold_windows(self):
         fx = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 0, 0))
+        HOLD_MS = Pulse.HOLD_MS
         assert not fx.is_finished(now_ms=0)
-        fx.tick(now_ms=0, universe=_u())
-        assert not fx.is_finished(now_ms=10)
-        fx.tick(now_ms=20, universe=_u())
-        assert fx.is_finished(now_ms=30)
+        assert not fx.is_finished(now_ms=HOLD_MS)         # still in HIGH window
+        assert not fx.is_finished(now_ms=2 * HOLD_MS - 1) # just before boundary
+        assert fx.is_finished(now_ms=2 * HOLD_MS)         # done
+
+    def test_second_pulse_after_first_leaves_high_still_produces_rising_edge(self):
+        # Repro for bench 2026-07-04: cue file with two Pulse cues at
+        # different times, no FX between them (universe left with
+        # trig=HIGH after the first). The second cue must still emit a
+        # LOW-then-HIGH transition wide enough for the DMX bridge to
+        # see, or the rising edge is silently missed. Under the pre-fix
+        # 20 ms tick-count pattern the LOW-then-HIGH sat inside a single
+        # bridge poll window and the second pulse fired intermittently.
+        HOLD_MS = Pulse.HOLD_MS
+
+        # First pulse fires and finishes. Universe left with trig=HIGH.
+        first = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 255, 0))
+        u = _u()
+        for t in (0, HOLD_MS, 2 * HOLD_MS):
+            first.tick(now_ms=t, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
+        assert first.is_finished(now_ms=2 * HOLD_MS)
+
+        # Second pulse starts. In its first tick it MUST write LOW so
+        # the mapper sees a falling then rising edge across HOLD_MS.
+        second = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 255, 0),
+                       now_ms=5000)
+        second.tick(now_ms=5000, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Held LOW for the full HOLD_MS window.
+        second.tick(now_ms=5000 + HOLD_MS - 1, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_LO
+        # Then HIGH: rising edge visible to any bridge poll during the
+        # remaining HOLD_MS window.
+        second.tick(now_ms=5000 + HOLD_MS, universe=u)
+        assert _ch(u, CH_PULSE_TRIG) == TRIGGER_HI
 
     def test_white_default_when_rgb_zero(self):
         fx = _make(Pulse, params=(0, 0, 0, 0, 1, 5, 100, 0))
@@ -691,10 +732,11 @@ class TestPulse:
 
     def test_group_routing(self):
         fx = _make(Pulse, params=(255, 0, 0, 0, 1, 5, 255, 4))
+        HOLD_MS = Pulse.HOLD_MS
         u = _u()
-        fx.tick(now_ms=0, universe=u)   # tick 0 (LOW)
+        fx.tick(now_ms=0, universe=u)       # LOW window
         u = _u()
-        fx.tick(now_ms=20, universe=u)  # tick 1 (HIGH)
+        fx.tick(now_ms=HOLD_MS, universe=u) # HIGH window
         # Group 4 trigger fires; broadcast block untouched.
         from nocturnation_orchestrator.fx.channels import block_channel
         assert _ch(u, block_channel(4, CH_PULSE_TRIG)) == TRIGGER_HI

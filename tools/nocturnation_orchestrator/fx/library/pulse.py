@@ -10,16 +10,31 @@ onto the pixmob::Time 8-bucket lookup the StickC mapper uses (the
 nearest of 0, 32, 96, 192, 480, 960, 2400, 3840 ms). "Decay" here is
 the wire-side "Release" - same thing, fall-off after sustain.
 
-Two-tick fire sequence:
-    tick 0:  trigger LOW  (re-arms the mapper in case the previous
-                           FX left it high)
-    tick 1:  trigger HIGH (rising edge -> mapper emits LIGHT_PULSE)
+Time-based fire sequence (2026-07-04 bench-found bug fix):
+    t = 0..HOLD_MS      trigger LOW  (re-arms the mapper in case the
+                                      previous FX left it high)
+    t = HOLD_MS..2*HOLD_MS  trigger HIGH (rising edge -> mapper emits
+                                          LIGHT_PULSE)
     finish.
+
+Why the hold: the StickC DMX bridge polls the universe on its own
+5-50 ms cadence (bench 2026-06-28) and reads "last-wins" between
+polls. The pre-fix pattern (tick 0 = LOW, tick 1 = HIGH, ~20 ms
+apart) sat inside a single bridge-poll window, so a poll that
+happened after the LOW-then-HIGH transition saw only the final HIGH
+- and if the previous universe state was already HIGH (from a
+prior Pulse's tail), no rising edge was detected and the LIGHT_PULSE
+was silently dropped. Bench 2026-07-04: intermittent-firing pulse
+in coldplay-x-bts-my-universe.cues, worst when rapidly seeking back
+to test. Holding each phase for HOLD_MS = 100 ms guarantees at least
+one bridge poll during LOW and one during HIGH, so the rising edge
+lands cleanly regardless of previous state. Same rationale as
+wash_with_sparkle's HOLD_MS constant (see that FX for full history).
 
 Universe channels written (per cue.group):
     1 Master                  <- 255
     3..5 Pulse RGB            <- params[0..2]
-    6 Pulse Trigger           <- LOW (tick 0), HIGH (tick 1)
+    6 Pulse Trigger           <- LOW then HIGH (see time-based sequence)
     7 Pulse Attack            <- pixmob slider for params[3] 1/10 s
     8 Pulse Sustain           <- pixmob slider for params[4] 1/10 s
     9 Pulse Release (Decay)   <- pixmob slider for params[5] 1/10 s
@@ -99,6 +114,14 @@ class Pulse(Fx):
         ("group",       "count",       "Target device group: 0 = all (broadcast), 1..9 = group N. Default 0."),
     ]
 
+    # StickC DMX bridge poll window guard. Hold LOW for HOLD_MS so the
+    # bridge definitely sees LOW (clears any lingering HIGH from a
+    # prior Pulse's tail), then HIGH for HOLD_MS so the rising edge is
+    # unambiguously visible. 100 ms is safely longer than typical
+    # bridge poll intervals (5-50 ms) - same value wash_with_sparkle
+    # uses for its beat-pulse hold.
+    HOLD_MS = 100
+
     def start(self, *, bpm, buildup_s, params, position_ms, now_ms):
         self._started_ms = now_ms
         self._cancelled_ms = None
@@ -114,7 +137,10 @@ class Pulse(Fx):
         # fall back to 255 (== 100%) when the cue omitted the value.
         self._prob = params[6] if params[6] != 0 else 255
         self._group = clamp_group(params[7] if len(params) > 7 else 0)
-        self._ticks = 0
+        # Phase boundaries. LOW held until `_lo_hold_end_ms`, HIGH held
+        # until `_hi_hold_end_ms`, then is_finished returns True.
+        self._lo_hold_end_ms = now_ms + self.HOLD_MS
+        self._hi_hold_end_ms = now_ms + 2 * self.HOLD_MS
 
     def tick(self, now_ms, universe):
         g = self._group
@@ -126,15 +152,14 @@ class Pulse(Fx):
         set_ch(universe, block_channel(g, CH_PULSE_SUS),  self._sustain)
         set_ch(universe, block_channel(g, CH_PULSE_REL),  self._decay)
         set_ch(universe, block_channel(g, CH_PULSE_PROB), self._prob)
-        # Tick 0 primes LOW (re-arm); tick 1 fires HIGH (rising edge).
-        if self._ticks == 0:
+        # LOW during the first HOLD_MS window, then HIGH for the next.
+        # Once past both windows is_finished returns True; the universe
+        # sits with trig=HIGH until the next Pulse cue's LOW phase
+        # re-arms it.
+        if now_ms < self._lo_hold_end_ms:
             set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_LO)
         else:
             set_ch(universe, block_channel(g, CH_PULSE_TRIG), TRIGGER_HI)
-        self._ticks += 1
 
     def is_finished(self, now_ms):
-        # Two ticks: prime + fire. After that the universe sits with
-        # trig=HIGH; the next Pulse cue (or Blackout) will write LOW
-        # again to re-arm.
-        return self._ticks >= 2 or self._cancelled_ms is not None
+        return now_ms >= self._hi_hold_end_ms or self._cancelled_ms is not None
