@@ -9,6 +9,20 @@ manuals/notes.md
 # laptop.
 songs/*.cues
 
+# Audio masters used for local librosa enrichment (audio_enrich_cues.py)
+# - never tracked. Large binaries and the Docs mirror is public.
+songs/*.flac
+songs/*.wav
+songs/*.mp3
+songs/*.m4a
+songs/*.ogg
+songs/*.aiff
+songs/*.aif
+
+# Sidecars produced by audio_enrich_cues.py alongside the .cues file.
+songs/*.cues.analysis.json
+songs/*.cues.bak
+
 # macOS noise
 .DS_Store
 
