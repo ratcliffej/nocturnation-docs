@@ -458,7 +458,13 @@ later tools that need beat-level data (`--snap`, `--seed`, etc.).
 Idempotent — re-running with the same audio is byte-stable. When
 the author has renamed sections (e.g. `section3` → `chorus2`), the
 rename carries across re-syncs by boundary-overlap matching.
-Install: `pip install librosa` + `brew install ffmpeg`.
+
+On macOS, run via `./run-audio-enrich-macos.sh <cuefile> [--audio
+<audiofile>]` — same venv-bootstrap pattern as the orchestrator
+wrapper, so librosa lands in `tools/.venv` on first run. Pass no
+`--audio` and the tool auto-discovers a same-basename file (FLAC
+preferred) alongside the cue file. FLAC/WAV decode natively via
+`libsndfile`; MP3/M4A/OGG additionally need `brew install ffmpeg`.
 
 `scripts/gen_fx_library.py` regenerates `Docs/fx-library.md` from
 the registered FX classes; run after adding or modifying an FX.
