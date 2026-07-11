@@ -13,7 +13,7 @@ Channels written every tick:
     11..13 Wash A RGB <- params[0..2]
     14..16 Wash B RGB <- params[3..5]
     17 Wash Cycle     <- params[6] or 80
-    18 Wash Int       <- 220
+    18 Wash Int       <- 255
     19 Wash Attack    <- 30
     20 Wash Release   <- 30
     23 Wash Pulse Response <- 255 (allow LIGHT_PULSE to overlay)
@@ -163,7 +163,12 @@ class WashWithSparkle(Fx):
         set_ch(universe, block_channel(g, CH_WASH_B_G),   self._bg)
         set_ch(universe, block_channel(g, CH_WASH_B_B),   self._bb)
         set_ch(universe, block_channel(g, CH_WASH_CYCLE), self._cycle)
-        set_ch(universe, block_channel(g, CH_WASH_INT),   220)
+        # Wire intensity at max. Same rationale as drift_wash - the
+        # prior 220 was an arbitrary ~14 % attenuation that dialled
+        # Full-mode Tildagon wash below authored. Calm mode + LedStrip
+        # device-brightness cap still attenuate independently on their
+        # own side. Fixed 2026-07-09.
+        set_ch(universe, block_channel(g, CH_WASH_INT),   255)
         set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
         set_ch(universe, block_channel(g, CH_WASH_REL),   30)
         # Allow LIGHT_PULSE to overlay on top of this wash; without

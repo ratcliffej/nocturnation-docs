@@ -5,7 +5,7 @@ Channels written every tick:
     11..13 Wash A RGB
     14..16 Wash B RGB
     17 Wash Cycle  <- params[6] or 80
-    18 Wash Int    <- 220
+    18 Wash Int    <- 255
     19 Wash Attack <- 30
     20 Wash Rel    <- 30
     23 Wash Pulse Response <- 255 (allow LIGHT_PULSE to overlay)
@@ -77,7 +77,12 @@ class DriftWash(Fx):
         set_ch(universe, block_channel(g, CH_WASH_B_G),   self._bg)
         set_ch(universe, block_channel(g, CH_WASH_B_B),   self._bb)
         set_ch(universe, block_channel(g, CH_WASH_CYCLE), self._cycle)
-        set_ch(universe, block_channel(g, CH_WASH_INT),   220)
+        # Wire intensity at max. Full-mode Tildagon renders authored
+        # colours 1:1; Calm mode + LedStrip device-brightness cap still
+        # attenuate on their side. Prior value 220 was an arbitrary
+        # ~14 % attenuation with no documented rationale that dialled
+        # Full-mode Tildagon wash below authored - fixed 2026-07-09.
+        set_ch(universe, block_channel(g, CH_WASH_INT),   255)
         set_ch(universe, block_channel(g, CH_WASH_ATK),   30)
         set_ch(universe, block_channel(g, CH_WASH_REL),   30)
         # Allow pulse cues to overlay; without this the Lume's
