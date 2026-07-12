@@ -92,7 +92,7 @@ omitted entirely.
 At 120 BPM each beat is 500 ms, so a one-second granularity drifts
 the lighting two beats off the music. Use fractional seconds for
 beat-aligned cues; centisecond grain matches LRC timestamps so a
-skeleton from `gen_cues_skeleton.py` can be edited in place.
+skeleton from `cues_from_lyrics.py` can be edited in place.
 
 `stop` is the cancel sentinel - equivalent to `runner.start(fx_id=0)`.
 

@@ -496,6 +496,19 @@ pip install librosa     # one-time
 brew install ffmpeg     # macOS; needed for MP3 / M4A decode
 ```
 
+**macOS wrapper** — same venv-bootstrap pattern as the orchestrator
+wrapper, so librosa lands in `tools/.venv` on first run without a
+system-wide install:
+
+```sh
+# From Docs/, with a same-basename audio file alongside the cue:
+./tools/run-audio-enrich-macos.sh songs/coldplay-fix-you.cues
+
+# Or explicit --audio path:
+./tools/run-audio-enrich-macos.sh songs/coldplay-fix-you.cues \
+    --audio /path/to/coldplay-fix-you.flac --snap --seed
+```
+
 FLAC is the preferred MIR input (lossless = sharper beat /
 section detection); MP3 320 kbps works fine; Apple Music
 subscription downloads are FairPlay-DRM-encrypted and not usable
