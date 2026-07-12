@@ -4,7 +4,7 @@ status: Draft
 firmware_version: "v0.6"
 notion_url: https://www.notion.so/35ebd067740580369c67c6738fe3f6d0
 notion_id: 35ebd067740580369c67c6738fe3f6d0
-last_synced: 2026-05-23
+last_synced: 2026-07-12
 sync_direction: bidirectional
 ---
 
@@ -226,9 +226,9 @@ The single onboard LED doubles as the **status indicator** in place of the LCD p
 - **Solid green for a second** - first frames just arrived. Lock acquired.
 - **Wash / pulse colours** - after the lock window, the LED takes part in the show like any other pixel on the strip.
 
-Short-pressing the front button while in Lume mode cycles the LED-strip brightness. The same brightness control is also available via the Config menu on the Sticks. The Atom does not have a Menu mode (there is no display to show one); to reach any setting, change it on a Stick - settings are stored per-device in NVS.
+Short-pressing the front button while in Lume mode cycles the Atom's Lume Group ID (1..6). The Atom does not have a Menu mode (there is no display to show one); to reach any other setting, change it on a Stick or update the Atom's `platformio.ini` build flags — settings are stored per-device in NVS.
 
-**Atom Lite brightness is hardware-capped at 10 percent**, enforced by the firmware regardless of menu input. The Atom's 200 mAh battery base plus typical 500 mA USB-hub limit cannot sustain a 30-pixel SK6812 strip at 25 percent or higher without brownout-rebooting the chip. The cap is declared in `hal::HAL::max_strip_brightness_percent()` in the Atom's HAL backend; `LedStripDriver::set_brightness_percent()` clamps any operator-driven raise to that ceiling. So the Atom-side Btn1 cycle is effectively {10, 1} (operator presses cycle through 50/25/10/1 internally but anything above 10 is silently clamped). Plus2 and S3 have no firmware cap - operator-driven cycling through 50 / 25 / 10 / 1 is fully exposed.
+**Atom Lite brightness is hardware-capped at 10 percent**, enforced by the firmware regardless of build-flag input. The Atom's 200 mAh battery base plus typical 500 mA USB-hub limit cannot sustain a 30-pixel SK6812 strip at 25 percent or higher without brownout-rebooting the chip. The cap is declared in `hal::HAL::max_strip_brightness_percent()` in the Atom's HAL backend; `LedStripDriver::set_brightness_percent()` clamps any operator-driven raise to that ceiling. Plus2 and S3 accept 5 / 10 / 25 / 50 percent via the Config menu — with the 25 % and 50 % tiers requiring the M5Stack USB TypeC2Grove Unit (U151) Y adapter to draw strip current directly off USB-C.
 
 The 200 mAh battery base gives a couple of hours of runtime depending on strip brightness and chain length. For longer runs, plug the Atom into a USB power bank.
 
@@ -244,18 +244,20 @@ The strip responds to the same wash and pulse cues as every other Lume in the fl
 - `12` - groups of 12 LEDs flash together as a unit (a Tildagon-ring-sized block on a longer strip).
 - A group size equal to the chain length - the whole strip flashes or stays dark as one unit (PixMob-bracelet style).
 
-Default group size is 12. Default brightness is **1 percent** — deliberately conservative so a fresh out-of-box device cannot brown out on any power source we ship (battery, USB-CDC laptop, wall charger), regardless of which mode (Pulse / Whiteout test, raw-RGB white, music show) the operator boots into. A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws ~60 mA per pixel = 1.8 A at 100 % brightness, far beyond any reasonable USB or battery supply; 1 percent keeps peak draw under ~20 mA on a 30-pixel chain.
+Default group size is 12. Default brightness is **10 percent** — the fleet-wide safe default that works on any power source the fleet targets (internal LiPo, USB-CDC laptop, wall charger). A 30-pixel SK6812 strip at full white (RGB 255,255,255) draws ~60 mA per pixel = 1.8 A at 100 % brightness, far beyond any reasonable USB or battery supply; 10 percent keeps peak draw under ~180 mA on a 30-pixel chain.
 
-The operator dials up via Config > LED Strip when a heavier supply is available. The four levels are tuned for typical power sources:
+The operator dials up via **Config > Connectivity > LED Strip > Brightness** when a heavier supply is available. Four tiers, labelled with their power-source requirement:
 
 | Brightness | Suitable for |
 |---|---|
-| **50 %** | Wall-powered Sticks (DMX bridge / stage rig) |
-| **25 %** | USB-CDC laptop or healthy battery |
-| **10 %** | Any-supply safe |
-| **1 %** | Ambient hint / fresh-device default |
+| **50 % (Ext)** | External Grove Y USB power (M5Stack TypeC2Grove Unit U151); strip's V rail comes off USB-C directly, bypassing the device regulator |
+| **25 % (Ext)** | Same external-power requirement — internal battery / device-USB browns out at 25 % on a 29-pixel chain |
+| **10 %** | Any-supply safe. Default. |
+| **5 %** | Ambient hint |
 
-100 percent was retired 2026-06-23 after bench-confirmed brownout reboots.
+The fleet-wide `kAbsoluteMaxBrightness` ceiling was raised 10 → 50 % on 2026-07-11 once the Y adapter landed. Values are persisted to NVS; Atom Lite silently caps at 10 % even if its NVS carries a higher value from a prior firmware.
+
+100 percent was retired 2026-06-23 after bench-confirmed brownout reboots and is not currently reachable via any menu.
 
 **Brightness applies in every mode**: the strip honours the persisted Config-menu cap whether the Stick is running a Lume render, Test patterns, Director output, or the DMX bridge. Prior to 2026-06-24 the brightness setting was only consulted by the Lume render path, so Test mode patterns at full white could brown out a Stick even with the Config menu set to 10 %. Now centralised in `DAL::apply_persisted_strip_settings()`; every mode honours the cap.
 
@@ -417,6 +419,7 @@ A picker leading to four sub-menus:
 - `DirID` - this Director's Performance-range source id (one byte in `0x40..0xFE`). Shown as `P:nn`. Random on first install, persisted to NVS (key `mst_pid`), sticky across reboots. A-click drills into a hex editor with three cursor positions cycled by Btn2: high nibble (cycles `4..F`), low nibble (cycles `0..F` skipping the reserved `0xFF` slot), and `Re-roll` (rolls + persists a new random). B-hold exits. New value applies at the next Director start. The byte identifies *this* Director on the wire so Lumes can lock to it; the value is broadcast on every frame and is what the Lume's TOFU lock pins onto. Upstream show logic (Tildagon shows, the orchestrator) can pattern-match on the locked Director's ID to choose content (e.g. a stage-D logo when locked to `0xD0`, an artist QR code when locked to `0xA1`). The id matters *because* it's stable and operator-settable; pin a known value per stage / per artist when content depends on it. See [section 4.7](#47-multi-show-partitioning).
 - `Lume Channel` - 0 (auto-scan), 1, 6, or 11. NVS key `slv_chan`, default 0.
 - `Lume Repeat` - whether the Lume retransmits accepted frames as a repeater. NVS key `slv_repeat`, default off. Rebroadcasts preserve `source_id` and `sequence_number` so the fleet-wide dedup still works mesh-wide; `hop_count` is incremented by one and the frame is dropped at the 3-hop ceiling. When ON, the LCD bottom-left shows a small green `R:NNNN` counter — total frames rebroadcast since entering Lume mode. Read at a glance during a deployment to confirm the relay is firing without USB-attaching the Stick. See [section 1.7](#17-the-wireless-link) for the mesh-extension design rationale.
+- `Scan channels` - pre-show 2.4 GHz Wi-Fi passive scan across channels 1-13 (~5 s blocking, radio offline while it runs). Shows a bar chart of AP density per channel with the currently-configured Director channel highlighted yellow and the recommended channel (least-congested of the non-overlapping set {1, 6, 11}) highlighted green. AP count numeral above each bar; channel-number label below each. Display-only — the operator changes the pinned channel via `Director Channel` above, or `Lume Channel` on a Lume. Runs on Plus2 and S3 (Atom Lite has no LCD).
 
 The `WiFi` submenu was retired in Epic 15 — the fleet runs ESP-NOW in `WIFI_PROTOCOL_LR` mode and 802.11b/g/n is disabled at the radio layer, so no path will ever surface a Wi-Fi config screen now or in the foreseeable future.
 
@@ -425,7 +428,7 @@ The `WiFi` submenu was retired in Epic 15 — the fleet runs ESP-NOW in `WIFI_PR
 
 **LED Strip** (active on hosts with a strip wired in - Atom Lite, Plus2, S3):
 - `Enable` - master gate on the LED-strip render path. NVS key `strip_en`, default on. When off, the driver drops all events; nothing reaches the strip.
-- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 50 / 25 / 10 / 1 percent. NVS key `strip_bri`, default **1** (deliberately conservative; see [section 2.6](#26-led-strip)). The same control is also available via a short-press of Button 1 in Lume mode (the Atom Lite's only adjustment surface).
+- `Brightness` - uniform multiplier on the wash and pulse render. Cycles 5 / 10 / 25 (Ext) / 50 (Ext) percent. NVS key `strip_bri`, default **10**. The `(Ext)` label on 25 % and 50 % flags that they require the M5Stack USB TypeC2Grove Unit (U151) Y adapter — internal-battery / device-USB power will brown out at those tiers. See [section 2.6](#26-led-strip) for the wiring topology.
 - `Group size` - pixels per CHANCE-roll group. Cycles 1 / 6 / 12 / 24. NVS key `strip_grp`, default 12. See [section 2.6](#26-led-strip) for the operator-meaningful values.
 - `Chain size` - physical strip length plugged in. Cycles 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288). NVS key `strip_cnt`, default 29.
 
