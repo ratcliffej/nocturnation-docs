@@ -134,7 +134,7 @@ class Cue:
 class Lyric:
     """A timestamped lyric anchor lifted from a `# MM:SS text` comment.
 
-    Authoring helper output (`gen_cues_skeleton.py`) already emits
+    Authoring helper output (`cues_from_lyrics.py`) already emits
     lyrics in this shape, so the cue parser can recover them with
     zero changes to the file format. Lyrics are advisory: the
     scheduler logs them in debug mode but they have no effect on

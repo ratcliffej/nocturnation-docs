@@ -170,20 +170,23 @@ Rotates a pulse around groups 1..N, one beat per group. Broadcast (block 0) is l
 
 Layered drift wash + sparkle-on-beat in a single FX. The wash cycles between anchors A and B over the cycle time; the sparkle fires a pulse on each beat at the supplied BPM. Single cue for the most-common ambient-bed + beat-texture composition.
 
-| Slot | Name        | Unit    | Description                                                          |
-|------|-------------|---------|----------------------------------------------------------------------|
-| 0    | a_r         | u8      | Wash anchor A Red.                                                   |
-| 1    | a_g         | u8      | Wash anchor A Green.                                                 |
-| 2    | a_b         | u8      | Wash anchor A Blue.                                                  |
-| 3    | b_r         | u8      | Wash anchor B Red.                                                   |
-| 4    | b_g         | u8      | Wash anchor B Green.                                                 |
-| 5    | b_b         | u8      | Wash anchor B Blue.                                                  |
-| 6    | cycle       | 100ms   | Wash cycle time. Default 80 (~8 s) when zero.                        |
-| 7    | s_r         | u8      | Sparkle Red. White default if all sparkle RGB zero.                  |
-| 8    | s_g         | u8      | Sparkle Green.                                                       |
-| 9    | s_b         | u8      | Sparkle Blue.                                                        |
-| 10   | probability | percent | Sparkle chance per beat (0..100%). Default 100%.                     |
-| 11   | group       | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0. |
+| Slot | Name        | Unit    | Description                                                                |
+|------|-------------|---------|----------------------------------------------------------------------------|
+| 0    | a_r         | u8      | Wash anchor A Red.                                                         |
+| 1    | a_g         | u8      | Wash anchor A Green.                                                       |
+| 2    | a_b         | u8      | Wash anchor A Blue.                                                        |
+| 3    | b_r         | u8      | Wash anchor B Red.                                                         |
+| 4    | b_g         | u8      | Wash anchor B Green.                                                       |
+| 5    | b_b         | u8      | Wash anchor B Blue.                                                        |
+| 6    | cycle       | 100ms   | Wash cycle time. Default 80 (~8 s) when zero.                              |
+| 7    | s_r         | u8      | Sparkle Red. White default if all sparkle RGB zero.                        |
+| 8    | s_g         | u8      | Sparkle Green.                                                             |
+| 9    | s_b         | u8      | Sparkle Blue.                                                              |
+| 10   | probability | percent | Sparkle chance per beat (0..100%). Default 100%.                           |
+| 11   | group       | count   | Target device group: 0 = all (broadcast), 1..9 = group N. Default 0.       |
+| 12   | attack      | u8      | Sparkle attack slider 0..255 (pixmob_time bucketed). Default 16 when zero. |
+| 13   | sustain     | u8      | Sparkle sustain slider 0..255. Default 16 when zero.                       |
+| 14   | release     | u8      | Sparkle release slider 0..255. Default 96 when zero.                       |
 
 ## Buildup
 
