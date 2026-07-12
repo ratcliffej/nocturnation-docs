@@ -1,7 +1,7 @@
 ---
 title: "NocturNation user manual"
 status: Draft
-firmware_version: "v0.6"
+firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580369c67c6738fe3f6d0
 notion_id: 35ebd067740580369c67c6738fe3f6d0
 last_synced: 2026-07-12
@@ -12,7 +12,7 @@ sync_direction: bidirectional
 
 > A practical guide to running NocturNation at a venue: what it is, how it works, how to set it up, how to configure it, and what to do when it misbehaves.
 
-**Firmware version covered**: v0.6 (`include/firmware_version.h`).
+**Firmware version covered**: v0.5 (`include/firmware_version.h`).
 **Reference hardware**: M5StickC Plus2, M5StickS3 (the Sticks); M5Atom Lite; M5Stack SK6812 RGB flex strip (optional); PixMob Aurora bracelets.
 
 The boot flow is the same on every host but defaults to Lume on power-up, so a freshly-flashed device joins an existing fleet immediately. To run a device as a Director, tap any button during the 3-second boot splash to open the mode menu, then pick **Director Mode**. On the Atom Lite, where there is no display and no boot splash, the device boots straight to Lume; the front button doubles as the LED-strip brightness control once a Director is locked (see [section 2.5](#25-m5atom-lite) and [section 2.6](#26-led-strip)).
@@ -424,7 +424,7 @@ A picker leading to four sub-menus:
 The `WiFi` submenu was retired in Epic 15 — the fleet runs ESP-NOW in `WIFI_PROTOCOL_LR` mode and 802.11b/g/n is disabled at the radio layer, so no path will ever surface a Wi-Fi config screen now or in the foreseeable future.
 
 **DMX** (stub, reserved for Epic 7):
-- Carrier, Universe ID, Channel mapping. Not functional in v0.6.
+- Carrier, Universe ID, Channel mapping. Not functional in v0.5.
 
 **LED Strip** (active on hosts with a strip wired in - Atom Lite, Plus2, S3):
 - `Enable` - master gate on the LED-strip render path. NVS key `strip_en`, default on. When off, the driver drops all events; nothing reaches the strip.
@@ -446,7 +446,7 @@ A picker leading to two sub-menus:
 ### 4.5 System
 
 - Battery readout
-- Firmware version (currently `v0.6`)
+- Firmware version (currently `v0.5`)
 - Factory reset (clears the entire `noct` NVS namespace; requires a long confirmation press)
 
 ### 4.6 Persistence model

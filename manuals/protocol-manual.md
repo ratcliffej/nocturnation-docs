@@ -2,7 +2,7 @@
 title: "NocturNation protocol manual"
 status: Draft
 protocol_version: 0x02
-firmware_version: "v0.6"
+firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
 last_synced: 2026-07-12
@@ -16,7 +16,7 @@ sync_direction: bidirectional
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
 **Protocol version specified by this document**: `0x02`.
-**Reference firmware version**: v0.6 (`include/firmware_version.h`).
+**Reference firmware version**: v0.5 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
 ---
@@ -60,7 +60,7 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x02`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
 
-The protocol version is independent of the firmware version. Firmware version `v0.6` implements protocol version `0x02`.
+The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x02`.
 
 ### 1.5 Licence
 
@@ -630,7 +630,7 @@ The plug-in id MUST be twelve bytes or fewer; longer ids are truncated.
 
 ### B.4 Migrations
 
-The reference firmware applies one-shot migrations on first boot after a firmware upgrade. As of v0.6 the migrations are:
+The reference firmware applies one-shot migrations on first boot after a firmware upgrade. As of v0.5 the migrations are:
 
 - Drop the legacy `slv_ir_grp` key (the function moved to the Lume's `slv_group` filter and per-binding namespaces).
 - Map the legacy `active_vis` value `"beat-pulse"` or `"spectrum-bars"` to `active_show = "simple-beat"`.
