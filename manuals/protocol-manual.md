@@ -1,11 +1,11 @@
 ---
 title: "NocturNation protocol manual"
 status: Draft
-protocol_version: 0x03
-firmware_version: "v0.6"
+protocol_version: 0x02
+firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-07-22
+last_synced: 2026-07-12
 sync_direction: bidirectional
 ---
 
@@ -15,8 +15,8 @@ sync_direction: bidirectional
 
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
-**Protocol version specified by this document**: `0x03`.
-**Reference firmware version**: v0.6 (`include/firmware_version.h`).
+**Protocol version specified by this document**: `0x02`.
+**Reference firmware version**: v0.5 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
 ---
@@ -58,9 +58,9 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 ### 1.4 Versioning
 
-Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x03`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
+Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x02`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
 
-The protocol version is independent of the firmware version. Firmware version `v0.6` implements protocol version `0x03`.
+The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x02`.
 
 ### 1.5 Licence
 
@@ -132,7 +132,7 @@ Every frame begins with an eight-byte header:
 |---:|---|---:|---|
 | 0 | `magic[0]` | 1 | Always `0x4E` (ASCII `N`) |
 | 1 | `magic[1]` | 1 | Always `0x4E` (ASCII `N`) |
-| 2 | `protocol_version` | 1 | Always `0x03` at this revision |
+| 2 | `protocol_version` | 1 | Always `0x02` at this revision |
 | 3 | `source_id` | 1 | Sender id, partitioned by range and channel - see [section 3.4](#34-source-identifier-partitioning). `0xFF` = broadcast / anonymous. |
 | 4 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
 | 5 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
@@ -151,10 +151,10 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
 | `0x00` | `HEARTBEAT` | 9 | Director to all |
-| `0x03` | `LIGHT_PULSE` | 13 | Director to all |
-| `0x06` | `LIGHT_WASH` | 20 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x03` | `LIGHT_PULSE` | 9 | Director to all |
+| `0x06` | `LIGHT_WASH` | 16 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
 | `0x07` | `LIGHT_WASH_END` | 3 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
-| `0x08` | `LIGHT_WASH_PULSE` | 13 | Director to all (only Lumes currently washing act on it; everyone else drops) |
+| `0x08` | `LIGHT_WASH_PULSE` | 9 | Director to all (only Lumes currently washing act on it; everyone else drops) |
 | `0x09` | `TEXT_DISPLAY` | 8..200 | Director to all (Lumes with `DisplayText` capability render; others drop) |
 | `0x0A` | `BITMAP_HEADER` | 37 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
 | `0x0B` | `BITMAP_PLANE` | 5..242 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
@@ -181,7 +181,7 @@ The Director's nine-byte liveness frame. Carries a monotonic tick plus an option
 
 #### 3.3.2 `LIGHT_PULSE` (`0x03`)
 
-> Renamed from `LIGHT_COMMAND` in Epic 6C Phase C (2026-05-31). Wire byte is unchanged - the rename was a name-only refactor that frees the "LIGHT" prefix for the `LIGHT_WASH` family (`0x06`/`0x07`/`0x08`). Old name retained here for cross-reference. In v0x03 (2026-07-21) the payload grew from 9 to 13 bytes with a 4-byte `send_tick` field appended for cross-Lume render synchronisation.
+> Renamed from `LIGHT_COMMAND` in Epic 6C Phase C (2026-05-31). Wire byte and payload are unchanged - this is a name-only refactor that frees the "LIGHT" prefix for the upcoming `LIGHT_WASH` family (`0x06`/`0x07`/`0x08`). Old name retained here for cross-reference.
 
 The most-emitted message type; carries every render fire on the system.
 
@@ -196,11 +196,8 @@ The most-emitted message type; carries every render fire on the system.
 | 6 | `sustain` | 1 | Envelope sustain stage; PixMob `Time` enum index 0..7 |
 | 7 | `release` | 1 | Envelope release stage; PixMob `Time` enum index 0..7 |
 | 8 | `chance` | 1 | Probability gate; PixMob `Chance` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
-| 9 | `send_tick` | 4 LE | Director's `now_ms` at the moment of dispatch. Cross-Lume render-sync anchor — see [section 6.4](#64-cross-lume-render-synchronisation). `0` signals "no anchor available, render immediately". Wraps on `u32` overflow; a receiver MUST compare using wrap-safe subtraction against its smoothed `director_tick_offset_ms`. |
 
-`payload_len == 13`. A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
-
-A receiver that maintains a valid `director_tick_offset_ms` (established from prior `HEARTBEAT` frames per [section 6.4](#64-cross-lume-render-synchronisation)) SHOULD defer rendering until the local time equivalent of `send_tick + kFleetRenderDelayMs`, where `kFleetRenderDelayMs` is the fleet-wide render delay budget (30 ms in the reference firmware). A receiver that has no valid offset, that observes `send_tick == 0`, that computes a fire time already past, or whose pending-queue capacity is exhausted MUST render the frame immediately.
+A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
 
 #### 3.3.3 `LIGHT_WASH` (`0x06`)
 
@@ -224,9 +221,8 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 | 11 | `cycle_ms` | 2 LE | One full A↔B↔A oscillation in milliseconds. `0` = no cycle, hold `r1/g1/b1`. |
 | 13 | `ttl_seconds` | 2 LE | Time-to-live in seconds. `0` = infinite (held until `LIGHT_WASH_END` or a superseding `LIGHT_WASH`). |
 | 15 | `pulse_response` | 1 | `0` = ignore inbound `LIGHT_PULSE` while washing (wash holds untouched); `1` = accept `LIGHT_PULSE` as additive overlay on the live wash baseline. |
-| 16 | `send_tick` | 4 LE | Director's `now_ms` at the moment of dispatch. Same semantics as `LIGHT_PULSE.send_tick` — see [section 3.3.2](#332-light_pulse-0x03) and [section 6.4](#64-cross-lume-render-synchronisation). `0` = render immediately. |
 
-`payload_len == 20`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
+`payload_len == 16`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
 
 #### 3.3.4 `LIGHT_WASH_END` (`0x07`)
 
@@ -242,13 +238,13 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 
 #### 3.3.5 `LIGHT_WASH_PULSE` (`0x08`)
 
-> Added in Epic 6C Phase D. Same payload shape as `LIGHT_PULSE`; differs only in dispatch semantics — fires only on Lumes currently in wash state. In v0x03 the payload grew from 9 to 13 bytes with the same 4-byte `send_tick` trailer as `LIGHT_PULSE`.
+> Added in Epic 6C Phase D. Same payload shape as `LIGHT_PULSE` (9 bytes); differs only in dispatch semantics — fires only on Lumes currently in wash state.
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0..12 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 13 | Same wire layout as `LIGHT_PULSE`, including the `send_tick` trailer at offset 9. |
+| 0..8 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 9 | Same wire layout as `LIGHT_PULSE`. |
 
-`payload_len == 13`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset. Render-time deferral against `send_tick` applies identically to both types.
+`payload_len == 9`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
 
 #### 3.3.6 `TEXT_DISPLAY` (`0x09`)
 
@@ -327,7 +323,7 @@ Both flags zero is legal and acts as a no-op; the reference encoder emits `clear
 
 #### 3.3.10 `EXTENSION` (`0xFF`)
 
-Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x03`.
+Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
 
 ### 3.4 Source identifier partitioning
 
@@ -350,7 +346,7 @@ The `source_id` field at offset 3 of the frame header is partitioned by range to
 
 **Lume-side rules (Trust-On-First-Use):**
 
-- A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: heartbeats arrive only every 1 s, so a HEARTBEAT-only rule would leave a mid-song Lume idle for up to a second at join.)
+- A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: the Director's heartbeat is suppressed by skip-if-recent per [section 6.1](#61-director-heartbeat) while `LIGHT_PULSE` frames flow, so a HEARTBEAT-only rule would leave a mid-song Lume idle for the duration of a song.)
 - A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A frame carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
 - A Lume on channel 1 MUST accept any non-broadcast source_id for TOFU lock; channel 1 is the community-permissive channel by design.
 - A Lume MUST release its TOFU lock and resume scanning if no frame from the locked `source_id` has been received for `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds), shared with the channel re-scan threshold ([section 5.4](#54-lume---re-scan-on-signal-loss)).
@@ -453,9 +449,9 @@ A Lume explicitly locked to a channel by operator configuration (`slv_chan ∈ {
 
 ### 6.1 Director heartbeat
 
-The Director MUST emit `HEARTBEAT` frames at 1 Hz **unconditionally**, independent of other traffic on the radio. Prior revisions of this specification permitted a "skip-if-recent" suppression when other frames were flowing; that rule was removed at v0x03 (2026-07-21) because the heartbeat's `tick` field is now load-bearing as the cross-Lume render-sync anchor (see [section 6.4](#64-cross-lume-render-synchronisation)) and cannot be silently withheld during continuous DMX-driven traffic without inducing render-time drift on receivers.
+The Director MUST emit `HEARTBEAT` frames at no slower than 1 Hz when there is no other traffic. The Director MAY suppress a heartbeat if it has transmitted any other frame within the heartbeat period; this is the "skip-if-recent" rule and minimises duty cycle during active music.
 
-The heartbeat carries a nine-byte payload (`payload_len == 9`) per [section 3.3.1](#331-heartbeat-0x00): a monotonic `tick` plus an optional wall-clock anchor in `days_since_2026` and `centiseconds_today`. Directors without a wall-clock source MUST set the two date/time fields to zero; receivers that need wall-clock validity (Tier 3) MUST treat all-zero date/time as "unknown" and reject cert checks accordingly. The frame is the tick anchor for cross-Lume synchronisation; the wall-clock anchor is a piggyback.
+The heartbeat carries a nine-byte payload (`payload_len == 9`) per [section 3.3.1](#331-heartbeat-0x00): a monotonic `tick` plus an optional wall-clock anchor in `days_since_2026` and `centiseconds_today`. Directors without a wall-clock source MUST set the two date/time fields to zero; receivers that need wall-clock validity (Tier 3) MUST treat all-zero date/time as "unknown" and reject cert checks accordingly. The frame's primary on-wire purpose is liveness; the wall-clock anchor is a piggyback.
 
 ### 6.2 Receiver liveness check
 
@@ -469,32 +465,9 @@ A receiver that detects Director return (the first received frame after a NO SIG
 
 NocturNation has no Lume-to-Director heartbeat. A Director has no on-wire knowledge of which Lumes are alive; the operator visually checks each Lume's NO SIGNAL indicator.
 
-### 6.4 Cross-Lume render synchronisation
+---
 
-> Added at v0x03 (2026-07-21). Repeater cascade and radio arrival-time variance produce visible desync between neighbouring Lumes when each renders on frame arrival: a first-hop Lume near the stage fires immediately, a two- or three-hop Lume tens of milliseconds later. At drum-and-bass tempos (180+ BPM), this exceeds the perceptual threshold. v0x03 replaces "render on arrival" with "render on Director's authored fire tick", using the per-frame `send_tick` field and the `HEARTBEAT` tick anchor.
-
-**Director side.** For every emitted `LIGHT_PULSE`, `LIGHT_WASH`, or `LIGHT_WASH_PULSE`, the Director MUST stamp `send_tick` to its local `now_ms` at the moment of dispatch. The Director MUST continue emitting `HEARTBEAT` at 1 Hz unconditionally so receivers can maintain a low-jitter offset estimate.
-
-**Lume side.** A conforming receiver SHOULD track a smoothed `director_tick_offset_ms`, defined as `HEARTBEAT.tick − local_now_ms`, using an exponentially weighted moving average (EWMA) with a coefficient in the range 0.05..0.20 on the new sample. The reference firmware uses 0.10 (90/10 EWMA). The offset MUST be recomputed on every `HEARTBEAT` from the currently locked Director's `source_id` and MUST be reset when the receiver's TOFU lock changes.
-
-Given a valid `director_tick_offset_ms`, the receiver computes a local fire time for a pulse-family frame:
-
-```
-local_fire_ms = send_tick − director_tick_offset_ms + kFleetRenderDelayMs
-```
-
-The receiver SHOULD defer rendering until `local_fire_ms` has arrived. `kFleetRenderDelayMs` is the fleet-wide render-delay budget: enough to swallow radio and repeater-cascade variance without exceeding a musically perceptible fraction of the fastest expected beat. The reference firmware uses **30 ms** (10 % of a 200 BPM sixteenth-note interval).
-
-A receiver MUST fall back to immediate render if any of the following holds:
-
-- `director_tick_offset_ms` has not yet been established (no `HEARTBEAT` has been observed from the locked Director since TOFU or since offset reset).
-- `send_tick == 0`, which the Director uses to signal "no anchor available; render immediately". A well-formed v0x03 Director SHOULD NOT emit this value in the normal traffic path, but MAY use it for local-fallback traffic (e.g. signal-loss synthesis).
-- The computed `local_fire_ms` is already in the past (arrival was later than the sync budget).
-- The receiver's pending-render queue is at capacity (the reference firmware caps at eight pending frames per pulse family).
-
-A receiver's pending-queue drain SHOULD run on every event-loop tick with a resolution no coarser than 5 ms; a coarser drain adds fixed jitter that competes with the sync budget.
-
-Wrap-arithmetic: both `send_tick` and `director_tick_offset_ms` are `u32` values, and receivers MUST compare using wrap-safe subtraction (equivalent to MicroPython's `time.ticks_diff` or a signed 32-bit cast of the difference).
+## 7. Conformance
 
 ### 7.1 Receiver MUST honour
 
@@ -541,7 +514,7 @@ A conforming Director MUST honour:
 
 - The Long Range (LR) PHY mode configuration on the ESP-NOW radio ([section 2.1.1](#211-phy-mode-long-range-lr)). Fleet-wide LR is required — a Director transmitting on standard PHY is invisible to LR-configured Lumes and vice-versa.
 - Three-times redundant transmission with identical sequence numbers ([section 2.3](#23-redundancy)).
-- The unconditional 1 Hz heartbeat emission rule ([section 6.1](#61-director-heartbeat)).
+- The heartbeat rule and skip-if-recent suppression ([section 6.1](#61-director-heartbeat)).
 - The protocol-version byte at offset 0 of every frame.
 - Channel fixity for the duration of a deployment ([section 5.1](#51-director)).
 - `source_id` allocation from the range matching the configured channel ([section 3.4](#34-source-identifier-partitioning)).
@@ -672,18 +645,18 @@ This annex provides canonical byte sequences for parity testing against the refe
 
 ### C.1 ESP-NOW `LIGHT_PULSE` frame
 
-A `LIGHT_PULSE` from source_id 1, sequence 42, broadcast (`target_class = 0x00`, `target_group = 0x00`), red `(255, 0, 0)`, envelope (attack=`T_96_MS`, sustain=`T_0_MS`, release=`T_480_MS`), chance `CHANCE_100`, `send_tick = 0x12345678`:
+A `LIGHT_PULSE` from source_id 1, sequence 42, broadcast (`target_class = 0x00`, `target_group = 0x00`), red `(255, 0, 0)`, envelope (attack=`T_96_MS`, sustain=`T_0_MS`, release=`T_480_MS`), chance `CHANCE_100`:
 
 ```
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x03    protocol_version
+0x02    0x02    protocol_version
 0x03    0x01    source_id
 0x04    0x2A    sequence_number (42)
 0x05    0x00    hop_count
 0x06    0x03    message_type (LIGHT_PULSE)
-0x07    0x0D    payload_len (13)
+0x07    0x09    payload_len
 0x08    0x00    target_class (All)
 0x09    0x00    target_group (broadcast)
 0x0A    0xFF    r
@@ -693,13 +666,9 @@ Offset  Byte    Field
 0x0E    0x00    sustain (T_0_MS)
 0x0F    0x04    release (T_480_MS)
 0x10    0x00    chance (CHANCE_100)
-0x11    0x78    send_tick LE byte 0
-0x12    0x56    send_tick LE byte 1
-0x13    0x34    send_tick LE byte 2
-0x14    0x12    send_tick LE byte 3
 ```
 
-Total frame length: twenty-one bytes (eight header + thirteen payload).
+Total frame length: seventeen bytes (eight header + nine payload).
 
 ### C.2 ESP-NOW `HEARTBEAT` frame
 
@@ -709,7 +678,7 @@ A `HEARTBEAT` from source_id `0x21`, sequence `0x07`, hop_count 2, carrying tick
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x03    protocol_version
+0x02    0x02    protocol_version
 0x03    0x21    source_id
 0x04    0x07    sequence_number (7)
 0x05    0x02    hop_count
@@ -760,13 +729,12 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
 | 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_PULSE`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
-| 0x02 | 2026 | (superseded) | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1. |
-| 0x03 | 2026 | This document | Post-EMF cross-Lume render-sync revision (2026-07-21). Added a 4-byte little-endian `send_tick` field at the tail of `LIGHT_PULSE` (offset 9, payload 9→13), `LIGHT_WASH` (offset 16, payload 16→20), and `LIGHT_WASH_PULSE` (offset 9, payload 9→13); no change to `HEARTBEAT`, `LIGHT_WASH_END`, or the display types. Introduced unconditional 1 Hz `HEARTBEAT` transmission (skip-if-recent removed) as the tick-offset anchor. Wire-incompatible with v2: v2 receivers reject the longer payloads via the `payload_len` gate ([section 3.1](#31-header)) and v3 receivers reject a v2 frame's `protocol_version = 0x02`. See [section 6.4](#64-cross-lume-render-synchronisation). |
+| 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
 
-Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of v0x03 include:
+Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of v0x02 include:
 
 - **Source_id partitioning rules** (2026-05-17, [section 3.4](#34-source-identifier-partitioning)) — layered convention on the existing 1-byte field, no wire change.
-- **Display message types** `0x09..0x0C` (Epic 13, 2026-06-14, [section 3.3.6](#336-text_display-0x09) onwards) — new codepoints, backward-compatible under the forward-compatibility rule (older receivers see them as unknown types and silently drop per [section 3.2](#32-message-types)).
+- **Display message types** `0x09..0x0C` (Epic 13, 2026-06-14, [section 3.3.6](#336-text_display-0x09) onwards) — new codepoints, backward-compatible under the v0x02 forward-compatibility rule (old v0x02 receivers see them as unknown types and silently drop per [section 3.2](#32-message-types)).
 - **Long Range PHY mode** (Epic 15, 2026-06-27, [section 2.1.1](#211-phy-mode-long-range-lr)) — PHY-layer configuration, not a wire-format change per se, but a fleet-wide invariant a mixed-mode Director/Lume pair would not appear to interoperate.
 
 ---
