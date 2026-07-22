@@ -40,8 +40,8 @@ All badges converge on the same local moment regardless of arrival path.
 |---|---|---|
 | `LightPulsePayload` | **Yes** | Beat-cadence sparkles need fleet sync. |
 | `LightWashPulsePayload` | **Yes** | Sparkle overlay on a wash; same sync sensitivity as `LightPulse`. |
-| `LightWashPayload` | No | Wash baseline; `attack` fade-in (up to 25.5 s) hides any 10-30 ms desync. |
-| `LightWashEndPayload` | No | Wash cancel + release fade; timing-insensitive. |
+| `LightWashPayload` | **Yes** (resolved 2026-07-22) | The `attack` fade-in normally hides 10-30 ms desync, but cue authors will sometimes want `attack = 0` for instant colour switches. Airtime cost is 4 bytes per wash — negligible. Get them all in sync. |
+| `LightWashEndPayload` | No | Wash cancel + release fade; the release fade masks any desync at wash-end. |
 | `HeartbeatPayload` | Already has `tick` | No change. |
 | `TextDisplayPayload`, `BitmapHeaderPayload`, `BitmapPlanePayload`, `ClearScreenPayload` | No | Text / image content; ~100 ms latency imperceptible. |
 | `RepeaterHeartbeatPayload` | No | Repeater census; latency-insensitive. |
@@ -91,9 +91,31 @@ struct LightWashPulsePayload {
 + constexpr uint8_t kLightWashPulsePayloadLen = 13;
 ```
 
+### `LightWashPayload` (16 → 20 bytes)
+
+```diff
+struct LightWashPayload {
+    uint8_t  target_class;
+    uint8_t  target_group;
+    uint8_t  r1, g1, b1;
+    uint8_t  r2, g2, b2;
+    uint8_t  attack;
+    uint8_t  release;
+    uint8_t  intensity;
+    uint16_t cycle_ms;
+    uint16_t ttl_seconds;
+    uint8_t  pulse_response;
++   uint32_t send_tick;   // director's now_ms() at emit; little-endian
+};
+- constexpr uint8_t kLightWashPayloadLen = 16;
++ constexpr uint8_t kLightWashPayloadLen = 20;
+```
+
+Wash sends fire only on cue change (not every frame), so the airtime cost is trivial. `attack = 0` cues (instant colour switch) now sync with the pulse cadence.
+
 ### Airtime cost
 
-4 bytes × 8 bits ÷ 500 kbps (LR bitrate) = **64 μs per pulse**. At 8 Hz peak sparkle rate that's 512 μs/s — 0.1 % of the pipe. Negligible.
+4 bytes × 8 bits ÷ 500 kbps (LR bitrate) = **64 μs per pulse**. At 8 Hz peak sparkle rate that's 512 μs/s — 0.1 % of the pipe. Wash sends are cue-change-only, negligible additional. Total v0x03 airtime overhead vs. v0x02 is well under 1 % of the pipe.
 
 ## 5. Encoder side (Director)
 
@@ -166,20 +188,30 @@ Same shape in Python — a `self._pending_pulses` list of `(local_fire_ms, frame
 
 ## 7. `kFleetRenderDelayMs` sizing
 
-Must cover the worst expected hop-path delay so no relayed frame arrives past its fire time.
+Must cover the worst expected hop-path delay so no relayed frame arrives past its fire time. Retransmit jitter only matters when the first copy is lost (retransmits are spaced 5-15 ms apart per spec §4.3). ESP-NOW LR reliability is high with 2× redundancy, so first-copy-lost is rare — typical arrival ≈ radio propagation time.
 
-| Deployment | Max hops | Path delay | Retransmit jitter | Total budget |
-|---|---|---|---|---|
-| Direct-only | 0 | 1-3 ms | 5-15 ms × 3 | ~15-50 ms |
-| 1 engineered repeater | 1 | 5-15 ms | 5-15 ms × 3 | ~20-60 ms |
-| 2 engineered repeaters (cascaded) | 2 | 10-30 ms | 5-15 ms × 3 | ~25-75 ms |
-| 3-hop mesh (audience `repeat=AUTO`) | 3 | 15-45 ms | 5-15 ms × 3 | ~30-90 ms |
+| Deployment | Max hops | Typical arrival | Worst-case arrival (first-copy lost) |
+|---|---|---|---|
+| Direct-only | 0 | 1-3 ms | ~15 ms |
+| 1 engineered repeater | 1 | 5-15 ms | ~25 ms |
+| 2 engineered repeaters (cascaded) | 2 | 10-30 ms | ~45 ms |
+| 3-hop mesh (audience `repeat=AUTO`) | 3 | 15-45 ms | ~60 ms |
 
-**Proposed: `kFleetRenderDelayMs = 60`.** Covers 1-2 hop engineered deployment (the typical case per current `repeat=OFF` default from v1.0.1) with margin. 3-hop mesh at the top end starts to bump the ceiling — acceptable, since audience-mesh deployments trade latency for coverage anyway.
+**Proposed: `kFleetRenderDelayMs = 30` (resolved 2026-07-22 — DnB context).**
 
-Latency perception at 60 ms: noticeable but comfortable for beat-cadence music (a 120 BPM beat is 500 ms, so 60 ms = 12 % of one beat interval).
+Rationale for tightness: Null Sector-class drum & bass sets hit 180-200+ BPM (some DJs run tracks even hotter). At 180 BPM one beat is 333 ms; at 200 BPM 300 ms; rapid half-time rolls at 200 BPM are 150 ms apart. Every additional millisecond of render delay eats into perceptibility on those short intervals. 30 ms is:
 
-**Escape valve:** operators can override at build time via `-DNOCT_FLEET_RENDER_DELAY_MS=N` if a specific deployment wants tighter (direct-only fleet, 30 ms) or looser (deep mesh, 100 ms) tuning.
+- **10 % of a 200 BPM beat** — imperceptible in the mix
+- **20 % of a 150 ms rapid roll** — still just about below the visual sync-perception floor
+- Comfortable margin for **direct + 1-hop engineered deployments** (the typical StickC-repeater case)
+- Tight but functional for **2-hop cascades** — most frames arrive under budget
+- **3-hop cascade at the top end will regularly hit the fallback path** (arrival past deadline → immediate render on that badge). Acceptable — 3-hop audience-mesh already trades latency for coverage, and `repeat=OFF` is the fresh-install default from v1.0.1 so this is opt-in.
+
+**Escape valves:**
+- **Build-time override**: `-DNOCT_FLEET_RENDER_DELAY_MS=N` per firmware env. Deep-mesh deployments can raise to 60 ms; direct-only bench setups can drop to 15 ms.
+- **Per-cue override** (§11 Q3, resolved: yes): cue-file directive `@fleet_delay <ms>` overrides for that cue only. Rare but supported — one specific cue can loosen the window without affecting the rest of the show.
+
+**Fallback still preserves rendering:** a frame arriving past `send_tick + kFleetRenderDelayMs - director_tick_offset_ms` fires *immediately* on the next `loop_tick` rather than being dropped. So a 3-hop badge in a mostly-2-hop fleet renders slightly late on that one badge, not silently missed.
 
 ## 8. Fallback semantics
 
@@ -205,12 +237,12 @@ Fallback logging on both fleets: `[nocturnation] pulse fired past sync deadline;
 
 Both would live in `RepeaterMode` on the StickC and the dynamic-repeater FSM (`repeater.py`) on the Tildagon.
 
-## 11. Open questions
+## 11. Open questions — resolved 2026-07-22
 
-1. **Include `send_tick` on `LightWashPayload` too?** Currently no — wash `attack` fade masks desync. But if we ever author wash cues with `attack = 0` (instant switch), sync matters. Small extra 4 bytes on wash. Vote: include; cost is trivial and future-proofs.
-2. **Sub-second delta instead of full u32?** Halves the wire cost (2 vs 4 bytes) at the cost of decode complexity (nearest-HB-tick reconstruction). At 64 μs per pulse the airtime savings don't justify the complexity. Recommendation: stick with u32.
-3. **Should `kFleetRenderDelayMs` be per-cue?** e.g. cue-file directive `@fleet_delay 40ms` for shows that want minimum latency. Post-v0x03 iteration; not blocking here.
-4. **Backwards-compatible mode?** Could version 0x03 Director accept a `--legacy-v2` flag that omits `send_tick` and stamps the older payload length. Adds encoder branching; wire-clean approach preferred. Recommendation: no legacy mode — fleet-wide update.
+1. **~~Include `send_tick` on `LightWashPayload` too?~~** **Yes.** Extra 4 bytes per wash-cue-change is negligible; `attack = 0` cases benefit. See §3, §4.
+2. **~~Sub-second delta instead of full u32?~~** **Full u32.** Wire-cost savings (~2 bytes per pulse) don't justify the decode complexity. C++ decode is free but MicroPython gets extra bytecode per pulse for the wrap-safe delta reconstruction — for the marginal wire savings not worth the perf hit on a 133 MHz Xtensa core running interpreted Python. Match the `HEARTBEAT.tick` semantic exactly (u32 LE ms).
+3. **~~Should `kFleetRenderDelayMs` be per-cue?~~** **Yes.** Cue-file directive `@fleet_delay <ms>` planned (see §7 escape valves). Rare use but zero cost when unused; supports one-off cues that want tighter or looser windows without a firmware rebuild.
+4. **~~Backwards-compatible mode?~~** **No.** Full fleet-wide upgrade. Clean wire, simpler encoder/decoder, no legacy branching. Documented as a hard version step in §9.
 
 ## 12. Roll-out sequence (once approved)
 
