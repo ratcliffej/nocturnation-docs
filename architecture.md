@@ -199,6 +199,9 @@ Bluetooth is therefore a personal/local control link, not a show-wide protocol -
 | Art-Net (ArtDmx) | Console input | UDP / Ethernet / WiFi | Same role as serial DMX, networked |
 
 ### 4.3 Custom ESP-NOW frame format (v1)
+
+**Current wire is v3.** The block below is the v1 design snapshot preserved for historical rationale. For the current authoritative wire spec see [`manuals/protocol-manual.md`](manuals/protocol-manual.md) §3. v1 → v2 added the two-byte magic prefix + bumped `protocol_version` to 0x02. v2 → v3 (2026-07-25) widened `source_id` and every payload's `target_group` from u8 to LE u16 to buy futureproofing headroom for stadium-scale addressing (target_group) and birthday-paradox safety for personal-rig Directors (source_id). NVS storage and config UI stay at u8 - the extended range is purely wire-side reserve for a future UI widening.
+
 Fixed-size 6-byte header plus optional payload. Following Art-Net's precedent, sequence numbers and time anchoring are separate concerns - the header carries a small sequence number for deduplication and ordering, and time information (when needed) is carried in a separate `TIME_SYNC` message type broadcast periodically by Tier 3 masters.
 ```plain text
 Offset  Field             Size  Notes
