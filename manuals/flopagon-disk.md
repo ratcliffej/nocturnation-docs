@@ -67,7 +67,7 @@ day-to-day use.
 **Prerequisites** on the host machine:
 
 - `mpremote` and `mpy-cross` installed (`pip install mpremote mpy-cross`).
-- The [nocturnation-tildagon][repo] source repo checked out.
+- The [nocturnation-disk][repo] source repo checked out.
 - The Flopagon's write-protect jumper shorted (0.1" header near the
   edge — bridge with a jumper wire or tweezers). Development Flopagons
   are typically left permanently shorted.
@@ -96,7 +96,7 @@ To add your own apps to a provisioned Flopagon, use the disk manager's
 The provisioning script assumes port 1 by default; edit `PORT` at the
 top of `disk/dev/provision_flopagon.py` for other slots.
 
-[repo]: https://github.com/ratcliffej/nocturnation-tildagon
+[repo]: https://github.com/ratcliffej/nocturnation-disk
 
 ## Troubleshooting
 
@@ -156,8 +156,16 @@ picker. Missing manifests fall back to the folder name.
 
 ## Related
 
-- [Tildagon app README][repo] — badge-side firmware source.
-- `disk/README.md` in the firmware repo — module reference for anyone
-  editing the disk manager.
-- `disk/bootstrap/README.md` — the 2 KB EEPROM bootstrap, including
-  the byte-budget rationale.
+- [nocturnation-disk][repo] — the disk manager source (installer,
+  bootstrap, dev tooling, tests). Extracted from the NocturNation
+  Tildagon firmware repo on 2026-07-25 so it can be developed
+  independently of the audience-lighting app.
+- `README.md` in the disk repo — module reference for anyone editing
+  the disk manager.
+- `bootstrap/README.md` in the disk repo — the 2 KB EEPROM bootstrap,
+  including the byte-budget rationale.
+- [Nathan Dumont's Flopagon][flopagon-hw] — the underlying hexpansion
+  hardware (KiCad sources, manufacturing files, and Nathan's reference
+  `app.mpy` mount helper).
+
+[flopagon-hw]: https://github.com/hairymnstr/Flopagon
