@@ -1,7 +1,7 @@
 ---
 title: "NocturNation protocol manual"
 status: Draft
-protocol_version: 0x02
+protocol_version: 0x03
 firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
@@ -58,9 +58,11 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 ### 1.4 Versioning
 
-Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x02`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
+Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x03`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
 
-The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x02`.
+**v0x02 → v0x03**: `source_id` and every payload's `target_group` widened from one byte to two bytes little-endian. Motivation: futureproofing headroom — `source_id` moves from 191 addressable Performance-range slots to 65534 (birthday-paradox safety for multi-Director dress-up rigs), `target_group` from 255 addressable groups to 65534 (stadium-scale seat-level addressing). Config UI, NVS storage, and partition helpers stay at u8-natural values; the extended range `0x0100..0xFFFE` is reserved for a future UI/NVS widening. v0x02 receivers reject v0x03 frames at the version check — this is a hard cutover, not a compatible extension.
+
+The protocol version is independent of the firmware version.
 
 ### 1.5 Licence
 
@@ -126,21 +128,21 @@ NocturNation is unidirectional. A Lume never transmits a frame back to the Direc
 
 ### 3.1 Header
 
-Every frame begins with an eight-byte header:
+Every frame begins with a nine-byte header:
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
 | 0 | `magic[0]` | 1 | Always `0x4E` (ASCII `N`) |
 | 1 | `magic[1]` | 1 | Always `0x4E` (ASCII `N`) |
-| 2 | `protocol_version` | 1 | Always `0x02` at this revision |
-| 3 | `source_id` | 1 | Sender id, partitioned by range and channel - see [section 3.4](#34-source-identifier-partitioning). `0xFF` = broadcast / anonymous. |
-| 4 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
-| 5 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
-| 6 | `message_type` | 1 | See [section 3.2](#32-message-types) |
-| 7 | `payload_len` | 1 | Bytes of payload following the header |
-| 8..N | `payload` | `payload_len` | Type-specific (see [section 3.3](#33-payloads)) |
+| 2 | `protocol_version` | 1 | Always `0x03` at this revision |
+| 3..4 | `source_id` | 2 | Sender id, LE u16. Partitioned by range and channel - see [section 3.4](#34-source-identifier-partitioning). `0xFFFF` = broadcast / anonymous. |
+| 5 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
+| 6 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
+| 7 | `message_type` | 1 | See [section 3.2](#32-message-types) |
+| 8 | `payload_len` | 1 | Bytes of payload following the header |
+| 9..N | `payload` | `payload_len` | Type-specific (see [section 3.3](#33-payloads)) |
 
-`kHeaderSize = 8`. `kMaxFrameSize = 32`. `kMaxPayloadSize = kMaxFrameSize - kHeaderSize = 24`.
+`kHeaderSize = 9`. `kMaxFrameSize = 250`. `kMaxPayloadSize = kMaxFrameSize - kHeaderSize = 241`.
 
 The two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") discriminates NocturNation traffic from other ESP-NOW users sharing the same 2.4 GHz channel - a real concern at event-density deployments (EMF, festivals) where many devices broadcast on the same band. A receiver MUST validate the magic prefix as the very first check; frames whose `magic[0..1]` is not `0x4E 0x4E` MUST be silently discarded before any further header parsing.
 
@@ -151,15 +153,17 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
 | `0x00` | `HEARTBEAT` | 9 | Director to all |
-| `0x03` | `LIGHT_PULSE` | 9 | Director to all |
-| `0x06` | `LIGHT_WASH` | 16 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
-| `0x07` | `LIGHT_WASH_END` | 3 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
-| `0x08` | `LIGHT_WASH_PULSE` | 9 | Director to all (only Lumes currently washing act on it; everyone else drops) |
-| `0x09` | `TEXT_DISPLAY` | 8..200 | Director to all (Lumes with `DisplayText` capability render; others drop) |
-| `0x0A` | `BITMAP_HEADER` | 37 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
-| `0x0B` | `BITMAP_PLANE` | 5..242 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
-| `0x0C` | `CLEAR_SCREEN` | 3 | Director to all (Lumes with `DisplayText` or `DisplayBitmap` capability clear the corresponding surface; others drop) |
+| `0x03` | `LIGHT_PULSE` | 10 | Director to all |
+| `0x06` | `LIGHT_WASH` | 17 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x07` | `LIGHT_WASH_END` | 4 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x08` | `LIGHT_WASH_PULSE` | 10 | Director to all (only Lumes currently washing act on it; everyone else drops) |
+| `0x09` | `TEXT_DISPLAY` | 9..201 | Director to all (Lumes with `DisplayText` capability render; others drop) |
+| `0x0A` | `BITMAP_HEADER` | 38 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
+| `0x0B` | `BITMAP_PLANE` | 6..241 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
+| `0x0C` | `CLEAR_SCREEN` | 4 | Director to all (Lumes with `DisplayText` or `DisplayBitmap` capability clear the corresponding surface; others drop) |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
+
+**v0x03 payload growths**: every entry above except `HEARTBEAT` and `EXTENSION` grew +1 byte, from the `target_group` widening from `u8` to LE `u16`.
 
 All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
@@ -188,14 +192,14 @@ The most-emitted message type; carries every render fire on the system.
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
 | 0 | `target_class` | 1 | See [section 4](#4-class-and-group-addressing); 0 = all classes, 1 = Light, 2 = Screen, 3 = MultiLedScreen |
-| 1 | `target_group` | 1 | 0 = broadcast within class; 1..255 = specific group (PixMob receivers further constrain to 1..31) |
-| 2 | `r` | 1 | Red 0..255 |
-| 3 | `g` | 1 | Green 0..255 |
-| 4 | `b` | 1 | Blue 0..255 |
-| 5 | `attack` | 1 | Envelope attack stage; PixMob `Time` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
-| 6 | `sustain` | 1 | Envelope sustain stage; PixMob `Time` enum index 0..7 |
-| 7 | `release` | 1 | Envelope release stage; PixMob `Time` enum index 0..7 |
-| 8 | `chance` | 1 | Probability gate; PixMob `Chance` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
+| 1..2 | `target_group` | 2 LE | 0 = broadcast within class; 1..65534 = specific group (PixMob receivers further constrain to 1..31; current UI generates 1..255). |
+| 3 | `r` | 1 | Red 0..255 |
+| 4 | `g` | 1 | Green 0..255 |
+| 5 | `b` | 1 | Blue 0..255 |
+| 6 | `attack` | 1 | Envelope attack stage; PixMob `Time` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
+| 7 | `sustain` | 1 | Envelope sustain stage; PixMob `Time` enum index 0..7 |
+| 8 | `release` | 1 | Envelope release stage; PixMob `Time` enum index 0..7 |
+| 9 | `chance` | 1 | Probability gate; PixMob `Chance` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
 
 A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
 
@@ -208,21 +212,21 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
 | 0 | `target_class` | 1 | Per [section 4](#4-class-and-group-addressing); `0` = all classes. |
-| 1 | `target_group` | 1 | `0` = broadcast within class; `1..255` = specific group. |
-| 2 | `r1` | 1 | Start colour red 0..255. |
-| 3 | `g1` | 1 | Start colour green 0..255. |
-| 4 | `b1` | 1 | Start colour blue 0..255. |
-| 5 | `r2` | 1 | End colour red 0..255. Ignored by the renderer when `cycle_ms == 0`, but the byte is still on the wire. |
-| 6 | `g2` | 1 | End colour green 0..255. |
-| 7 | `b2` | 1 | End colour blue 0..255. |
-| 8 | `attack` | 1 | Ramp time from current rendered colour into the wash baseline. Units: **100 ms** (range 0..25.5 s). |
-| 9 | `release` | 1 | Default fade-out time when the wash ends (TTL expiry or superseded by another `LIGHT_WASH`). Units: **100 ms**. May be overridden by a `LIGHT_WASH_END.release_time` for explicit cancellation. |
-| 10 | `intensity` | 1 | Brightness scalar 0..255 applied to the wash baseline before any pulse overlay. |
-| 11 | `cycle_ms` | 2 LE | One full A↔B↔A oscillation in milliseconds. `0` = no cycle, hold `r1/g1/b1`. |
-| 13 | `ttl_seconds` | 2 LE | Time-to-live in seconds. `0` = infinite (held until `LIGHT_WASH_END` or a superseding `LIGHT_WASH`). |
-| 15 | `pulse_response` | 1 | `0` = ignore inbound `LIGHT_PULSE` while washing (wash holds untouched); `1` = accept `LIGHT_PULSE` as additive overlay on the live wash baseline. |
+| 1..2 | `target_group` | 2 LE | `0` = broadcast within class; `1..65534` = specific group. |
+| 3 | `r1` | 1 | Start colour red 0..255. |
+| 4 | `g1` | 1 | Start colour green 0..255. |
+| 5 | `b1` | 1 | Start colour blue 0..255. |
+| 6 | `r2` | 1 | End colour red 0..255. Ignored by the renderer when `cycle_ms == 0`, but the byte is still on the wire. |
+| 7 | `g2` | 1 | End colour green 0..255. |
+| 8 | `b2` | 1 | End colour blue 0..255. |
+| 9 | `attack` | 1 | Ramp time from current rendered colour into the wash baseline. Units: **100 ms** (range 0..25.5 s). |
+| 10 | `release` | 1 | Default fade-out time when the wash ends (TTL expiry or superseded by another `LIGHT_WASH`). Units: **100 ms**. May be overridden by a `LIGHT_WASH_END.release_time` for explicit cancellation. |
+| 11 | `intensity` | 1 | Brightness scalar 0..255 applied to the wash baseline before any pulse overlay. |
+| 12 | `cycle_ms` | 2 LE | One full A↔B↔A oscillation in milliseconds. `0` = no cycle, hold `r1/g1/b1`. |
+| 14 | `ttl_seconds` | 2 LE | Time-to-live in seconds. `0` = infinite (held until `LIGHT_WASH_END` or a superseding `LIGHT_WASH`). |
+| 16 | `pulse_response` | 1 | `0` = ignore inbound `LIGHT_PULSE` while washing (wash holds untouched); `1` = accept `LIGHT_PULSE` as additive overlay on the live wash baseline. |
 
-`payload_len == 16`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
+`payload_len == 17`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
 
 #### 3.3.4 `LIGHT_WASH_END` (`0x07`)
 
@@ -231,10 +235,10 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
 | 0 | `target_class` | 1 | Same routing as `LIGHT_WASH`. |
-| 1 | `target_group` | 1 | Same. |
-| 2 | `release_time` | 1 | Fade from the instantaneous wash colour to black over this duration, then exit wash mode. Units: **100 ms**. Overrides the active wash's own `release` field. |
+| 1..2 | `target_group` | 2 LE | Same. |
+| 3 | `release_time` | 1 | Fade from the instantaneous wash colour to black over this duration, then exit wash mode. Units: **100 ms**. Overrides the active wash's own `release` field. |
 
-`payload_len == 3`. A wash-capable Lume with an active wash MUST fade to black over `release_time` and then exit wash mode (resuming regular `LIGHT_PULSE` rendering against a black baseline). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command.
+`payload_len == 4`. A wash-capable Lume with an active wash MUST fade to black over `release_time` and then exit wash mode (resuming regular `LIGHT_PULSE` rendering against a black baseline). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command.
 
 #### 3.3.5 `LIGHT_WASH_PULSE` (`0x08`)
 
@@ -242,9 +246,9 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0..8 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 9 | Same wire layout as `LIGHT_PULSE`. |
+| 0..9 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 10 | Same wire layout as `LIGHT_PULSE`. |
 
-`payload_len == 9`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
+`payload_len == 10`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
 
 #### 3.3.6 `TEXT_DISPLAY` (`0x09`)
 
@@ -256,17 +260,17 @@ The message type itself denotes the surface (`DeviceClass::Display` + `Capabilit
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
-| 1 | `r` | 1 | Foreground text red 0..255. |
-| 2 | `g` | 1 | Foreground text green 0..255. |
-| 3 | `b` | 1 | Foreground text blue 0..255. |
-| 4 | `ttl_ms` | 2 LE | 0 = sticky (persists until `CLEAR_SCREEN` or a superseding `TEXT_DISPLAY`); non-zero = auto-clear after this many milliseconds. |
-| 6 | `header_len` | 1 | 0..64. |
-| 7 | `header_bytes` | `header_len` | UTF-8 bytes. |
-| 7+`header_len` | `body_len` | 1 | 0..128. |
-| 8+`header_len` | `body_bytes` | `body_len` | UTF-8 bytes. |
+| 0..1 | `target_group` | 2 LE | 0 = all Display-class Lumes; 1..65534 = specific group. |
+| 2 | `r` | 1 | Foreground text red 0..255. |
+| 3 | `g` | 1 | Foreground text green 0..255. |
+| 4 | `b` | 1 | Foreground text blue 0..255. |
+| 5 | `ttl_ms` | 2 LE | 0 = sticky (persists until `CLEAR_SCREEN` or a superseding `TEXT_DISPLAY`); non-zero = auto-clear after this many milliseconds. |
+| 7 | `header_len` | 1 | 0..64. |
+| 8 | `header_bytes` | `header_len` | UTF-8 bytes. |
+| 8+`header_len` | `body_len` | 1 | 0..128. |
+| 9+`header_len` | `body_bytes` | `body_len` | UTF-8 bytes. |
 
-`payload_len` = 8 (both strings empty) .. 200 (both strings at max). A Lume declaring `Capability::DisplayText` MUST render the header and body to its screen surface honouring the `ttl_ms` semantics. A Lume declaring `Capability::DisplayText` MUST also honour a `CLEAR_SCREEN` frame's `clear_text` field to blank the text surface without affecting an active bitmap.
+`payload_len` = 9 (both strings empty) .. 201 (both strings at max). A Lume declaring `Capability::DisplayText` MUST render the header and body to its screen surface honouring the `ttl_ms` semantics. A Lume declaring `Capability::DisplayText` MUST also honour a `CLEAR_SCREEN` frame's `clear_text` field to blank the text surface without affecting an active bitmap.
 
 The maximum lengths (64 header / 128 body) are wire-format constants; a Lume MAY truncate to a lower rendering budget dictated by its own screen dimensions and font.
 
@@ -278,18 +282,18 @@ The message type denotes the surface (`DeviceClass::Display` + `Capability::Disp
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
-| 1 | `width` | 1 | 1..64 pixels. |
-| 2 | `height` | 1 | 1..64 pixels. |
-| 3 | `plane_count` | 1 | 1..8. Bits per rendered pixel = `plane_count`. |
-| 4 | `colours` | 24 | Eight RGB triplets. Only the first `plane_count` slots are meaningful; the rest are ignored but present on the wire for a fixed layout. Each plane's `1` bits render in the corresponding colour. |
-| 28 | `fit` | 1 | 0 = ACTUAL (plot at native dimensions, top-left origin); 1 = FIT (preserve aspect, scale to display largest dimension); 2 = ZOOM (preserve aspect, fill display, crop overflow). |
-| 29 | `zoom_pct` | 1 | Multiplier on the FIT/ZOOM scale factor. 100 = baseline; 50 = half; 200 = 2x. Ignored when `fit == 0`. |
-| 30 | `overwrite` | 1 | 0 = ADDITIVE (compose onto whatever is currently on the surface); 1 = REPLACE (clear surface at plane 0 of this header set). |
-| 31 | `checksum` | 4 LE | CRC32 over all plane bytes concatenated in plane-index order. |
-| 35 | `ttl_ms` | 2 LE | 0 = sticky; non-zero = auto-clear after this many milliseconds. |
+| 0..1 | `target_group` | 2 LE | 0 = all Display-class Lumes; 1..65534 = specific group. |
+| 2 | `width` | 1 | 1..64 pixels. |
+| 3 | `height` | 1 | 1..64 pixels. |
+| 4 | `plane_count` | 1 | 1..8. Bits per rendered pixel = `plane_count`. |
+| 5 | `colours` | 24 | Eight RGB triplets. Only the first `plane_count` slots are meaningful; the rest are ignored but present on the wire for a fixed layout. Each plane's `1` bits render in the corresponding colour. |
+| 29 | `fit` | 1 | 0 = ACTUAL (plot at native dimensions, top-left origin); 1 = FIT (preserve aspect, scale to display largest dimension); 2 = ZOOM (preserve aspect, fill display, crop overflow). |
+| 30 | `zoom_pct` | 1 | Multiplier on the FIT/ZOOM scale factor. 100 = baseline; 50 = half; 200 = 2x. Ignored when `fit == 0`. |
+| 31 | `overwrite` | 1 | 0 = ADDITIVE (compose onto whatever is currently on the surface); 1 = REPLACE (clear surface at plane 0 of this header set). |
+| 32 | `checksum` | 4 LE | CRC32 over all plane bytes concatenated in plane-index order. |
+| 36 | `ttl_ms` | 2 LE | 0 = sticky; non-zero = auto-clear after this many milliseconds. |
 
-`payload_len == 37`. A Lume declaring `Capability::DisplayBitmap` MUST allocate a staging buffer and MUST NOT commit the bitmap until every plane's bytes have arrived AND the concatenation matches `checksum`. A Lume MAY drop the entire staging buffer on receipt of a subsequent `BITMAP_HEADER` for the same `target_group` before the previous set completes; wire-format retries are not defined.
+`payload_len == 38`. A Lume declaring `Capability::DisplayBitmap` MUST allocate a staging buffer and MUST NOT commit the bitmap until every plane's bytes have arrived AND the concatenation matches `checksum`. A Lume MAY drop the entire staging buffer on receipt of a subsequent `BITMAP_HEADER` for the same `target_group` before the previous set completes; wire-format retries are not defined.
 
 #### 3.3.8 `BITMAP_PLANE` (`0x0B`)
 
@@ -297,13 +301,13 @@ The message type denotes the surface (`DeviceClass::Display` + `Capability::Disp
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `target_group` | 1 | Same routing as the preceding `BITMAP_HEADER`. |
-| 1 | `plane_index` | 1 | 0..(`plane_count` - 1) per the preceding `BITMAP_HEADER`. |
-| 2 | `byte_offset` | 2 LE | Offset into this plane's pixel byte stream where `data_bytes` begins. |
-| 4 | `data_len` | 1 | 0..237. Number of payload bytes in `data_bytes`. |
-| 5 | `data_bytes` | `data_len` | Raw plane bytes; bit-packing is row-major, MSB-first within each byte. |
+| 0..1 | `target_group` | 2 LE | Same routing as the preceding `BITMAP_HEADER`. |
+| 2 | `plane_index` | 1 | 0..(`plane_count` - 1) per the preceding `BITMAP_HEADER`. |
+| 3 | `byte_offset` | 2 LE | Offset into this plane's pixel byte stream where `data_bytes` begins. |
+| 5 | `data_len` | 1 | 0..235. Number of payload bytes in `data_bytes`. |
+| 6 | `data_bytes` | `data_len` | Raw plane bytes; bit-packing is row-major, MSB-first within each byte. |
 
-`payload_len` = 5 (`data_len == 0`) .. 242 (`data_len == 237`). A receiver MUST accumulate `data_bytes` at the plane's base offset + `byte_offset` into the staging buffer allocated by the preceding `BITMAP_HEADER`. A `BITMAP_PLANE` frame arriving without a matching `BITMAP_HEADER` (or after the header's staging buffer has been committed / abandoned) MUST be silently discarded.
+`payload_len` = 6 (`data_len == 0`) .. 241 (`data_len == 235`). A receiver MUST accumulate `data_bytes` at the plane's base offset + `byte_offset` into the staging buffer allocated by the preceding `BITMAP_HEADER`. A `BITMAP_PLANE` frame arriving without a matching `BITMAP_HEADER` (or after the header's staging buffer has been committed / abandoned) MUST be silently discarded.
 
 The 237-byte data cap is the wire-format maximum; encoders MAY chunk smaller for latency-sensitive shows.
 
@@ -313,9 +317,9 @@ The 237-byte data cap is the wire-format maximum; encoders MAY chunk smaller for
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `target_group` | 1 | 0 = all Display-class Lumes; 1..255 = specific group. |
-| 1 | `clear_text` | 1 | 0 = leave text surface untouched; non-zero = clear text surface. |
-| 2 | `clear_bitmap` | 1 | 0 = leave bitmap surface untouched; non-zero = clear bitmap surface. |
+| 0..1 | `target_group` | 2 LE | 0 = all Display-class Lumes; 1..65534 = specific group. |
+| 2 | `clear_text` | 1 | 0 = leave text surface untouched; non-zero = clear text surface. |
+| 3 | `clear_bitmap` | 1 | 0 = leave bitmap surface untouched; non-zero = clear bitmap surface. |
 
 `payload_len == 3`. `clear_text` and `clear_bitmap` are independent so an author can drop the song title without disturbing the band logo. A Lume declaring `Capability::DisplayText` MUST honour `clear_text`; a Lume declaring `Capability::DisplayBitmap` MUST honour `clear_bitmap`; a Lume without the relevant capability MUST silently drop the corresponding half (a Lume with neither MUST drop the entire frame at the capability gate).
 
@@ -323,23 +327,24 @@ Both flags zero is legal and acts as a no-op; the reference encoder emits `clear
 
 #### 3.3.10 `EXTENSION` (`0xFF`)
 
-Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
+Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x03`.
 
 ### 3.4 Source identifier partitioning
 
-The `source_id` field at offset 3 of the frame header is partitioned by range to support channel-specific access control on the broadcast side and Trust-On-First-Use locking on the receive side. The partition is a convention layered on top of the existing one-byte field; no wire-format change.
+The `source_id` field at offset 3-4 of the frame header (LE u16 in v3, u8 in v2 and earlier) is partitioned by range to support channel-specific access control on the broadcast side and Trust-On-First-Use locking on the receive side. Partition boundaries are held at u8-natural values so the v3 widening preserves existing hex-editor UI and NVS-persisted values; the extended range `0x0100..0xFFFE` is reserved by the wire for a future NVS/UI widening.
 
 | Range | Slots | Use | Director allocation rule | Default channel binding |
 |---|---:|---|---|---|
-| `0x00 - 0x3F` | 64 | Community / hobby | Stable per device: pick a random ID in this range at first boot, persist to NVS, reuse on subsequent boots. | Channel 1. |
-| `0x40 - 0xFE` | 191 | Performance mode | Random per boot: pick a fresh ID in this range at every boot; listen-before-broadcast. | Channel 11. |
-| `0xFF` | 1 | Broadcast / anonymous | Used by senders that intentionally identify as anonymous, or as a wildcard in receiver-side filters. | Any channel. |
+| `0x0000 - 0x003F` | 64 | Community / hobby | Stable per device: pick a random ID in this range at first boot, persist to NVS, reuse on subsequent boots. | Channel 1. |
+| `0x0040 - 0x00FE` | 191 | Performance mode | Random per boot: pick a fresh ID in this range at every boot; listen-before-broadcast. | Channel 11. |
+| `0x0100 - 0xFFFE` | 65279 | Extended range | Reserved by the v3 wire for future NVS/UI widening. Current-generation Directors MUST NOT allocate from this range. Current-generation Lumes MUST accept it on the wire (no partition-based reject) so a future Director can populate it without a further wire break. | (future) |
+| `0xFFFF` | 1 | Broadcast / anonymous | Used by senders that intentionally identify as anonymous, or as a wildcard in receiver-side filters. (Was `0xFF` in v2.) | Any channel. |
 
 **Channel 6** is an advanced operator override and is not constrained by this partition. Operators configuring a Director on channel 6 SHOULD pick a Performance-range source_id, but a Lume on channel 6 MUST accept any source_id (channel 6 is permissive by design).
 
 **Director-side rules:**
 
-- A Director MUST allocate its `source_id` from the range matching its configured channel: community range (`0x00-0x3F`) on channel 1; Performance range (`0x40-0xFE`) on channel 11.
+- A Director MUST allocate its `source_id` from the range matching its configured channel: community range (`0x0000-0x003F`) on channel 1; Performance range (`0x0040-0x00FE`) on channel 11.
 - On channel 1, the chosen ID MUST be persisted to NVS at first boot and MUST be reused on subsequent boots. The reference firmware uses the NVS key `mst_src_id` (see [annex B](#annex-b-non-volatile-storage-schema)).
 - On channel 11, the chosen ID MUST be regenerated at every boot and MUST NOT be persisted. The Director MUST listen for at least one second before its first transmission to detect a colliding ID. If a `HEARTBEAT` matching its chosen ID arrives during the listen window, the Director MUST re-roll and listen again. After three consecutive collisions the Director MAY proceed with the third pick and SHOULD log a warning; the probability of three consecutive collisions with 191 slots and a small number of concurrent Directors is operationally negligible.
 - A Director SHOULD display its `source_id` on its operator UI so the operator can verify which ID the audience is locking to.
@@ -347,7 +352,7 @@ The `source_id` field at offset 3 of the frame header is partitioned by range to
 **Lume-side rules (Trust-On-First-Use):**
 
 - A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: the Director's heartbeat is suppressed by skip-if-recent per [section 6.1](#61-director-heartbeat) while `LIGHT_PULSE` frames flow, so a HEARTBEAT-only rule would leave a mid-song Lume idle for the duration of a song.)
-- A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A frame carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
+- A Lume on channel 11 MUST consider only Performance-range source_ids (`0x0040-0x00FE`) eligible for TOFU lock. A frame carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
 - A Lume on channel 1 MUST accept any non-broadcast source_id for TOFU lock; channel 1 is the community-permissive channel by design.
 - A Lume MUST release its TOFU lock and resume scanning if no frame from the locked `source_id` has been received for `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds), shared with the channel re-scan threshold ([section 5.4](#54-lume---re-scan-on-signal-loss)).
 - A Lume MAY expose a "Rescan" operator action that releases the TOFU lock on demand.
@@ -482,7 +487,7 @@ A conforming receiver MUST honour the following:
 - The `LIGHT_PULSE` payload semantics: RGB triplet, attack/sustain/release envelope stages, chance gate.
 - The protocol-version validation rule in [section 1.4](#14-versioning).
 - Trust-On-First-Use locking to the `source_id` of the first valid frame after scan or rescan, and silent discard of subsequent frames whose `source_id` differs from the locked value ([section 3.4](#34-source-identifier-partitioning)).
-- Cross-range filtering on channel 11: silent discard of frames whose `source_id` is outside the Performance range (`0x40-0xFE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
+- Cross-range filtering on channel 11: silent discard of frames whose `source_id` is outside the Performance range (`0x0040-0x00FE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
 
 ### 7.2 Receiver SHOULD honour
 
@@ -612,10 +617,10 @@ All keys live in a single namespace named `noct`. The reference firmware uses Es
 | `ir_en` | `bool` | `true` | - | IR transmitter enabled |
 | `scr_puls_en` | `bool` | `true` | - | Local LCD pulse animation enabled |
 | `mst_chan` | `u8` | `1` | {1, 6, 11} | Director Wi-Fi channel |
-| `mst_src_id` | `u8` | random in `0x00-0x3F` at first boot | `0x00-0x3F` | Director source_id for channel 1 (community range). Stable per device; reused across reboots. See [section 3.4](#34-source-identifier-partitioning). |
+| `mst_src_id` | `u8` | random in `0x00-0x3F` at first boot | `0x00-0x3F` | Director source_id for channel 1 (community range). Stable per device; reused across reboots. v3: the wire carries a u16, but the NVS field stays `u8` since the current UI only generates u8-natural values. See [section 3.4](#34-source-identifier-partitioning). |
 | `slv_chan` | `u8` | `0` (auto) | {0, 1, 6, 11} | Lume Wi-Fi channel; 0 = auto-scan |
 | `slv_repeat` | `bool` | `false` | - | Lume operates as repeater |
-| `slv_group` | `u8` | `0` (broadcast) | 0..255 | Lume receive-filter group |
+| `slv_group` | `u8` | `0` (broadcast) | 0..255 | Lume receive-filter group. v3: the wire carries a u16 target_group, but NVS stays `u8` since the current UI only generates u8-natural values. |
 | `active_show` | `string` | `"simple-beat"` | up to 16 bytes | Currently selected Show plug-in id |
 
 ### B.3 Per-plug-in namespaces
@@ -651,51 +656,54 @@ A `LIGHT_PULSE` from source_id 1, sequence 42, broadcast (`target_class = 0x00`,
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x02    protocol_version
-0x03    0x01    source_id
-0x04    0x2A    sequence_number (42)
-0x05    0x00    hop_count
-0x06    0x03    message_type (LIGHT_PULSE)
-0x07    0x09    payload_len
-0x08    0x00    target_class (All)
-0x09    0x00    target_group (broadcast)
-0x0A    0xFF    r
-0x0B    0x00    g
-0x0C    0x00    b
-0x0D    0x02    attack (T_96_MS)
-0x0E    0x00    sustain (T_0_MS)
-0x0F    0x04    release (T_480_MS)
-0x10    0x00    chance (CHANCE_100)
+0x02    0x03    protocol_version (v3)
+0x03    0x01    source_id LSB (v3: LE u16)
+0x04    0x00    source_id MSB
+0x05    0x2A    sequence_number (42)
+0x06    0x00    hop_count
+0x07    0x03    message_type (LIGHT_PULSE)
+0x08    0x0A    payload_len (v3: 10)
+0x09    0x00    target_class (All)
+0x0A    0x00    target_group LSB (v3: LE u16; broadcast)
+0x0B    0x00    target_group MSB
+0x0C    0xFF    r
+0x0D    0x00    g
+0x0E    0x00    b
+0x0F    0x02    attack (T_96_MS)
+0x10    0x00    sustain (T_0_MS)
+0x11    0x04    release (T_480_MS)
+0x12    0x00    chance (CHANCE_100)
 ```
 
-Total frame length: seventeen bytes (eight header + nine payload).
+Total frame length: nineteen bytes (nine header + ten payload). v3 grew this from seventeen (v2) via the source_id and target_group widenings.
 
 ### C.2 ESP-NOW `HEARTBEAT` frame
 
-A `HEARTBEAT` from source_id `0x21`, sequence `0x07`, hop_count 2, carrying tick `0x12345678`, days-since-2026 `0x0123`, centiseconds-today `0xABCDEF`. This matches the byte-for-byte test vector in `test/test_espnow_frame/test_main.cpp::test_heartbeat_wire_format_byte_for_byte`:
+A `HEARTBEAT` from source_id `0x0421` (exercises both source_id bytes), sequence `0x07`, hop_count 2, carrying tick `0x12345678`, days-since-2026 `0x0123`, centiseconds-today `0xABCDEF`. This matches the byte-for-byte test vector in `test/test_espnow_frame/test_main.cpp::test_heartbeat_wire_format_byte_for_byte`:
 
 ```
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x02    protocol_version
-0x03    0x21    source_id
-0x04    0x07    sequence_number (7)
-0x05    0x02    hop_count
-0x06    0x00    message_type (HEARTBEAT)
-0x07    0x09    payload_len (9)
-0x08    0x78    tick LE byte 0
-0x09    0x56    tick LE byte 1
-0x0A    0x34    tick LE byte 2
-0x0B    0x12    tick LE byte 3
-0x0C    0x23    days_since_2026 LE byte 0
-0x0D    0x01    days_since_2026 LE byte 1
-0x0E    0xEF    centiseconds_today LE byte 0
-0x0F    0xCD    centiseconds_today LE byte 1
-0x10    0xAB    centiseconds_today LE byte 2
+0x02    0x03    protocol_version (v3)
+0x03    0x21    source_id LSB (v3: LE u16)
+0x04    0x04    source_id MSB
+0x05    0x07    sequence_number (7)
+0x06    0x02    hop_count
+0x07    0x00    message_type (HEARTBEAT)
+0x08    0x09    payload_len (9)
+0x09    0x78    tick LE byte 0
+0x0A    0x56    tick LE byte 1
+0x0B    0x34    tick LE byte 2
+0x0C    0x12    tick LE byte 3
+0x0D    0x23    days_since_2026 LE byte 0
+0x0E    0x01    days_since_2026 LE byte 1
+0x0F    0xEF    centiseconds_today LE byte 0
+0x10    0xCD    centiseconds_today LE byte 1
+0x11    0xAB    centiseconds_today LE byte 2
 ```
 
-Total frame length: seventeen bytes (eight header + nine payload).
+Total frame length: eighteen bytes (nine header + nine payload). v3 grew this from seventeen (v2) via the source_id widening.
 
 ### C.3 PixMob infra-red frame
 
