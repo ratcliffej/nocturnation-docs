@@ -82,6 +82,27 @@ Channel 1 deployments don't carry these access-control mechanics. The Director a
 
 The trade-off is by design: channel 1 prioritises ease of use and "any community member with a NocturNation Director can light up nearby badges" over collision resistance. If two community Directors operate in the same room, the audience badges lock to whichever they hear first - that's not a bug, that's the social contract on channel 1.
 
+## Group addressing conventions
+
+The wire's `target_group` field addresses which subset of a device class receives a frame. The protocol reserves `target_group = 0` as "all devices of the addressed class"; values 1..65534 are specific groups. The wire allows the full range, but the current UI (`Config > Group`) exposes only 0..15 - enough for any realistic deployment.
+
+Within that operator-visible range, NocturNation applies the following **deployment convention**. It is not enforced by any code path; it is a shared convention between show authors, cue authors, and operators so a show emitting `target_group = 3` gets the render its author intended.
+
+| `target_group` | Assigned to |
+|---:|---|
+| `0` | Broadcast within the addressed class (fires on every device that accepts the class). |
+| `1..9` | **Capability-rich devices.** Tildagons, StickC-driven LED strips, AtomS3R-driven LED strips, any Lume that supports the full LIGHT_WASH family (drift + cycle + intensity), fast frame rates, and the full 24-bit colour range. |
+| `10..12` | **PixMob legacy fleet.** Adopted 2026-07-27. Segregated from the main-group range so shows can drive rich content into 1..9 without being held back by PixMob limitations (no wash cycles, restricted colour palette, IR-imposed ~50 ms inter-frame gap, hardware clamp to `target_group ∈ 1..31`). |
+| `13..15` | Unassigned; reserved for future device families. |
+
+**When authoring a show or a cue**, target 1..9 for the main visual layer and add explicit 10..12 shots when you want PixMobs to fire. A show that only targets 1..9 is silent on PixMobs by design.
+
+**When adding a new device to the fleet**, assign it a group in 1..9 unless it has PixMob-class limitations. The Config menu's `Group` cycle wraps 0..15; pick a value and stick with it.
+
+**Group 0 broadcasts** across the whole class, which under this convention now sprays both the main-group renderers *and* the PixMob-bank. That is usually the intent for opening cues ("everything alive, on my mark") but is worth calling out — a `target_group = 0` LIGHT_WASH will fire the PixMobs' broadcast wash treatment as well as the strips' cycled version.
+
+**Protocol side**, see the [protocol manual §4.2](protocol-manual.md#42-group-filtering) for the wire-level semantics of `target_class` + `target_group` and the PixMob receive-side hardware clamp.
+
 ## Running NocturNation on a Tildagon badge (Epic 6B)
 
 The EMF Tildagon badge runs the NocturNation app as either a **Lume** (audience receiver) or a **Director** (IMU tap-to-beat, broadcasting to nearby badges on the hobby channel). It launches into an **idle start menu** - Lume Mode / Director Mode / Settings / Help / Quit - and only starts using the radio once you pick a mode.
