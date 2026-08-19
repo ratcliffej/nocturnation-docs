@@ -1,3 +1,11 @@
+---
+title: "Flopagon disk"
+notion_url: https://www.notion.so/3c1bd067740581e0be2dd254156ff5b9
+notion_id: 3c1bd067740581e0be2dd254156ff5b9
+last_synced: 2026-08-19
+sync_direction: bidirectional
+---
+
 # Flopagon disk — offline app distribution for Tildagon
 
 The Flopagon is a Tildagon hexpansion PCB shaped like a 3.5" floppy
@@ -26,7 +34,7 @@ any Tildagon app, not just NocturNation.
   the disk manager + your apps written to its 16 MB flash. See
   [Preparing a fresh Flopagon](#preparing-a-fresh-flopagon).
 
-Nathing else. Day-to-day the badge and Flopagon are entirely offline.
+Nothing else. Day-to-day the badge and Flopagon are entirely offline.
 
 ## Using a Flopagon
 
@@ -78,7 +86,7 @@ day-to-day use.
 2. From the source repo, run the one-shot provisioning script:
 
    ```
-   ./disk/dev/provision_flopagon.sh
+   ./dev/provision_flopagon.sh
    ```
 
    This compiles the bootstrap, formats the EEPROM, writes the
@@ -94,7 +102,7 @@ To add your own apps to a provisioned Flopagon, use the disk manager's
 **Backup app** flow from a badge that already has the app installed.
 
 The provisioning script assumes port 1 by default; edit `PORT` at the
-top of `disk/dev/provision_flopagon.py` for other slots.
+top of `dev/provision_flopagon.py` for other slots.
 
 [repo]: https://github.com/ratcliffej/nocturnation-disk
 
@@ -108,7 +116,7 @@ top of `disk/dev/provision_flopagon.py` for other slots.
 | Bootstrap error persists after remove + re-insert | Stuck EEPROM mount | Press F on the error screen to escape back to the launcher, then re-insert. |
 | Hub menu appears but no apps show under Install | Flash has `/installer/` but no `/apps/*/` | Copy at least one app onto the disk (via Backup from a badge that has it, or via `mpremote cp`). |
 | Copy fails mid-job with a visible error | Flopagon removed mid-op, or disk full | Re-insert, re-run the operation. Disk-full only realistic if you backed up multiple apps to a V1 (16 MB is plenty for tens of typical badge apps). |
-| EEPROM appears fully corrupted (ENOSPC / ENAMETOOLONG loops during provisioning) | LFS2 metadata unrecoverable | Run `disk/dev/eeprom_reformat.py` via `mpremote` — nuclear reformat of the 2 KB EEPROM only. |
+| EEPROM appears fully corrupted (ENOSPC / ENAMETOOLONG loops during provisioning) | LFS2 metadata unrecoverable | Run `dev/eeprom_reformat.py` via `mpremote` — nuclear reformat of the 2 KB EEPROM only. |
 
 ## Disk layout reference
 

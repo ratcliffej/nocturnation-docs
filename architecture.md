@@ -3,7 +3,7 @@ title: NocturNation Architecture Specification
 status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
-last_synced: 2026-05-31
+last_synced: 2026-08-19
 sync_direction: bidirectional
 notion_status: "v0.32 local (Epic 6C close) - awaiting reconcile to Notion. §4.3 carries the WASH family; §7.6 carries BindingCapabilities; §1.2 carries Lume-capability implementation notes."
 ---

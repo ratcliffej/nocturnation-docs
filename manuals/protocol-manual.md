@@ -5,7 +5,7 @@ protocol_version: 0x03
 firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-07-12
+last_synced: 2026-08-19
 sync_direction: bidirectional
 ---
 
@@ -15,7 +15,7 @@ sync_direction: bidirectional
 
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
-**Protocol version specified by this document**: `0x02`.
+**Protocol version specified by this document**: `0x03`.
 **Reference firmware version**: v0.5 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
@@ -321,7 +321,7 @@ The 237-byte data cap is the wire-format maximum; encoders MAY chunk smaller for
 | 2 | `clear_text` | 1 | 0 = leave text surface untouched; non-zero = clear text surface. |
 | 3 | `clear_bitmap` | 1 | 0 = leave bitmap surface untouched; non-zero = clear bitmap surface. |
 
-`payload_len == 3`. `clear_text` and `clear_bitmap` are independent so an author can drop the song title without disturbing the band logo. A Lume declaring `Capability::DisplayText` MUST honour `clear_text`; a Lume declaring `Capability::DisplayBitmap` MUST honour `clear_bitmap`; a Lume without the relevant capability MUST silently drop the corresponding half (a Lume with neither MUST drop the entire frame at the capability gate).
+`payload_len == 4`. `clear_text` and `clear_bitmap` are independent so an author can drop the song title without disturbing the band logo. A Lume declaring `Capability::DisplayText` MUST honour `clear_text`; a Lume declaring `Capability::DisplayBitmap` MUST honour `clear_bitmap`; a Lume without the relevant capability MUST silently drop the corresponding half (a Lume with neither MUST drop the entire frame at the capability gate).
 
 Both flags zero is legal and acts as a no-op; the reference encoder emits `clear_text=1, clear_bitmap=1` for a full-screen clear.
 
@@ -737,9 +737,10 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
 | 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_PULSE`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
-| 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
+| 0x02 | 2026 | (superseded) | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
+| 0x03 | 2026-07-25 | This document | Widened `source_id` (header) and every payload's `target_group` from `u8` to LE `u16`. Header grew from 8 to 9 bytes; every field after byte 4 shifted +1; every `LIGHT_*` / `TEXT_DISPLAY` / `BITMAP_*` / `CLEAR_SCREEN` payload grew +1 byte. Motivation: futureproofing headroom (65534 addressable source_ids / target_groups) at the cost of ~3-5% per-frame airtime. Config UI, NVS storage, and partition helpers stay at u8-natural values; extended range `0x0100..0xFFFE` reserved for a future UI/NVS widening. Wire-incompatible with v2: v2 receivers reject at the version-byte check. |
 
-Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of v0x02 include:
+Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of the current v0x03 include:
 
 - **Source_id partitioning rules** (2026-05-17, [section 3.4](#34-source-identifier-partitioning)) — layered convention on the existing 1-byte field, no wire change.
 - **Display message types** `0x09..0x0C` (Epic 13, 2026-06-14, [section 3.3.6](#336-text_display-0x09) onwards) — new codepoints, backward-compatible under the v0x02 forward-compatibility rule (old v0x02 receivers see them as unknown types and silently drop per [section 3.2](#32-message-types)).

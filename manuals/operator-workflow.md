@@ -3,7 +3,7 @@ title: "NocturNation operator workflow"
 status: Draft
 notion_url: https://www.notion.so/365bd067740581bbace6c5ac7b2c0339
 notion_id: 365bd067740581bbace6c5ac7b2c0339
-last_synced: 2026-07-12
+last_synced: 2026-08-19
 sync_direction: bidirectional
 ---
 
