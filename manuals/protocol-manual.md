@@ -1,11 +1,11 @@
 ---
 title: "NocturNation protocol manual"
 status: Draft
-protocol_version: 0x03
+protocol_version: 0x04
 firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-08-19
+last_synced: 2026-08-20
 sync_direction: bidirectional
 ---
 
@@ -15,7 +15,7 @@ sync_direction: bidirectional
 
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
-**Protocol version specified by this document**: `0x03`.
+**Protocol version specified by this document**: `0x04`.
 **Reference firmware version**: v0.5 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
@@ -58,7 +58,9 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 ### 1.4 Versioning
 
-Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x03`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
+Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x04`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
+
+**v0x03 → v0x04**: LED-level addressing (Epic 18). `LIGHT_PULSE`, `LIGHT_WASH`, `LIGHT_WASH_END`, `LIGHT_WASH_PULSE` each grew by three trailing bytes for parametric per-pixel targeting on Lumes with multiple addressable pixels (SK6812 strips, Tildagon perimeter ring). The added fields are `led_mode` (1 byte), `led_modifier1` (1 byte) and `led_modifier2` (1 byte). Header layout unchanged. See §3.5 for the LedMode semantics. Single-pixel Lumes (PixMob) ignore modes 1+ at the capability gate. v0x03 receivers reject v0x04 frames at the version check — this is a hard cutover, not a compatible extension.
 
 **v0x02 → v0x03**: `source_id` and every payload's `target_group` widened from one byte to two bytes little-endian. Motivation: futureproofing headroom — `source_id` moves from 191 addressable Performance-range slots to 65534 (birthday-paradox safety for multi-Director dress-up rigs), `target_group` from 255 addressable groups to 65534 (stadium-scale seat-level addressing). Config UI, NVS storage, and partition helpers stay at u8-natural values; the extended range `0x0100..0xFFFE` is reserved for a future UI/NVS widening. v0x02 receivers reject v0x03 frames at the version check — this is a hard cutover, not a compatible extension.
 
@@ -134,7 +136,7 @@ Every frame begins with a nine-byte header:
 |---:|---|---:|---|
 | 0 | `magic[0]` | 1 | Always `0x4E` (ASCII `N`) |
 | 1 | `magic[1]` | 1 | Always `0x4E` (ASCII `N`) |
-| 2 | `protocol_version` | 1 | Always `0x03` at this revision |
+| 2 | `protocol_version` | 1 | Always `0x04` at this revision |
 | 3..4 | `source_id` | 2 | Sender id, LE u16. Partitioned by range and channel - see [section 3.4](#34-source-identifier-partitioning). `0xFFFF` = broadcast / anonymous. |
 | 5 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
 | 6 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
@@ -153,17 +155,19 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
 | `0x00` | `HEARTBEAT` | 9 | Director to all |
-| `0x03` | `LIGHT_PULSE` | 10 | Director to all |
-| `0x06` | `LIGHT_WASH` | 17 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
-| `0x07` | `LIGHT_WASH_END` | 4 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
-| `0x08` | `LIGHT_WASH_PULSE` | 10 | Director to all (only Lumes currently washing act on it; everyone else drops) |
+| `0x03` | `LIGHT_PULSE` | 13 | Director to all |
+| `0x06` | `LIGHT_WASH` | 20 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x07` | `LIGHT_WASH_END` | 7 | Director to all (capable Lumes act on it; pulse-only Lumes drop) |
+| `0x08` | `LIGHT_WASH_PULSE` | 13 | Director to all (only Lumes currently washing act on it; everyone else drops) |
 | `0x09` | `TEXT_DISPLAY` | 9..201 | Director to all (Lumes with `DisplayText` capability render; others drop) |
 | `0x0A` | `BITMAP_HEADER` | 38 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
 | `0x0B` | `BITMAP_PLANE` | 6..241 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
 | `0x0C` | `CLEAR_SCREEN` | 4 | Director to all (Lumes with `DisplayText` or `DisplayBitmap` capability clear the corresponding surface; others drop) |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
-**v0x03 payload growths**: every entry above except `HEARTBEAT` and `EXTENSION` grew +1 byte, from the `target_group` widening from `u8` to LE `u16`.
+**v0x04 payload growths**: `LIGHT_PULSE` (10 → 13), `LIGHT_WASH` (17 → 20), `LIGHT_WASH_END` (4 → 7), `LIGHT_WASH_PULSE` (10 → 13) each gained three trailing bytes (`led_mode`, `led_modifier1`, `led_modifier2`) for LED-level addressing on multi-pixel Lumes. See [§3.5](#35-led-level-addressing-v0x04).
+
+**v0x03 payload growths**: every LIGHT_* / TEXT / BITMAP / CLEAR entry above grew +1 byte from the `target_group` widening from `u8` to LE `u16`.
 
 All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
@@ -200,6 +204,9 @@ The most-emitted message type; carries every render fire on the system.
 | 7 | `sustain` | 1 | Envelope sustain stage; PixMob `Time` enum index 0..7 |
 | 8 | `release` | 1 | Envelope release stage; PixMob `Time` enum index 0..7 |
 | 9 | `chance` | 1 | Probability gate; PixMob `Chance` enum index 0..7 (see [annex A.3](#a3-time-and-chance-enumerations)) |
+| 10 | `led_mode` | 1 | LedMode enum (v0x04). `0` = All (whole strip, ignores modifier bytes); `1` = SingleLed; `2` = RepeatPattern. See [§3.5](#35-led-level-addressing-v0x04). Encoders that do not target specific LEDs MUST emit `0`. |
+| 11 | `led_modifier1` | 1 | Mode-dependent (v0x04). Mode 1: chain ID (`0` = all chains, `1..254` = specific chain). Mode 2: mask low byte. Mode 0: reserved, encoders emit `0`. |
+| 12 | `led_modifier2` | 1 | Mode-dependent (v0x04). Mode 1: LED index within the chain (`0..255`, 0-based). Mode 2: mask high nibble (upper 4 bits reserved, encoders emit `0`). Mode 0: reserved. |
 
 A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
 
@@ -225,8 +232,11 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 | 12 | `cycle_ms` | 2 LE | One full A↔B↔A oscillation in milliseconds. `0` = no cycle, hold `r1/g1/b1`. |
 | 14 | `ttl_seconds` | 2 LE | Time-to-live in seconds. `0` = infinite (held until `LIGHT_WASH_END` or a superseding `LIGHT_WASH`). |
 | 16 | `pulse_response` | 1 | `0` = ignore inbound `LIGHT_PULSE` while washing (wash holds untouched); `1` = accept `LIGHT_PULSE` as additive overlay on the live wash baseline. |
+| 17 | `led_mode` | 1 | LedMode enum (v0x04). See [§3.5](#35-led-level-addressing-v0x04). Wash renderers currently honour only `LedMode::All`; modes 1+ carry through the wire for a per-pixel wash-state follow-up. |
+| 18 | `led_modifier1` | 1 | Mode-dependent (v0x04). See §3.5. |
+| 19 | `led_modifier2` | 1 | Mode-dependent (v0x04). See §3.5. |
 
-`payload_len == 17`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
+`payload_len == 20`. A wash-capable Lume MUST honour this command per the routing semantics in [section 4](#4-class-and-group-addressing) and the renderer contract in [`lume-capabilities-design.md` §4.1](../lume-capabilities-design.md). A pulse-only Lume MUST silently drop this command.
 
 #### 3.3.4 `LIGHT_WASH_END` (`0x07`)
 
@@ -237,8 +247,11 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 | 0 | `target_class` | 1 | Same routing as `LIGHT_WASH`. |
 | 1..2 | `target_group` | 2 LE | Same. |
 | 3 | `release_time` | 1 | Fade from the instantaneous wash colour to black over this duration, then exit wash mode. Units: **100 ms**. Overrides the active wash's own `release` field. |
+| 4 | `led_mode` | 1 | LedMode enum (v0x04). See [§3.5](#35-led-level-addressing-v0x04). Current wash-end renderers honour `LedMode::All` only; modes 1+ carry through for the per-pixel wash-state follow-up. |
+| 5 | `led_modifier1` | 1 | Mode-dependent (v0x04). See §3.5. |
+| 6 | `led_modifier2` | 1 | Mode-dependent (v0x04). See §3.5. |
 
-`payload_len == 4`. A wash-capable Lume with an active wash MUST fade to black over `release_time` and then exit wash mode (resuming regular `LIGHT_PULSE` rendering against a black baseline). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command.
+`payload_len == 7`. A wash-capable Lume with an active wash MUST fade to black over `release_time` and then exit wash mode (resuming regular `LIGHT_PULSE` rendering against a black baseline). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command.
 
 #### 3.3.5 `LIGHT_WASH_PULSE` (`0x08`)
 
@@ -246,9 +259,9 @@ Wash baseline for capable Lumes. Cosine-eased ping-pong between `r1/g1/b1` and `
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0..9 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 10 | Same wire layout as `LIGHT_PULSE`. |
+| 0..12 | (identical to [`LIGHT_PULSE`](#332-light_pulse-0x03)) | 13 | Same wire layout as `LIGHT_PULSE`, including the v0x04 `led_mode` / `led_modifier1` / `led_modifier2` trailing bytes. |
 
-`payload_len == 10`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
+`payload_len == 13`. A wash-capable Lume with an **active wash** MUST render this command as an additive overlay on the wash baseline (regardless of the wash's `pulse_response` flag). A wash-capable Lume with *no* active wash MUST silently drop this command. A pulse-only Lume MUST silently drop this command. The separation from `LIGHT_PULSE` keeps the addressing dimensions orthogonal: `LIGHT_PULSE` fires on every Lume in the target class+group; `LIGHT_WASH_PULSE` fires only on the washing subset.
 
 #### 3.3.6 `TEXT_DISPLAY` (`0x09`)
 
@@ -327,7 +340,7 @@ Both flags zero is legal and acts as a no-op; the reference encoder emits `clear
 
 #### 3.3.10 `EXTENSION` (`0xFF`)
 
-Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x03`.
+Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x04`.
 
 ### 3.4 Source identifier partitioning
 
@@ -359,6 +372,26 @@ The `source_id` field at offset 3-4 of the frame header (LE u16 in v3, u8 in v2 
 - A Lume SHOULD display the locked `source_id` on its operator UI so the audience can verify which Director it is locked to.
 
 **Tildagon Director-mode constraint (forward-looking):** when Director mode is added to the Tildagon (planned for a later Epic), a Tildagon-class Director MUST NOT broadcast on channel 11; Tildagon Directors are restricted to channel 1 (community range) for transmission. The Tildagon is a community badge distributed at scale; keeping it off channel 11 as a transmitter protects the integrity of curated Performance Mode shows at events like EMF. This restriction is conservative and MAY be revisited in a future protocol revision once the access control model has matured in deployment. The Tildagon remains free to *receive* on channel 11 in Lume mode, with TOFU and cross-range filtering applied as for any other Lume.
+
+### 3.5 LED-level addressing (v0x04)
+
+Added in Epic 18 (2026-08-20). The four LIGHT_* messages each carry a three-byte trailer that lets the Director address individual pixels on Lumes with multiple addressable LEDs (SK6812 / WS2812 strips, Tildagon 12-pixel perimeter ring). Single-pixel Lumes (PixMob bracelets) declare no addressable-LEDs capability and MUST ignore `led_mode != 0`; the frame is dropped at the capability gate before render.
+
+**LedMode values:**
+
+| Value | Name | Semantics |
+|---:|---|---|
+| `0` | `All` | Whole strip. Both modifier bytes reserved; encoders MUST emit `0`. Default for shows that pre-date the wire bump — v0x04-parity behaviour with v0x03. |
+| `1` | `SingleLed` | Fire the pulse only at the addressed pixel. `led_modifier1` = chain ID (`0` = all chains, echoing the same index across every chain the Lume owns; `1..254` = specific chain 1-indexed). `led_modifier2` = LED index within that chain (`0..255`, 0-based). Bypasses `CHANCE` on the receiver (deterministic Director target). Out-of-range chain ID or LED index MUST be dropped silently. |
+| `2` | `RepeatPattern` | Fire the pulse at every pixel whose position matches a 12-bit tile mask. Mask is packed LSB-first across the two modifier bytes: `mask = led_modifier1 | ((led_modifier2 & 0x0F) << 8)`. Upper 4 bits of `led_modifier2` are reserved; encoders MUST emit `0`; decoders MUST NOT read them. Mask tiles across the entire pixel array, repeating every 12 positions; group boundaries are irrelevant. Bypasses `CHANCE`. Zero mask lights nothing. No chain selection in this mode; the pattern applies to every chain. |
+
+**Chain topology:** each Lume's chain count and pixels-per-chain are Lume-local configuration, not on the wire. Reference firmware exposes these via the Config-mode UI on hosts with a screen (StickC) and via build-flag constants (`CHAIN_COUNT`, `PIXELS_PER_CHAIN`) on headless hosts (Atom Lite, AtomS3 Lite). Default: 1 chain × 30 pixels (a single 30-LED SK6812 strip, the NocturNation reference load).
+
+**Wash-family behaviour (interim):** `LIGHT_WASH` and `LIGHT_WASH_END` accept the LedMode trailer on the wire but reference-firmware renderers currently honour `LedMode::All` only; `LedMode != 0` is treated as `LedMode::All` on both. Per-pixel wash state is a follow-up refactor and MAY be added by a later reference firmware without a further wire bump.
+
+**Interaction with `CHANCE`:** `LedMode::SingleLed` and `LedMode::RepeatPattern` bypass the `CHANCE` roll on all reference renderers — a Director targeting one LED with `CHANCE_4` still hits deterministically. `LedMode::All` continues to roll `CHANCE` per pixel (or per group, if the Lume has an operator-configured group size > 1) as in v0x03.
+
+**Cross-firmware capability gate:** Lumes with more than one addressable pixel MUST declare a "multiple-addressable-LEDs" capability, exposed in the reference C++ firmware as `Capability::AddressableLeds` (renamed from `Capability::LedStrip` in the same Epic to reflect that it names a cross-firmware contract, not one specific driver interface). Bindings whose `required_capabilities` include this capability MUST honour all defined LedMode values; bindings without it (PixMob IR) MUST drop `LedMode != 0` at the earliest gate.
 
 ---
 
@@ -656,15 +689,15 @@ A `LIGHT_PULSE` from source_id 1, sequence 42, broadcast (`target_class = 0x00`,
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x03    protocol_version (v3)
-0x03    0x01    source_id LSB (v3: LE u16)
+0x02    0x04    protocol_version (v4)
+0x03    0x01    source_id LSB (v3+: LE u16)
 0x04    0x00    source_id MSB
 0x05    0x2A    sequence_number (42)
 0x06    0x00    hop_count
 0x07    0x03    message_type (LIGHT_PULSE)
-0x08    0x0A    payload_len (v3: 10)
+0x08    0x0D    payload_len (v4: 13; v3 was 10)
 0x09    0x00    target_class (All)
-0x0A    0x00    target_group LSB (v3: LE u16; broadcast)
+0x0A    0x00    target_group LSB (v3+: LE u16; broadcast)
 0x0B    0x00    target_group MSB
 0x0C    0xFF    r
 0x0D    0x00    g
@@ -673,9 +706,12 @@ Offset  Byte    Field
 0x10    0x00    sustain (T_0_MS)
 0x11    0x04    release (T_480_MS)
 0x12    0x00    chance (CHANCE_100)
+0x13    0x00    led_mode (v4: LedMode.All; whole strip)
+0x14    0x00    led_modifier1 (v4: reserved when mode==0)
+0x15    0x00    led_modifier2 (v4: reserved when mode==0)
 ```
 
-Total frame length: nineteen bytes (nine header + ten payload). v3 grew this from seventeen (v2) via the source_id and target_group widenings.
+Total frame length: twenty-two bytes (nine header + thirteen payload). v4 grew this from nineteen (v3) via the LED-addressing trailer.
 
 ### C.2 ESP-NOW `HEARTBEAT` frame
 
@@ -685,13 +721,13 @@ A `HEARTBEAT` from source_id `0x0421` (exercises both source_id bytes), sequence
 Offset  Byte    Field
 0x00    0x4E    magic[0] ('N')
 0x01    0x4E    magic[1] ('N')
-0x02    0x03    protocol_version (v3)
-0x03    0x21    source_id LSB (v3: LE u16)
+0x02    0x04    protocol_version (v4)
+0x03    0x21    source_id LSB (v3+: LE u16)
 0x04    0x04    source_id MSB
 0x05    0x07    sequence_number (7)
 0x06    0x02    hop_count
 0x07    0x00    message_type (HEARTBEAT)
-0x08    0x09    payload_len (9)
+0x08    0x09    payload_len (9; HEARTBEAT unchanged in v4)
 0x09    0x78    tick LE byte 0
 0x0A    0x56    tick LE byte 1
 0x0B    0x34    tick LE byte 2
@@ -703,7 +739,7 @@ Offset  Byte    Field
 0x11    0xAB    centiseconds_today LE byte 2
 ```
 
-Total frame length: eighteen bytes (nine header + nine payload). v3 grew this from seventeen (v2) via the source_id widening.
+Total frame length: eighteen bytes (nine header + nine payload). Unchanged in v4; only the version byte at offset 2 bumps.
 
 ### C.3 PixMob infra-red frame
 
@@ -738,9 +774,10 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 |---:|---|---|---|
 | 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_PULSE`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
 | 0x02 | 2026 | (superseded) | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
-| 0x03 | 2026-07-25 | This document | Widened `source_id` (header) and every payload's `target_group` from `u8` to LE `u16`. Header grew from 8 to 9 bytes; every field after byte 4 shifted +1; every `LIGHT_*` / `TEXT_DISPLAY` / `BITMAP_*` / `CLEAR_SCREEN` payload grew +1 byte. Motivation: futureproofing headroom (65534 addressable source_ids / target_groups) at the cost of ~3-5% per-frame airtime. Config UI, NVS storage, and partition helpers stay at u8-natural values; extended range `0x0100..0xFFFE` reserved for a future UI/NVS widening. Wire-incompatible with v2: v2 receivers reject at the version-byte check. |
+| 0x03 | 2026-07-25 | (superseded) | Widened `source_id` (header) and every payload's `target_group` from `u8` to LE `u16`. Header grew from 8 to 9 bytes; every field after byte 4 shifted +1; every `LIGHT_*` / `TEXT_DISPLAY` / `BITMAP_*` / `CLEAR_SCREEN` payload grew +1 byte. Motivation: futureproofing headroom (65534 addressable source_ids / target_groups) at the cost of ~3-5% per-frame airtime. Config UI, NVS storage, and partition helpers stay at u8-natural values; extended range `0x0100..0xFFFE` reserved for a future UI/NVS widening. Wire-incompatible with v2: v2 receivers reject at the version-byte check. |
+| 0x04 | 2026-08-20 | This document | LED-level addressing (Epic 18). Added three trailing bytes (`led_mode`, `led_modifier1`, `led_modifier2`) to `LIGHT_PULSE`, `LIGHT_WASH`, `LIGHT_WASH_END`, `LIGHT_WASH_PULSE` for parametric per-pixel targeting on Lumes with multiple addressable pixels. Header layout unchanged (HEADER_SIZE stays 9; HOP_COUNT_OFFSET stays 6). Payload sizes: LIGHT_PULSE 10→13, LIGHT_WASH 17→20, LIGHT_WASH_END 4→7, LIGHT_WASH_PULSE 10→13. Cross-firmware capability rename: `Capability::LedStrip` → `Capability::AddressableLeds` in the reference C++ firmware to signal it names a cross-firmware property (Tildagon claims it too) rather than one specific driver interface. Wire-incompatible with v3: v3 receivers reject at the version check. |
 
-Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of the current v0x03 include:
+Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. Non-versioned additions on top of the current v0x04 include:
 
 - **Source_id partitioning rules** (2026-05-17, [section 3.4](#34-source-identifier-partitioning)) — layered convention on the existing 1-byte field, no wire change.
 - **Display message types** `0x09..0x0C` (Epic 13, 2026-06-14, [section 3.3.6](#336-text_display-0x09) onwards) — new codepoints, backward-compatible under the v0x02 forward-compatibility rule (old v0x02 receivers see them as unknown types and silently drop per [section 3.2](#32-message-types)).
