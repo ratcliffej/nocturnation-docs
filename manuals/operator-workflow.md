@@ -54,7 +54,7 @@ The lock expires after ten seconds of no frames from the locked source. After th
 
 If something looks off - a section of the audience not lighting up, a single badge stuck dark - walk up and look at the badge's screen. Three states are informative:
 
-- **`ch 11 P:4F`** matching your Director's id: locked correctly to your show. If the LEDs aren't firing, the issue is downstream (group filter, calm mode, IR alignment for bracelets - see the user manual).
+- **`ch 11 P:4F`** matching your Director's id: locked correctly to your show. If the LEDs aren't firing, the issue is downstream (group filter, IR alignment for bracelets - see the user manual). Calm mode does not apply to Lumes as of Epic 19; it's a Director-side toggle the LD reaches for.
 - **`ch 11 P:nn`** showing a *different* id than yours: locked to another Director. Most likely a tinkerer on the same channel; ask the operator nicely to switch to channel 1 or stop broadcasting. Alternatively, ask the badge owner to open the settings menu and select "Rescan"; the next valid frame from your Director will establish a fresh lock.
 - **`ch 11 listen`** or **`ch 11 scan`**: not currently locked to anyone. Either the badge just powered on (give it a few seconds) or its TOFU lock has expired due to a frame gap. The next valid frame will re-lock it.
 
@@ -64,7 +64,7 @@ You can't fully prevent another operator from booting a Director on the same cha
 
 If you spot a competing Director:
 
-1. **Diagnose by ID**: look at the source_id on the affected badge versus your Director. Mismatched id = competing transmitter; matching id but no LEDs = downstream issue (group, calm mode, IR).
+1. **Diagnose by ID**: look at the source_id on the affected badge versus your Director. Mismatched id = competing transmitter; matching id but no LEDs = downstream issue (group filter, IR alignment).
 2. **Operational coordination**: ask the tinkerer to stop broadcasting. Most accidental cases will gracefully comply; that's the design assumption.
 3. **Rescan**: operator can rescan their badge through the settings menu to break the lock and pick up your stream if it's louder / closer.
 
