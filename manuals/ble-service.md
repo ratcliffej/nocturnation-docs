@@ -171,10 +171,12 @@ Keys applicable per role:
 
 | Key | Type | Range / notes | Default |
 |---|---|---|---|
-| `group` | `u8` | 0..255. `0` = broadcast-only. | Random `1..3` on first boot, per [[project-first-install-random-group]]. |
+| `group` | `u8` | 0..255. `0` = broadcast-only. | Random `1..3` on first boot. |
 | `led_power` | `u8` | 0..100 %. Applied over the host cap (Atom Lite clamps to 10 %). | Host-dependent. |
 | `bound_sid` | `u16` | `0xFFFF` = TOFU (existing behaviour); non-broadcast sid = only admit frames from that `source_id` on channels 1/6. | `0xFFFF`. |
 | `channel_pref` | `u8` | `0 = auto-scan`, `1`, `6`, `11`. | `0`. |
+| `strip_chain` | `u16` | 1..288 pixels. Physical chain length plugged into the Grove port; drives `HAL::LedStrip::set_pixel_count()`. **The only way to configure this on Atom Lite post-flash**, since Atom has no on-device menu. | Per-env build flag `NOCT_DEFAULT_STRIP_CHAIN_SIZE`. |
+| `strip_group_size` | `u8` | 1..255 pixels-per-CHANCE-roll. Visual group size within the chain. | Per-env build flag `NOCT_DEFAULT_STRIP_GROUP_SIZE`. |
 | `pair_win_s` | `u8` | 5..255 seconds. Pairing-window duration for future gestures. | `30` (build-flag override: `-DBLE_PAIRING_WINDOW_S_DEFAULT=N`). |
 | `friendly_name` | `utf8` | 0..20 bytes. Empty string clears. | Empty (falls back to advertising-name convention). |
 
