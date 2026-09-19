@@ -137,9 +137,55 @@ The Tildagon Director **transmits on channel 1 only** (Epic 5.5 reserves the cha
 
 If taps feel unresponsive, raise the sensitivity (D → Settings → Sensitivity → High) - a hand-held badge tap is gentle.
 
+## BLE pairing (Epic 20)
+
+Every Director and Lume in the fleet exposes a NocturNation Bluetooth service the operator can use to configure the device without editing the on-disk settings file or reflashing. Full byte-level spec is in the [BLE service manual](ble-service.md); this section covers the operator flow.
+
+Physical presence is the access control mechanism. There are no cryptographic keys — the pairing window only opens when the operator triggers it on the device, and the device drops off Bluetooth entirely once the window closes. Config writes are only accepted while the window is open; reads (device info, current settings) are always accepted so the app can display the current state.
+
+### Which host, which gesture
+
+| Host | Gesture | Feedback |
+|---|---|---|
+| M5Stack StickC Plus2 (Director or Lume) | Config menu → **BLE Pair** (top-level entry) | LCD shows countdown + advertising name + "Paired!" / "Timeout" flash on close. |
+| M5Stack Atom Lite (Lume) | Hold the front button for ~3 s | Pixel 0 slow-pulses blue during the window; whole strip flashes green on success, red on timeout. |
+| EMF Tildagon (Lume) | Settings menu → **BLE Pair** | LCD shows countdown + advertising name; "Paired!" text on success. |
+| M5Stack AtomS3 Lite / AtomS3 PoE (Director) | Deferred to a follow-on epic; use the Config menu on a StickC in the meantime. | — |
+
+### Bench-testable now (any BLE client)
+
+Until the NocturNation phone app ships, nRF Connect (iOS/Android) or `bleak` on a laptop is enough to drive the whole flow. Rough script:
+
+1. Trigger the pairing gesture on the target device. Confirm the advertising name that appears on the device or in the scan list — format is `NCTN-<Director|Lume>-<hex>` unless a `friendly_name` has been set, in which case that name appears verbatim.
+2. Connect. The device exposes a NocturNation service; drill into the characteristics.
+3. **Read `device_info`** — a 24-byte structure with role, host, firmware version, and the device's Bluetooth MAC (the fleet's stable device identity). See [ble-service §3.1](ble-service.md#31-device_info-read-only).
+4. **Read `config`** — a property-bag payload with the current settings. See [ble-service §3.2](ble-service.md#32-config-read--gated-write) for the format.
+5. **Write `config`** with a property-bag containing the keys you want to change. Common ones: `group` (u8), `friendly_name` (utf8), `led_power` (u8, 0..100). For Atom Lite specifically, `strip_chain` (u16) and `strip_group_size` (u8) let you change the strip topology from your phone without a reflash. Full key list in [ble-service §5](ble-service.md#5-well-known-keys-v0x01).
+6. **Write `pairing_control`** with the byte `0x01` (`commit`) — the device closes the window, persists everything to NVS, and shows the success flash.
+
+Cancel any pairing session by pressing the device's cancel gesture (B-hold on Stick, F on Tildagon, physical button on Atom Lite) — the device tears BLE down and returns to its normal operating state.
+
+### Bulk pairing
+
+For a batch of devices (a puppet parade, a costume run) that all need the same settings, the pattern is:
+
+1. Before starting the batch, raise `pair_win_s` (Bluetooth-writable) on each device to several minutes rather than the default 30 s.
+2. Trigger the gesture on every device you want to configure. They'll all show up in the phone's scan list under their respective advertising names.
+3. Walk through the list one at a time from the phone, writing the same property-bag payload to each.
+4. Use `pairing_control` value `0x02` (`commit_and_sleep`) instead of `commit` on each — Atom Lite drops to a low-power state and stops advertising, so the phone's scan list gets shorter as you work through the batch. Wake with the front button when you're ready to deploy.
+
+### Coexistence with a running show
+
+Bluetooth and ESP-NOW share the same 2.4 GHz radio on the ESP32, so the current firmware runs them strictly separately: Bluetooth is only reachable when the device is out of Lume Mode / Director Mode (Stick), out of Lume Mode (Tildagon), or between shows (Atom Lite pauses receive during the window). Pair the fleet before the show; wear the fleet during it.
+
+### Losing the pairing register
+
+The device itself remembers its persisted settings across power cycles. The **register of "I've paired to these devices"** lives on whichever phone / laptop did the pairing — if that phone gets lost, the register goes with it. The devices are still configured correctly, they just no longer show up in that particular app's fleet view. Re-pair with a new phone to rebuild the view. A future extension will let a Director act as a fleet-master register (documented in [ble-service §11.3](ble-service.md#113-fleet-master-register-on-director)).
+
 ## Where to learn more
 
 - [Protocol manual §3.4](protocol-manual.md#34-source-identifier-partitioning) - normative spec for the source_id partition + TOFU rules.
 - [Protocol manual §5](protocol-manual.md#5-channel-discovery) - channel selection and scan rules.
+- [BLE service manual](ble-service.md) - byte-level normative spec for the pairing service, well-known keys, and future extensions.
 - [Flow diagrams §9](flow-diagrams.md#9-channel-discovery-and-re-scan) - Mermaid renderings of the channel discovery and re-scan state machines.
 - [User manual](user-manual.md) - audience-facing badge UI.
