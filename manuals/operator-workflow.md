@@ -156,7 +156,7 @@ Physical presence is the access control mechanism. There are no cryptographic ke
 
 Until the NocturNation phone app ships, nRF Connect (iOS/Android) or `bleak` on a laptop is enough to drive the whole flow. Rough script:
 
-1. Trigger the pairing gesture on the target device. Confirm the advertising name that appears on the device or in the scan list — format is `NCTN-<Director|Lume>-<hex>` unless a `friendly_name` has been set, in which case that name appears verbatim.
+1. Trigger the pairing gesture on the target device. Confirm the advertising name that appears on the device or in the scan list — format is `NCTN-<Dir|Lume>-<hex>` (Directors abbreviate to `Dir` so the whole name fits the StickC LCD) unless a `friendly_name` has been set, in which case that name appears verbatim.
 2. Connect. The device exposes a NocturNation service; drill into the characteristics.
 3. **Read `device_info`** — a 24-byte structure with role, host, firmware version, and the device's Bluetooth MAC (the fleet's stable device identity). See [ble-service §3.1](ble-service.md#31-device_info-read-only).
 4. **Read `config`** — a property-bag payload with the current settings. See [ble-service §3.2](ble-service.md#32-config-read--gated-write) for the format.

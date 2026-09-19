@@ -35,7 +35,7 @@ Non-BLE devices (currently: none in the fleet) are silent on this channel; they 
 
 128-bit random UUID, self-assigned (no Bluetooth SIG registration required). Advertised whenever the device is in the **pairing window** (§7); not advertised otherwise, so the device is invisible to BLE scanners during normal operation.
 
-**Advertising name**: `NCTN-<role>-<bt_mac[3..5]>` — for example `NCTN-Lume-3F7A2B` (role name + hex of the last three bytes of the device's Bluetooth MAC). Uniqueness across a fleet is high but not guaranteed; the full 6-byte BT MAC in `device_info.bt_mac` is the authoritative identity.
+**Advertising name**: `NCTN-<role>-<bt_mac[3..5]>` — for example `NCTN-Lume-3F7A2B` or `NCTN-Dir-3F7A2B` (role abbreviation + hex of the last three bytes of the device's Bluetooth MAC). Role abbreviations are chosen so the composed name fits the 240-pixel StickC LCD at size-2 text: **Director** advertises as `Dir`, **Lume** as `Lume` (already short enough). Uniqueness across a fleet is high but not guaranteed; the full 6-byte BT MAC in `device_info.bt_mac` is the authoritative identity.
 
 **Override**: an operator-set `friendly_name` (§5 — writeable via the `config` characteristic) replaces the fallback advertising name. Recommended for permanently-installed devices (`Front Left Puppet`, `Stage Left Rail`, etc.).
 
