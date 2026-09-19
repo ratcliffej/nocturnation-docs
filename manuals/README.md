@@ -15,6 +15,7 @@ This directory holds the public-facing manuals for the NocturNation crowd-lighti
 - **I'm setting up NocturNation at a venue.** Read the [user manual](user-manual.md). It is meant to be read top-to-bottom by a newcomer and serves as reference for an experienced operator afterwards. It covers theory of operation, hardware setup, firmware installation, the configuration menu tree, modes and shows, troubleshooting, and a glossary.
 - **I want to distribute Tildagon apps offline.** Read the [Flopagon disk guide](flopagon-disk.md). It covers day-to-day use of the disk manager (install / backup / delete from either side) and the one-off provisioning workflow for fresh Flopagon PCBs. Built for the case where site WiFi is too poor to reach the Tildagon app store.
 - **I'm building a new receiver or transmitter for the NocturNation protocol.** Read the [protocol manual](protocol-manual.md). It specifies the ESP-NOW wireless layer, frame formats, class+group addressing, the PixMob infra-red encoding annex, channel discovery, the firmware-side non-volatile-storage schema, and conformance requirements for a receiver.
+- **I'm building a BLE client (mobile app, CLI, or manual tool) to configure NocturNation devices.** Read the [BLE service manual](ble-service.md). It specifies the GATT service, characteristics, property-bag TLV payload format, well-known keys, pairing lifecycle, and coexistence rules. Companion to the protocol manual — BLE for config, ESP-NOW for show frames.
 - **I'm contributing show plug-ins to the firmware.** Read [developing-shows.md](../developing-shows.md) for the `Show` plug-in surface. The user manual covers how operators pick and configure shows at run-time; the developer guide covers how you write one.
 - **I want to understand the design decisions.** Read the [architecture specification](../architecture.md). It is internal design notes, kept bidirectionally synced with the Notion source-of-truth page. The manuals here are the externally publishable distillation of it.
 
@@ -25,6 +26,7 @@ This directory holds the public-facing manuals for the NocturNation crowd-lighti
 | [user-manual.md](user-manual.md) | Draft | Operators |
 | [flopagon-disk.md](flopagon-disk.md) | Draft | Operators - offline Tildagon app distribution |
 | [protocol-manual.md](protocol-manual.md) | Draft | Implementers |
+| [ble-service.md](ble-service.md) | Draft | Implementers - BLE clients (mobile / CLI) and firmware authors |
 | [flow-diagrams.md](flow-diagrams.md) | Draft | Both - Mermaid diagrams covering topology, boot, modes, analyser, dispatch, receive, routing, configuration, channel discovery |
 
 ## Conventions
