@@ -35,7 +35,11 @@ Non-BLE devices (currently: none in the fleet) are silent on this channel; they 
 
 128-bit random UUID, self-assigned (no Bluetooth SIG registration required). Advertised whenever the device is in the **pairing window** (§7); not advertised otherwise, so the device is invisible to BLE scanners during normal operation.
 
-**Advertising name**: `NCTN-<role>-<bt_mac[3..5]>` — for example `NCTN-Lume-3F7A2B` or `NCTN-Dir-3F7A2B` (role abbreviation + hex of the last three bytes of the device's Bluetooth MAC). Role abbreviations are chosen so the composed name fits the 240-pixel StickC LCD at size-2 text: **Director** advertises as `Dir`, **Lume** as `Lume` (already short enough). Uniqueness across a fleet is high but not guaranteed; the full 6-byte BT MAC in `device_info.bt_mac` is the authoritative identity.
+**Advertising name**: `NTN<5 hex chars>` — for example `NTN3F7A2`. 8-char total, `NTN` prefix + 20 bits from `bt_mac[3..5]` (`bt_mac[3]` full byte + `bt_mac[4]` full byte + `bt_mac[5]` high nibble). Role deliberately isn't in the name — an Atom acting as a Director (driven by a phone app or USB serial) is a planned future variant, so the name shouldn't hard-code a role that might change. Clients that need the role read `device_info.role` (§3.1). The 20-bit suffix gives ~1M collision-free identifiers, comfortably enough for the small fleets NocturNation targets; the full 6-byte BT MAC in `device_info.bt_mac` remains the authoritative identity for anything that cares.
+
+Kept short deliberately: primary BLE ADV packets cap at 31 bytes, and even with the 128-bit service UUID moved to the scan-response (see below) a name over ~26 chars would leave no room for future ADV additions. `NTNXXXXX` also fits comfortably on the 240-pixel StickC LCD at size-2 text.
+
+The service UUID is carried in the **scan response**, not the primary advertising packet, so scanners' `isAdvertisingService()` filter still catches NocturNation devices while the primary ADV keeps its full name budget.
 
 **Override**: an operator-set `friendly_name` (§5 — writeable via the `config` characteristic) replaces the fallback advertising name. Recommended for permanently-installed devices (`Front Left Puppet`, `Stage Left Rail`, etc.).
 
