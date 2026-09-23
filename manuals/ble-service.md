@@ -236,16 +236,23 @@ The pairing gesture varies by host:
 
 ## 8. Coexistence with ESP-NOW
 
-BLE and ESP-NOW share the 2.4 GHz PHY on the ESP32. The v0x01 rule is:
+BLE and ESP-NOW share the 2.4 GHz PHY on the ESP32. Bench evidence (2026-09-23, Atom Lite) shows the two stacks coexist cleanly without special coordination:
 
-**BLE is only active during the pairing window.** No BLE while a Director is running a show, no BLE while a Lume is receiving frames.
+**BLE and ESP-NOW may run concurrently.** A Lume that is actively receiving ESP-NOW frames can accept a BLE central connection, service GATT reads/writes, and commit persistence changes with zero visible ESP-NOW frame loss and no observable BLE latency degradation.
 
-This gives full ESP-NOW airtime during operation, zero coexistence complexity, and defers the harder concurrent-BLE-and-ESP-NOW work to a future service version (which will introduce the writable `show_passthrough` path).
+The v0x01 spec previously required non-concurrent operation. That stance was defensive — driven by an earlier bench era whose root cause turned out to be a MAC byte-order bug in the central-role connect path (fixed in nocturnation-stickc PR #59), not radio contention. The teardown/re-init code around the pairing window has been removed as of PR #62; the ESP-NOW driver stays initialised throughout.
 
-Concretely:
+Firmware requirements this releases:
 
-- Director: BLE only reachable while in Config mode. Running the Show plugin returns the device to non-advertising Idle.
-- Lume: BLE only reachable while in Settings menu (Tildagon) or during the explicit button-hold pairing window (Atom Lite). Receiving frames while paired is not supported in v0x01.
+- Director: BLE remains reachable while in Config mode. Whether BLE stays reachable during Show playback is a Director-mode UX choice, not a wire-spec constraint.
+- Lume: BLE reachable during the button-hold pairing window. Receiving ESP-NOW frames concurrently with a BLE client session is supported and exercised in production firmware.
+
+Not yet measured under bench conditions:
+
+- BLE peripheral concurrent with ESP-NOW **transmit** at Director show rates (~1-50 Hz). RX-side coexistence is proven; TX-side coexistence is expected to work by extension of the same PHY-time-sharing behaviour but the numbers should be captured before a phone-app Director UI is committed to.
+- Extended-duration BLE-connected sessions during high ESP-NOW airtime. Bench evidence is for the pairing-window duration (~30 s); a phone-app-connected Director session may hold BLE for minutes.
+
+These are open questions for a follow-up bench, not blockers on the v0x01 wire spec.
 
 ## 9. Bulk pairing (UX pattern, not protocol)
 
@@ -278,7 +285,7 @@ Wire spec implication: two new post-EMF frame types. Deployed hardware silently 
 
 The v0x01 `show_passthrough` characteristic is declared but write-refused. A future service version will define its write path, carrying BLE-encoded LIGHT_PULSE / LIGHT_WASH primitives that the receiving Director translates directly to ESP-NOW frames. This is the substrate for the mobile-app M4 lighting-desk vision.
 
-Enabling `show_passthrough` writes requires the coexistence work deferred by §8 — running BLE and ESP-NOW simultaneously with an acceptable airtime cost. Estimated 10-20 % ESP-NOW airtime reduction while BLE-connected.
+§8 as of 2026-09-23 permits concurrent BLE and ESP-NOW. `show_passthrough` remains write-refused in v0x01 pending the format definition (payload encoding for BLE-side LIGHT_PULSE / LIGHT_WASH), not for coexistence reasons.
 
 ### 11.3 Fleet-master register on Director
 
