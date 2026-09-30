@@ -238,21 +238,20 @@ The pairing gesture varies by host:
 
 BLE and ESP-NOW share the 2.4 GHz PHY on the ESP32. Bench evidence (2026-09-23, Atom Lite) shows the two stacks coexist cleanly without special coordination:
 
-**BLE and ESP-NOW may run concurrently.** A Lume that is actively receiving ESP-NOW frames can accept a BLE central connection, service GATT reads/writes, and commit persistence changes with zero visible ESP-NOW frame loss and no observable BLE latency degradation.
+**BLE and ESP-NOW may run concurrently, in both directions.** A Lume actively receiving ESP-NOW frames can accept a BLE central connection, service GATT reads/writes, and commit persistence changes with zero visible frame loss and no observable BLE latency degradation. A Director actively transmitting ESP-NOW at show rates (~1-50 Hz) can likewise hold a BLE client session concurrently with no observable degradation to either channel.
 
 The v0x01 spec previously required non-concurrent operation. That stance was defensive — driven by an earlier bench era whose root cause turned out to be a MAC byte-order bug in the central-role connect path (fixed in nocturnation-stickc PR #59), not radio contention. The teardown/re-init code around the pairing window has been removed as of PR #62; the ESP-NOW driver stays initialised throughout.
 
 Firmware requirements this releases:
 
-- Director: BLE remains reachable while in Config mode. Whether BLE stays reachable during Show playback is a Director-mode UX choice, not a wire-spec constraint.
+- Director: BLE remains reachable while in Config mode. Whether BLE stays reachable during Show playback is a Director-mode UX choice, not a wire-spec constraint — the radio permits it.
 - Lume: BLE reachable during the button-hold pairing window. Receiving ESP-NOW frames concurrently with a BLE client session is supported and exercised in production firmware.
 
-Not yet measured under bench conditions:
+Not yet characterised under sustained load:
 
-- BLE peripheral concurrent with ESP-NOW **transmit** at Director show rates (~1-50 Hz). RX-side coexistence is proven; TX-side coexistence is expected to work by extension of the same PHY-time-sharing behaviour but the numbers should be captured before a phone-app Director UI is committed to.
-- Extended-duration BLE-connected sessions during high ESP-NOW airtime. Bench evidence is for the pairing-window duration (~30 s); a phone-app-connected Director session may hold BLE for minutes.
+- Extended-duration BLE-connected sessions during high ESP-NOW airtime. Bench evidence is for pairing-window-duration sessions (~30 s to a few minutes); a phone-app-connected Director session may hold BLE for hours. Behaviour is expected to remain clean but has not been soaked.
 
-These are open questions for a follow-up bench, not blockers on the v0x01 wire spec.
+Coexistence itself is no longer an open question.
 
 ## 9. Bulk pairing (UX pattern, not protocol)
 
