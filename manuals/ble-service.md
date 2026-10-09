@@ -195,6 +195,8 @@ Keys applicable per role:
 | `strip_group_size` | `u8` | 1..255 pixels-per-CHANCE-roll. Visual group size within the chain. | Per-env build flag `NOCT_DEFAULT_STRIP_GROUP_SIZE`. |
 | `pair_win_s` | `u8` | 5..255 seconds. Pairing-window duration for future gestures. | `30` (build-flag override: `-DBLE_PAIRING_WINDOW_S_DEFAULT=N`). |
 | `friendly_name` | `utf8` | 0..20 bytes. Empty string clears. | Empty (falls back to advertising-name convention). |
+| `paired_dir_uid` | `u32` | UID of the Director that captured this Lume (`CRC32(STA_MAC)` of the Director). `0` = unpaired. Written by the capture flow; reserved as a filter for a future OTA path ("only accept update instructions from my paired Director"), orthogonal to the HMAC gate that protects regular CONFIG_WRITE. | `0`. |
+| `fw_version` | `utf8` | **Read-only**. Firmware version string of the running binary (e.g. `v0.21`). Included on config-bag read; writes are silently ignored. | Compile-time constant. |
 
 ### 5.2 Director-role keys
 
@@ -204,6 +206,7 @@ Keys applicable per role:
 | `retx_count` | `u8` | 1..5. §4.3 redundant retransmit count. | `2` (build-flag override: `-DESPNOW_RETRANSMITS_DEFAULT=N`). |
 | `pair_win_s` | `u8` | 5..255 seconds. | `30`. |
 | `friendly_name` | `utf8` | 0..20 bytes. | Empty. |
+| `fw_version` | `utf8` | **Read-only**. Firmware version string of the running binary. Included on config-bag read; writes are silently ignored. | Compile-time constant. |
 
 **Reserved keys** (not applied in v0x01 but reserved to prevent conflicts):
 
