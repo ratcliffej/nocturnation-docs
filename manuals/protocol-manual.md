@@ -30,10 +30,11 @@ This is the implementer-facing document. If you are an operator setting up a ven
 5. [Channel discovery](#5-channel-discovery)
 6. [Heartbeat and liveness](#6-heartbeat-and-liveness)
 7. [Conformance](#7-conformance)
-8. [Annex A: PixMob infra-red encoding](#annex-a-pixmob-infra-red-encoding)
-9. [Annex B: Non-volatile-storage schema](#annex-b-non-volatile-storage-schema)
-10. [Annex C: Reference test vectors](#annex-c-reference-test-vectors)
-11. [Annex D: Protocol version history](#annex-d-protocol-version-history)
+8. [Authenticated config channel](#8-authenticated-config-channel)
+9. [Annex A: PixMob infra-red encoding](#annex-a-pixmob-infra-red-encoding)
+10. [Annex B: Non-volatile-storage schema](#annex-b-non-volatile-storage-schema)
+11. [Annex C: Reference test vectors](#annex-c-reference-test-vectors)
+12. [Annex D: Protocol version history](#annex-d-protocol-version-history)
 
 ---
 
@@ -163,6 +164,9 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | `0x0A` | `BITMAP_HEADER` | 38 | Director to all (Lumes with `DisplayBitmap` capability stage a receive buffer; others drop) |
 | `0x0B` | `BITMAP_PLANE` | 6..241 | Director to all (Lumes with `DisplayBitmap` capability accumulate plane bytes; others drop) |
 | `0x0C` | `CLEAR_SCREEN` | 4 | Director to all (Lumes with `DisplayText` or `DisplayBitmap` capability clear the corresponding surface; others drop) |
+| `0x0E` | `UID_ANNOUNCE` | 23..43 | Lume to all (Director in capture mode registers; see [§8](#8-authenticated-config-channel)) |
+| `0x0F` | `CONFIG_WRITE` | 21..241 | Director to one UID, HMAC-authenticated (see [§8](#8-authenticated-config-channel)) |
+| `0x10` | `CONFIG_ACK` | 14 | Lume to Director (best-effort ack; see [§8](#8-authenticated-config-channel)) |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
 **v0x04 payload growths**: `LIGHT_PULSE` (10 → 13), `LIGHT_WASH` (17 → 20), `LIGHT_WASH_END` (4 → 7), `LIGHT_WASH_PULSE` (10 → 13) each gained three trailing bytes (`led_mode`, `led_modifier1`, `led_modifier2`) for LED-level addressing on multi-pixel Lumes. See [§3.5](#35-led-level-addressing-v0x04).
@@ -557,6 +561,97 @@ A conforming Director MUST honour:
 - Channel fixity for the duration of a deployment ([section 5.1](#51-director)).
 - `source_id` allocation from the range matching the configured channel ([section 3.4](#34-source-identifier-partitioning)).
 - Listen-before-broadcast on channel 11: at least one second of receive-only listening before the first transmission, with re-roll on detected collision ([section 3.4](#34-source-identifier-partitioning)).
+
+---
+
+## 8. Authenticated config channel
+
+The authenticated config channel ships post-EMF (Epic 21) and lets a Director reconfigure a deployed Lume over ESP-NOW without physical access, after a one-time pairing step has given the Director the Lume's UID and secret. Deployed EMF Lumes without Epic 21 firmware silently drop frame types `0x0E`-`0x10` per the unknown-type rule in [§3.2](#32-message-types), so the channel is backward-compatible with the wire-spec freeze.
+
+### 8.1 Identity
+
+Each device has:
+
+- a 4-byte **UID**: `CRC32(STA_MAC)` reflected polynomial `0xEDB88320`, zlib-compatible, little-endian on the wire. UID is a non-secret address — it may be printed, logged, or spoken.
+- a 16-byte **secret**: random, generated once on first boot and persisted in NVS. The secret is a credential — never logged, never emitted on the ESP-NOW air except during an operator-triggered pairing-burst window ([§8.2](#82-uid_announce-0x0e)), and never readable over BLE except when `pairing_state == PairingActive` ([ble-service.md §3.7](ble-service.md#37-device_secret)).
+
+A Director records `{UID, secret, role, host, friendly_name, …}` tuples in its on-NVS pair register. Role and host come from the paired device so the Director's UI can filter by SKU. The register is the authority on who the Director can address; losing it means the pairing step must repeat.
+
+### 8.2 `UID_ANNOUNCE` (`0x0E`)
+
+Emitted by a Lume during an operator-triggered pairing-burst window (typically 10 seconds, kicked off by a device-specific button gesture — Atom's `Btn1 DoubleTap-then-Hold` is one). Direct substitute for BLE pairing on hosts without BLE silicon.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0..3 | `uid` | 4 | Announcer's UID, little-endian. |
+| 4..19 | `secret` | 16 | Announcer's secret. Only safe to emit because the burst is operator-gated. |
+| 20 | `role` | 1 | 0 = Lume, 1 = Director. |
+| 21 | `host` | 1 | Host identifier (0 = StickC, 1 = Atom Lite, 2 = Tildagon, …). |
+| 22 | `name_len` | 1 | Length of `friendly_name` in bytes (0..20). |
+| 23..42 | `friendly_name` | 0..20 | UTF-8, no null terminator. May be empty if the device was never named. |
+
+A Director in capture mode decodes `UID_ANNOUNCE` and stages the tuple for operator confirmation. A Director not in capture mode drops the frame silently. A Lume MUST NOT re-announce outside its burst window.
+
+### 8.3 `CONFIG_WRITE` (`0x0F`)
+
+Director to one Lume, HMAC-authenticated.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0..3 | `target_uid` | 4 | UID of the addressed Lume, little-endian. |
+| 4..11 | `numonce` | 8 | Monotonic counter (replay guard), little-endian. See [§8.5](#85-numonce-replay-protection). |
+| 12 | `bag_len` | 1 | Length of `bag_tlv` in bytes (0..208). |
+| 13..(13+N-1) | `bag_tlv` | N | Property-bag TLV; same codec and key namespace as BLE `config` ([ble-service.md §4-5](ble-service.md#4-property-bag-codec)). |
+| end-8..end-1 | `hmac` | 8 | HMAC-SHA256 truncated to leftmost 8 bytes. |
+
+The HMAC covers the whole frame from the envelope header (offset 0) through the end of `bag_tlv`, with the trailing 8-byte `hmac` region excluded. The key is the target's 16-byte secret from the Director's pair register. A receiver whose stored secret produces a different HMAC MUST silently drop the frame — no error ack, no log entry attributable to the forgery (constant-time compare, no timing oracle).
+
+**Verification order** (all gates must pass; drop silently on any mismatch):
+
+1. `target_uid` equals the receiver's own UID. (Addressing filter — avoid unnecessary crypto work.)
+2. `numonce` is strictly greater than the highest `numonce` previously accepted from this `source_id`, per the 16-slot LRU ([§8.5](#85-numonce-replay-protection)). The LRU is updated **before** HMAC verification so a signature-failing replay still consumes its slot (hardens against unauthenticated numonce exhaustion attacks).
+3. HMAC-SHA256 over the signed region, truncated to 8 bytes, matches the trailing `hmac` field under constant-time compare.
+4. `bag_tlv` decodes cleanly against the known-key namespace.
+
+On apply, keys are routed through the same `apply_config_entry` dispatcher as BLE writes ([ble/config_apply.cpp]), so the two paths cannot diverge. On successful apply, the Lume flashes pixel 0 white for ~500 ms (visible confirmation independent of the ack frame) and emits a `CONFIG_ACK` ([§8.4](#84-config_ack-0x10)).
+
+### 8.4 `CONFIG_ACK` (`0x10`)
+
+Lume to Director, best-effort. Fixed 14-byte payload.
+
+| Offset | Field | Size | Description |
+|---:|---|---:|---|
+| 0..3 | `responder_uid` | 4 | Responder's UID, little-endian. |
+| 4..11 | `responder_numonce` | 8 | The `numonce` the ack is for (echo of the triggering CONFIG_WRITE's `numonce`). |
+| 12 | `status` | 1 | 0 = ok, 1 = applied-with-rejections, 2 = decode-failure, 3 = other. |
+| 13 | `applied_keys` | 1 | Count of keys applied (for operator-facing feedback). |
+
+**ACK is best-effort, not a reliable response.** CONFIG_WRITE paths can be asymmetric — a Director with a strong antenna reaches a Lume that cannot reach back, or a repeater carries the write but not the ack, or concurrent LIGHT_* traffic collides with the ack frame on-air. A missing ack is **"no confirmation"**, not "failed": the Director's UI MUST surface this as amber ("Written, no confirmation"), not red ("Failed"). Retry uses a fresh numonce; the Lume applies the same bag again idempotently.
+
+A CONFIG_ACK is **not** authenticated — a forged ack can only mislead the Director's UI, since actual state changes are gated on authenticated CONFIG_WRITE.
+
+### 8.5 Numonce (replay protection)
+
+Each Director maintains a persistent monotonic 64-bit counter in NVS (`cfg_numonce`), incremented and persisted on every CONFIG_WRITE it builds. Value `0` is reserved as a sentinel ("no numonce seen yet") and MUST never be transmitted; the counter starts at `1`.
+
+Each receiver maintains a 16-slot LRU keyed by sender `source_id`. On arrival, if the frame's `numonce` is less than or equal to the highest previously-accepted `numonce` for that sender, the frame is dropped. Otherwise the slot is updated **before** HMAC verification, so an unauthenticated flood of fake numonces cannot be used to exhaust the slot's counter space from under a legitimate Director. 16 slots is sized for small-fleet operation with multiple Directors; eviction is LRU.
+
+The term **numonce** (not "nonce") is used throughout the codebase and documentation on operator request — see [[feedback-vocab-numonce-not-nonce]].
+
+### 8.6 Conformance
+
+A receiver that implements this channel:
+
+- MUST silently drop frames that fail any of the four verification gates in [§8.3](#83-config_write-0x0f).
+- MUST NOT emit a reply, log line, or sidechannel observable response that would distinguish "wrong HMAC" from "wrong numonce" from "wrong UID" to an off-badge observer.
+- MUST emit visible confirmation (pixel-0 white flash, ~500 ms) on successful apply, so operators can confirm the right device received the write even if the ack frame is lost.
+- MUST route applied keys through the same dispatcher as BLE writes.
+- SHOULD limit UID_ANNOUNCE bursts to a short operator-triggered window with a clear exit (double-click, timeout, button release); continuous announcement would leak the secret to anyone within RF range.
+
+A Director that implements this channel:
+
+- MUST persist its numonce counter across reboots and MUST NOT reuse a value.
+- MUST surface "no ack received" as a distinct UX state from "ack received with error status".
 
 ---
 

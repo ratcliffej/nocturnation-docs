@@ -53,6 +53,7 @@ The service UUID is carried in the **scan response**, not the primary advertisin
 | 3.4 | `pairing_control` | `72678cdb-1b65-417c-8744-751eff153bf0` | Write | 1 byte enum |
 | 3.5 | `show_passthrough` | `17cc926e-f45e-41d8-ab61-1cb71d744c35` | Write (refused in v0x01) | Property-bag TLV — reserved |
 | 3.6 | `diagnostics` | `2b53e72d-0e3d-4083-9f76-d5d472a26356` | Read + Notify — reserved | TBD |
+| 3.7 | `device_secret` | `e14f56cf-733d-4ed3-868b-4102a5e9864f` | Read (gated) | Fixed 16-byte key |
 
 ### 3.1 `device_info` (read-only)
 
@@ -70,7 +71,8 @@ Static apart from `uptime_s`. Format (little-endian, packed):
 | 7 | 1 | reserved | Zero. Ignore on read. |
 | 8 | 6 | `bt_mac[6]` | Bluetooth MAC address, big-endian. **This is the fleet UID** (§10). |
 | 14 | 4 | `uptime_s` | Seconds since device boot, little-endian u32. |
-| 18 | 6 | reserved | Zero. Ignore on read. |
+| 18 | 4 | `uid` | 4-byte device UID (CRC32 of STA MAC), little-endian. See §10. Added in Epic 21; v0x01-pre-Epic-21 clients that treated bytes 18..21 as reserved continue to work (strict superset). |
+| 22 | 2 | reserved | Zero. Ignore on read. |
 
 Total: 24 bytes.
 
@@ -131,6 +133,16 @@ The characteristic UUID is stable; a future service version will populate the wr
 ### 3.6 `diagnostics` (reserved)
 
 Placeholder for a future bench-diagnostic stream (recent-frame counters, drop reasons, receive-path statistics). Not implemented in v0x01; readers should tolerate the characteristic being absent OR present with a zero-length payload.
+
+### 3.7 `device_secret` (read, gated — Epic 21)
+
+Returns the device's 16-byte HMAC-SHA256 key used to authenticate ESP-NOW `CONFIG_WRITE` frames (see [protocol-manual.md §Authenticated config channel](protocol-manual.md)). The secret is random, generated once on first boot after WiFi/BT init (so the hardware RNG is seeded), persisted in NVS, and never leaves the device except through this characteristic during a pairing window.
+
+**Gating:** reads outside a pairing window return a single `0x81` status byte (same code as the `config` write-outside-pairing refusal). During a pairing window, returns 16 raw bytes.
+
+**Trust model:** during a pairing window the operator has physically triggered the window on the device; a BLE central present at that moment is assumed authorised. Equivalent to Bluetooth-pairing's "I pressed the button" model. The secret never goes on-air again after that one capture event; subsequent CONFIG_WRITE verification uses the HMAC of a shared-but-not-transmitted secret.
+
+Clients that successfully pair with a Lume should capture both `device_info.uid` (bytes 18..21) and `device_secret` in the same session. The pair `{UID, secret}` is what a Director later uses to send authenticated CONFIG_WRITE frames over ESP-NOW without the Lume having to re-enter a pairing window.
 
 ## 4. Property-bag TLV format
 
@@ -269,16 +281,23 @@ Rationale: the BT MAC is only air-visible during a pairing window (BLE advertisi
 
 ## 11. Future extensions (not implemented in v0x01)
 
-### 11.1 MAC-addressed config over ESP-NOW
+### 11.1 Authenticated config over ESP-NOW — SHIPPED (Epic 21)
 
-Motivated by devices embedded past the point of easy physical access (puppets, permanent installations, sewn-in wearables). Once an operator has paired to a Lume once over BLE and captured its `bt_mac` into the app's register, they can later reconfigure it without re-pairing, via new ESP-NOW frame types:
+Devices embedded past the point of easy physical access (puppets, permanent installations, sewn-in wearables) couldn't be reconfigured over BLE without the operator physically reaching the pairing-trigger button. Epic 21 ships the ESP-NOW counterpart: once an operator has paired to a Lume once (BLE or ESP-NOW capture burst) and the Director has captured the `{UID, secret}` pair into its register, the Director can later send authenticated reconfiguration frames over ESP-NOW with no further physical access needed.
 
-- **`CONFIG_WRITE`**: broadcast ESP-NOW frame with payload `{target_bt_mac[6], property_bag_TLV}`. Each Lume compares `target_bt_mac` against its own BT MAC and applies the property bag if match. Uses the same TLV format and key namespace as the `config` characteristic (§4-5). On successful apply, the Lume emits a **short white ack-flash** (~500 ms) as visible confirmation.
-- **`IDENTIFY`**: broadcast ESP-NOW frame with payload `{target_bt_mac[6], duration_ms}`. Addressed Lume flashes a distinctive pattern (white pulse at ~2 Hz) for `duration_ms`. Deliberately longer / more spotable than the ack-flash — the operator can find "which puppet is 3F:7A:2B" without opening it up.
+Wire-level frame specifications live in [protocol-manual.md](protocol-manual.md) under "Authenticated config channel". Summary:
 
-Delivery is fire-and-forget (ESP-NOW broadcast has no ACK). The app-side pattern is: emit CONFIG_WRITE → BLE-connect and read `config` afterwards to verify → mark register entry confirmed or retry.
+- **`UID_ANNOUNCE`** (ESP-NOW frame type `0x0E`): emitted by a Lume during an operator-triggered pairing-burst window (~10 s, button-held gesture). Carries `{uid, secret, role, host, friendly_name}`. A Director in capture mode registers the announcer. Direct substitute for BLE pairing on hosts without BLE silicon.
+- **`CONFIG_WRITE`** (frame type `0x0F`): emitted by a Director. Carries `{target_uid, numonce, property_bag_TLV, hmac}`. The HMAC-SHA256 (truncated to 8 bytes) covers everything but itself; a Lume rejects any frame whose signature doesn't match its stored secret, and rejects any numonce that isn't strictly greater than the highest previously seen from that sender (replay protection).
+- **`CONFIG_ACK`** (frame type `0x10`): emitted by a Lume on successful apply. Carries `{responder_uid, responder_numonce, status, applied_keys}`. Not authenticated — a forged ack only misleads the Director's UI; actual state changes are gated on the authenticated CONFIG_WRITE.
 
-Wire spec implication: two new post-EMF frame types. Deployed hardware silently drops unknown types per [[project-emf-wire-spec-freeze]], so this is compatible with the current wire freeze.
+**UID + secret:** the UID is a 4-byte `CRC32(STA_MAC)` identifier exposed in `device_info.uid` (§3.1) and `UID_ANNOUNCE` payloads. The secret is 16 bytes random, generated once on first boot, exposed via the `device_secret` characteristic (§3.7) and in `UID_ANNOUNCE`. The pair `{UID, secret}` is what the Director's register holds per Lume; UID is the address, secret is the credential.
+
+**ACK is best-effort.** CONFIG_WRITE is broadcast ESP-NOW; the path back to the Director for CONFIG_ACK can be asymmetric (bigger-antenna Director, repeater-fed Lume, concurrent LIGHT_* traffic colliding). A missing ACK is **not** a failed write — it means the Director couldn't confirm either way. UX surfaces this as "Written, no confirmation" (amber), not "Failed" (red). Retry uses a fresh numonce; the Lume applies the same bag again, which is idempotent for property-bag writes.
+
+**Visible confirmation:** on successful apply, the Lume briefly flashes pixel 0 white (~500 ms) via the LedStripDriver overlay channel so the operator sees "I know this was you" even without reading the Director's UI.
+
+Wire-spec freeze compatibility: frame types `0x0E`-`0x10` are allocated from the reserved post-EMF range; deployed EMF Lumes silently drop unknown types per [[project-emf-wire-spec-freeze]], so adding these is backward-compatible.
 
 ### 11.2 Writable `show_passthrough`
 

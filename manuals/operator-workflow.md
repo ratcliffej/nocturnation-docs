@@ -182,6 +182,42 @@ Bluetooth and ESP-NOW share the same 2.4 GHz radio on the ESP32, so the current 
 
 The device itself remembers its persisted settings across power cycles. The **register of "I've paired to these devices"** lives on whichever phone / laptop did the pairing — if that phone gets lost, the register goes with it. The devices are still configured correctly, they just no longer show up in that particular app's fleet view. Re-pair with a new phone to rebuild the view. A future extension will let a Director act as a fleet-master register (documented in [ble-service §11.3](ble-service.md#113-fleet-master-register-on-director)).
 
+## Reconfiguring a deployed Lume (Epic 21)
+
+Once a Lume has been paired once — captured into the Director's register with its UID + secret — the Director can reconfigure it over ESP-NOW without re-pairing. No BLE round-trip, no physical access to the device. Useful for sewn-in wearables, puppets, or anything embedded past the point of easy reach, and for last-minute re-grouping during soundcheck.
+
+### Capture paths
+
+A Director can capture a Lume into its register in three ways:
+
+1. **BLE Live-scan** (Stick Director `Menu → Config Lumes → Live-scan`): the StickC scans for Lumes advertising `NTN-*`, connects, reads `device_info` + `device_secret`, writes any requested config, and stores `{uid, secret, friendly_name, …}` into its pair register. Requires the target to be in BLE pairing mode (Stick: hold BtnA for 5s; Atom: hold Btn1 for 2s). This is the primary path for BLE-capable Lumes.
+2. **ESP-NOW capture burst** (Stick Director `Menu → Config Lumes → Capture via ESP-NOW`): the Director listens on the show channel for `UID_ANNOUNCE` frames. The target Lume emits a 10-second burst on an operator-triggered gesture — on Atom Lite that gesture is **Btn1 DoubleTap-then-Hold** (click, release, click, hold until the LED strip pulses white). The Director confirms "capture X?" and stores the tuple. This is the only path for pure-receive hardware without BLE silicon.
+3. **Pre-populated register** (future): bulk import from a shipping manifest or a QR-code sheet. Not shipped yet.
+
+### Paired-fleet route
+
+Once Lumes are in the register, select `Menu → Config Lumes → Paired` on a StickC Director. The list shows friendly names and host icons. Pick a Lume, edit its properties (group, host-specific keys), and the Director sends a signed `CONFIG_WRITE` over ESP-NOW. The Lume applies the change, flashes pixel 0 white for ~500 ms, and sends a `CONFIG_ACK` back if the return path is clear.
+
+**Three outcomes to recognise:**
+
+- **Green "Applied"** — ack received, matches the write's numonce, status 0. You can move on.
+- **Amber "Written, no confirmation"** — the write went out, no ack came back inside the timeout (default 500 ms). This is **not a failure**. In a crowded RF environment, or on a repeater-fed Lume whose return path is asymmetric, the ack frame can drop while the write landed cleanly. The visible pixel-0 white flash on the device itself is independent evidence; if you can see the device, that flash tells you the write landed. Retry if you can't see the device and the setting matters.
+- **Red "Rejected"** — the Director got an ack with a non-zero status. The write was received and authenticated but at least some keys weren't applied (bag decode error, unknown key, out-of-range value). Check the key against the host's property schema.
+
+**Fresh pair → first write.** On a brand new capture, the Director's numonce counter is already monotonically ahead of anything the Lume has seen (the Lume starts with its 16-slot LRU empty, so any valid numonce passes), so the first CONFIG_WRITE after capture Just Works. There is no "sync" step.
+
+**Lost register, Lume still in field.** If the Director's register is wiped (phone lost, Stick re-flashed with cleared NVS), you have no way to reconfigure a deployed Lume except by re-capturing it via one of the three paths above. The Lume itself is unchanged and continues to render whatever its last applied config said. Plan for this — the register is not disposable.
+
+**Visible confirmation always.** Even without an ack frame, every successful `CONFIG_WRITE` apply flashes pixel 0 white for ~500 ms. On a visible Lume this is the operator's load-bearing feedback signal: if the device flashed, the write landed and was authenticated against the right secret. A device that doesn't flash either didn't receive the frame or isn't the device you think it is.
+
+### Security notes
+
+The CONFIG_WRITE path is authenticated with HMAC-SHA256 using the Lume's 16-byte secret. An attacker without the secret can broadcast arbitrary frames at the Lume and nothing changes — the Lume silently drops any frame whose HMAC doesn't verify. The secret only crosses the air during an operator-triggered pairing burst (UID_ANNOUNCE) or during an active BLE pairing session, so passive RF capture during a show does not leak it.
+
+The `UID_ANNOUNCE` burst does broadcast the secret in the clear during the 10-second window. In a hostile RF environment, run captures in a side room or at low power. The operator-triggered gesture is the gate; don't leave a device announcing in a crowded space.
+
+See [protocol-manual §8](protocol-manual.md#8-authenticated-config-channel) for the normative wire specification.
+
 ## Where to learn more
 
 - [Protocol manual §3.4](protocol-manual.md#34-source-identifier-partitioning) - normative spec for the source_id partition + TOFU rules.
