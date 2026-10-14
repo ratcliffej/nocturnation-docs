@@ -204,6 +204,9 @@ Keys applicable per role:
 | `retx_count` | `u8` | 1..5. §4.3 redundant retransmit count. | `2` (build-flag override: `-DESPNOW_RETRANSMITS_DEFAULT=N`). |
 | `pair_win_s` | `u8` | 5..255 seconds. | `30`. |
 | `friendly_name` | `utf8` | 0..20 bytes. | Empty. |
+| `beat_sens` | `u8` | 1..10. Manual beat-detection sensitivity slider. `1` = very sensitive (fires on anything), `5` = default (no change from baseline threshold_k values), `10` = drum-hit only. Ignored when `beat_sens_auto` is true. | `5`. |
+| `beat_sens_auto` | `u8` | `0`/`1`. When `1` (default), `beat_sens` is ignored and the designed baseline thresholds (kick 2.2 / snare 2.0 / hat 1.8) are used directly. When `0`, the operator's `beat_sens` slider applies. | `1`. |
+| `beat_floor` | `u8` | 0..10. Absolute per-band magnitude floor below which no beat fires, regardless of the adaptive gate. `0` disables the floor; `1..10` raises it log-linearly through the AudioLive bar range. Primary use case: parade / crowd-noise rejection where ambient energy contains its own transients (shouts, cheers) that would otherwise cross the adaptive baseline. Operator tunes against the live Test Mode "Beat Monitor" display. | `0`. |
 
 **Reserved keys** (not applied in v0x01 but reserved to prevent conflicts):
 
