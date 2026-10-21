@@ -579,7 +579,9 @@ A Director records `{UID, secret, role, host, friendly_name, …}` tuples in its
 
 ### 8.2 `UID_ANNOUNCE` (`0x0E`)
 
-Emitted by a Lume during an operator-triggered pairing-burst window (typically 10 seconds, kicked off by a device-specific button gesture — Atom's `Btn1 DoubleTap-then-Hold` is one). Direct substitute for BLE pairing on hosts without BLE silicon.
+Emitted by a Lume during an operator-triggered pairing-burst window (typically 10 seconds, kicked off by a device-specific button gesture). **Reserved for future Tier-1 Lumes without BLE silicon** (ESP32-S2 class); current fleet hosts (StickC Plus2/S3, Atom Lite, Tildagon) all have BLE silicon and pair via the Epic 20 BLE path. The emit path is retired on BLE-capable hosts (Atom's `Btn1 DoubleTap-then-Hold` gesture was shipped in Epic 21 B7 and retired 2026-10-21); the Director-side capture receive path stays shipped so a BLE+ESP-NOW bridge Director can capture a Tier-1 Lume on behalf of a phone app.
+
+Transmission channel: fixed at **channel 1** (per protocol-manual §2.2). Pairing bursts never run on the Performance channel (11) so an in-flight show never shares airtime with secret-in-the-clear frames.
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
