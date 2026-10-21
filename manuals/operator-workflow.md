@@ -191,7 +191,7 @@ Once a Lume has been paired once — captured into the Director's register with 
 A Director can capture a Lume into its register in three ways:
 
 1. **BLE Live-scan** (Stick Director `Menu → Config Lumes → Live-scan`): the StickC scans for Lumes advertising `NTN-*`, connects, reads `device_info` + `device_secret`, writes any requested config, and stores `{uid, secret, friendly_name, …}` into its pair register. Requires the target to be in BLE pairing mode (Stick: hold BtnA for 5s; Atom: hold Btn1 for 2s). This is the primary path for BLE-capable Lumes.
-2. **ESP-NOW capture burst** (Stick Director `Menu → Config Lumes → Capture via ESP-NOW`): the Director listens on the show channel for `UID_ANNOUNCE` frames. The target Lume emits a 10-second burst on an operator-triggered gesture — on Atom Lite that gesture is **Btn1 DoubleTap-then-Hold** (click, release, click, hold until the LED strip pulses white). The Director confirms "capture X?" and stores the tuple. This is the only path for pure-receive hardware without BLE silicon.
+2. **ESP-NOW capture burst** (Stick Director `Menu → Config Lumes → Capture via ESP-NOW`): the Director listens on **channel 1** for `UID_ANNOUNCE` frames. The target Lume emits a 10-second burst on an operator-triggered gesture. **Reserved for future Tier-1 Lumes without BLE silicon** (ESP32-S2 class); every current fleet host has BLE and should pair via path 1 instead. The Director-side capture screen stays shipped so a BLE+ESP-NOW bridge Director can capture a Tier-1 Lume on behalf of a phone app. See [`project-device-tier-model`](../../../memory) and [`protocol-manual §8.2`](protocol-manual.md#82-uid_announce-0x0e).
 3. **Pre-populated register** (future): bulk import from a shipping manifest or a QR-code sheet. Not shipped yet.
 
 ### Paired-fleet route
@@ -214,7 +214,7 @@ Once Lumes are in the register, select `Menu → Config Lumes → Paired` on a S
 
 The CONFIG_WRITE path is authenticated with HMAC-SHA256 using the Lume's 16-byte secret. An attacker without the secret can broadcast arbitrary frames at the Lume and nothing changes — the Lume silently drops any frame whose HMAC doesn't verify. The secret only crosses the air during an operator-triggered pairing burst (UID_ANNOUNCE) or during an active BLE pairing session, so passive RF capture during a show does not leak it.
 
-The `UID_ANNOUNCE` burst does broadcast the secret in the clear during the 10-second window. In a hostile RF environment, run captures in a side room or at low power. The operator-triggered gesture is the gate; don't leave a device announcing in a crowded space.
+The `UID_ANNOUNCE` burst does broadcast the secret in the clear during the 10-second window. This is a Tier-1-only path on the current fleet (every shipping host has BLE); when it does fire on a future Tier-1 device, run captures in a side room or at low power. The operator-triggered gesture is the gate; don't leave a device announcing in a crowded space.
 
 See [protocol-manual §8](protocol-manual.md#8-authenticated-config-channel) for the normative wire specification.
 
